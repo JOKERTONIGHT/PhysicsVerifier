@@ -49,6 +49,9 @@ from dotenv import load_dotenv
 load_dotenv('.env')
 
 from universal_physics_evaluator import UniversalPhysicsEvaluator
+from variable_constant_verifier import VariableConstantVerifier
+import json
+from datetime import datetime as _dt
 
 # 全局日志记录器
 logger = None
@@ -193,6 +196,25 @@ def parse_args():
         default="logs",
         help="日志文件保存目录 (默认: logs)"
     )
+
+    # 变量/常量混淆检查器参数
+    parser.add_argument(
+        "--varconst-check",
+        action="store_true",
+        help="启用变量/常量混淆检查器，对模型作答进行静态+可选LLM辅助的符号一致性检查"
+    )
+    parser.add_argument(
+        "--varconst-llm-model",
+        type=str,
+        default=None,
+        help="用于辅助等价性/适用性判断的LLM模型标识（可选）。留空则仅使用规则检查"
+    )
+    parser.add_argument(
+        "--varconst-max-llm-calls",
+        type=int,
+        default=0,
+        help="可用于检查器的LLM调用上限（默认0=不调用）"
+    )
     
     return parser.parse_args()
 
@@ -275,6 +297,64 @@ def main():
         nproc=args.nproc
     )
     log_print("✅ 评测器初始化成功")
+
+    def _run_varconst_for_dataset(ds_key: str, run_payload: dict = None):
+        """对指定数据集（可选指定单次运行数据）执行变量/常量检查并保存报告。
+
+        run_payload: 可选，形如 {"run_name": str, "samples": List[Dict]}，若提供则直接使用样本列表；
+                     否则通过 evaluator 加载该数据集的推理结果。
+        """
+        if not args.varconst_check:
+            return
+        try:
+            verifier = VariableConstantVerifier(
+                llm_model=args.varconst_llm_model,
+                max_llm_calls=args.varconst_max_llm_calls,
+                logger=logger,
+            )
+
+            # 加载样本
+            samples = None
+            run_name = None
+            if run_payload and isinstance(run_payload, dict):
+                samples = run_payload.get("samples")
+                run_name = run_payload.get("run_name")
+            if samples is None:
+                # 尝试通过 evaluator 加载
+                load_fn = getattr(evaluator, "load_inference_results", None)
+                if callable(load_fn):
+                    samples = load_fn(ds_key)
+                else:
+                    log_print(f"⚠️ 无法加载推理结果以运行变量/常量检查（缺少 load_inference_results 方法）: {ds_key}")
+                    return
+
+            # 规范化样本字段，挑选 question/context/prediction/id
+            norm_samples = []
+            for r in samples or []:
+                norm_samples.append({
+                    "id": (r.get("id") or r.get("problem_id") or r.get("sample_id") or "").strip(),
+                    "question": r.get("question") or r.get("prompt") or r.get("instruction"),
+                    "context": r.get("context") or r.get("passage") or r.get("materials"),
+                    "prediction": r.get("prediction") or r.get("output") or r.get("final_answer") or r.get("answer_text") or "",
+                    "meta": {k: v for k, v in r.items() if k not in {"id","problem_id","sample_id","question","prompt","instruction","context","passage","materials","prediction","output","final_answer","answer_text"}}
+                })
+
+            report = verifier.analyze_batch(norm_samples, dataset_key=ds_key)
+
+            # 保存报告
+            out_dir = Path(args.output_dir) / "varconst_reports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            base = ds_key.replace("/", "_")
+            if run_name:
+                out_path = out_dir / f"{base}__{run_name}__varconst_{ts}.json"
+            else:
+                out_path = out_dir / f"{base}__varconst_{ts}.json"
+            with out_path.open("w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            log_print(f"🧪 变量/常量检查完成，报告已保存: {out_path}")
+        except Exception as e:
+            log_print(f"❌ 变量/常量检查失败（{ds_key}）: {e}")
     
     # 试运行模式：仅检查数据集
     if args.dry_run:
@@ -306,6 +386,15 @@ def main():
                 log_print(f"\n🎉 多次运行评测完成！")
                 log_print(f"🔄 运行次数: {overall['num_runs']}")
                 log_print(f"📈 平均得分率: {overall['mean_score_rate']:.2f}% ± {overall['std_score_rate']:.2f}%")
+                # 同步运行变量/常量检查：对每个 run 单独生成报告
+                if args.varconst_check:
+                    load_multi = getattr(evaluator, "load_multiple_runs_results", None)
+                    if callable(load_multi):
+                        runs_map = load_multi(args.dataset)
+                        for run_name, samples in (runs_map or {}).items():
+                            _run_varconst_for_dataset(args.dataset, {"run_name": run_name, "samples": samples})
+                    else:
+                        log_print("⚠️ 未提供 load_multiple_runs_results，变量/常量检查仅对单次加载支持")
             else:
                 log_print(f"❌ 数据集 {args.dataset} 多次运行评测失败")
         else:
@@ -337,6 +426,13 @@ def main():
                 if multi_run_results:
                     overall = multi_run_results['overall_statistics']
                     log_print(f"✅ 完成: 平均得分率 {overall['mean_score_rate']:.2f}% ± {overall['std_score_rate']:.2f}%")
+                    # 变量/常量检查：逐 run 报告
+                    if args.varconst_check:
+                        load_multi = getattr(evaluator, "load_multiple_runs_results", None)
+                        if callable(load_multi):
+                            runs_map = load_multi(dataset_key)
+                            for run_name, samples in (runs_map or {}).items():
+                                _run_varconst_for_dataset(dataset_key, {"run_name": run_name, "samples": samples})
             
             # 保存所有多次运行结果的汇总
             if all_multi_run_results:
@@ -353,6 +449,7 @@ def main():
                 config = evaluator.DATASET_CONFIGS[args.dataset]
                 log_print(f"\n✅ {config['display_name']} 评测完成！")
                 log_print(f"🏆 总体得分: {results['total_score']:.2f} / {results['max_possible_score']:.2f} ({results['score_rate']:.2f}%)")
+                _run_varconst_for_dataset(args.dataset)
             else:
                 log_print(f"❌ 数据集 {args.dataset} 评测失败")
         else:
@@ -364,6 +461,11 @@ def main():
                 log_print(f"\n🎉 所有数据集评测完成！")
                 successful_count = sum(1 for r in all_results.values() if r is not None)
                 log_print(f"📊 成功评测 {successful_count}/{len(all_results)} 个数据集")
+                # 对成功的集合运行变量/常量检查
+                if args.varconst_check:
+                    for ds_key, r in (all_results or {}).items():
+                        if r is not None:
+                            _run_varconst_for_dataset(ds_key)
             else:
                 log_print(f"❌ 未能成功评测任何数据集")
     

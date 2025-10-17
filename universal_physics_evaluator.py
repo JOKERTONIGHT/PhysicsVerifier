@@ -1295,10 +1295,10 @@ RESPOND WITH ONLY THE BOXED SCORE:"""
         overall_rate = round((total_score_all / total_max_all * 100), 2) if total_max_all > 0 else 0.0
         
         safe_print(f"📊 整体表现: {total_score_all:.2f} / {total_max_all:.2f} ({overall_rate:.2f}%)")
-        safe_print(f"📁 详细结果已保存到: {self.eval_data}/")
+        safe_print(f"📁 详细结果已保存到: {self.eval_dir}/")
         safe_print(f"💾 汇总文件: {summary_file}")
         safe_print(f"📋 汇总表格: {summary_table_file}")
-        
+
         for item in summary_table:
             safe_print(f"   {item['dataset_key']}: {item['score_rate']:.2f}% ({item['total_score']:.1f}/{item['max_possible_score']:.1f})")
 
@@ -1529,7 +1529,16 @@ RESPOND WITH ONLY THE BOXED SCORE:"""
                             new_max = round(max(scores), 4)
                             new_median = round(np.median(scores), 4)
                             new_mean_fine = round(np.mean(fine_scores), 4)
+                            new_std_fine = round(np.std(fine_scores), 4)
+                            new_min_fine = round(min(fine_scores), 4)
+                            new_max_fine = round(max(fine_scores), 4)
+                            new_median_fine = round(np.median(fine_scores), 4)
+
                             new_mean_coarse = round(np.mean(coarse_scores), 4)
+                            new_std_coarse = round(np.std(coarse_scores), 4)
+                            new_min_coarse = round(min(coarse_scores), 4)
+                            new_max_coarse = round(max(coarse_scores), 4)
+                            new_median_coarse = round(np.median(coarse_scores), 4)
                             
                             # 计算score_rate
                             max_points = question_data.get('max_points', 1)
