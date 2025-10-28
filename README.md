@@ -17,7 +17,14 @@
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U python-dotenv pandas numpy openpyxl vlmevalkit
+pip install -U python-dotenv pandas numpy openpyxl sympy rich
+# HuggingFace datasets（VLMEvalKit 的部分模块会间接依赖）
+pip install -U datasets
+# 安装 VLMEvalKit（包名为 vlmeval，来自 GitHub 仓库）
+pip install "git+https://github.com/open-compass/VLMEvalKit.git"
+# 若使用 uv：
+# uv pip install -U python-dotenv pandas numpy openpyxl sympy rich datasets
+# uv pip install "git+https://github.com/open-compass/VLMEvalKit.git"
 ```
 
 如需使用 Judge（细粒度）或变量/常量检查的 LLM 辅助，请准备对应 API Key，并写入 `.env`：
@@ -25,6 +32,14 @@ pip install -U python-dotenv pandas numpy openpyxl vlmevalkit
 ```
 OPENAI_API_KEY=sk-xxxx
 ```
+
+如果无法访问 GitHub，可尝试：
+
+- 使用压缩包直链安装：
+	- `pip install https://codeload.github.com/open-compass/VLMEvalKit/zip/refs/heads/main`
+- 或从旧仓库子目录安装（备选）：
+	- `pip install "git+https://github.com/OpenGVLab/Ask-Anything.git#subdirectory=VLMEvalKit"`
+- 实在网络受限：手动下载/拷贝仓库后 `pip install -e VLMEvalKit`
 
 2) 准备推理结果（输入）
 
@@ -53,13 +68,19 @@ OPENAI_API_KEY=sk-xxxx
 评测单个数据集：
 
 ```bash
+# 在仓库根目录（PhysicsVerifier/）运行
 python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929
+
+# 或使用 uv，从任何工作目录运行（脚本会自动将相对路径锚定到脚本目录）
+uv run python3 /home/jinjianhan/PhysicsVerifier/eval_physics.py --dataset PanPhO_2024/Physics-235B-0929
 ```
 
 评测所有可用数据集（会自动发现 `results_reasoning/<Dataset>/<Model>` 且尚未有输出目录的组合）：
 
 ```bash
 python3 eval_physics.py
+# 或
+uv run python3 /home/jinjianhan/PhysicsVerifier/eval_physics.py
 ```
 
 启用细粒度 Judge（如 gpt-4o）：

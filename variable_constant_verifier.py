@@ -1,32 +1,11 @@
 """
-变量/常量混淆检查器
+变量/常量混淆检查器（纯 LLM 判定）
 
-目标：在评估过程中，对模型作答（prediction）进行基于符号的静态一致性检查，必要时可用LLM辅助判断物理公式等价性与适用性。
+目标：完全去除规则与符号推理的依赖，统一由 LLM 直接给出诊断；
+仅保留轻量的符号容器，用于写入 LLM 返回的符号元信息（若提供）。
 
-设计概览：
-- 符号图（SymbolGraph）：节点是符号（量或常数），包含属性：
-  - name: 符号名（如 v, a, g, m, k, I）
-  - kind: "variable" | "constant" | "unknown"
-  - sources: 来源（题目条件/推导步骤/常识库），字符串列表
-  - formulas: 涉及该符号的公式字符串列表
-  - parents: 由哪些符号（边）推导而来
-  - meta: 任意键值
-- 有限状态：按“出现→赋义→使用→定值/变值→终态”的视角对符号进行检查。
-
-检查规则（静态）：
-1) 常量库匹配：如 g, c, h, e, k_B, R（气体常数）等，如被标记为 variable 且在后续被当作可变量反复赋不同值，记为疑似混淆。
-2) 题目条件显式常量：识别“取常量”“保持不变”“为常数”等关键词，如之后被重复赋不同值或显著依赖变量变化，记为混淆。
-3) 变量被当常量：出现“设 x 为常数/固定值”且后续又随时间/位置变化（通过文本线索：随 t、x、y 变化），记为混淆。
-4) 公式适用性：通过关键字匹配（如匀加速、理想流体、绝热/等温等），若上下文不一致，提出提醒（需要 LLM 时可更准确）。
-
-LLM 辅助（可选）：
-- 当 max_llm_calls > 0 且提供 llm_model 时，对存在歧义的等价性/适用性做一次问询，以提升准确率（此处仅保留接口与占位实现）。
-
-输出：
-diagnostics: List[{
-  id, severity("error"|"warning"|"info"), message, symbol, rule, evidence
-}]
-并返回 summary 分数：建议简单映射，错误-1，警告-0.5，信息-0；总分越低代表问题越多。
+实现：单次（或极少次）LLM 调用，输出 diagnostics 与可选 symbols 概览；
+本地不再执行任何规则兜底或公式适用性检查。
 """
 
 from __future__ import annotations
@@ -36,6 +15,8 @@ import re
 import json
 import math
 from datetime import datetime
+import hashlib
+from pathlib import Path
 
 # 可复用项目内 Judge 构建与 Key 检测
 try:
@@ -58,6 +39,7 @@ class SymbolNode:
 
 
 class SymbolGraph:
+	"""极简符号存储：仅承载 LLM 元信息。"""
 	def __init__(self) -> None:
 		self.nodes: Dict[str, SymbolNode] = {}
 
@@ -66,50 +48,37 @@ class SymbolGraph:
 			self.nodes[name] = SymbolNode(name=name)
 		return self.nodes[name]
 
-	def ensure_kind(self, name: str, kind: str, source: Optional[str] = None):
-		node = self.get(name)
-		if node.kind == "unknown":
-			node.kind = kind
-		elif node.kind != kind:
-			# 记录冲突
-			node.meta.setdefault("kind_conflicts", []).append({"from": node.kind, "to": kind, "source": source})
-			# 不强制覆盖，保留首次判定
-		if source:
-			node.sources.append(source)
-		return node
-
-	def add_formula(self, formula: str, symbols: List[str], parents: Optional[List[str]] = None):
-		for s in symbols:
-			node = self.get(s)
-			node.formulas.append(formula)
-			if parents:
-				node.parents.extend(parents)
-
-
-DEFAULT_PHYSICAL_CONSTANTS = {
-	"g": "standard gravity (≈9.8 m/s^2)",
-	"c": "speed of light",
-	"h": "Planck constant",
-	"e": "elementary charge",
-	"k_B": "Boltzmann constant",
-	"R": "gas constant",
-	"G": "gravitational constant",
-	"mu0": "magnetic constant",
-	"epsilon0": "electric constant",
-}
-
 
 class VariableConstantVerifier:
-	def __init__(self, llm_model: Optional[str] = None, max_llm_calls: int = 0, logger=None):
+	def __init__(self, llm_model: Optional[str] = None, max_llm_calls: int = 0, logger=None,
+				 llm_conf_threshold: float = 0.6, enable_cache: bool = True,
+				 llm_temperature: float = 0.2, llm_max_output_tokens: int = 4096):
+		"""LLM 优先的统一检查流程（单路径，无多模式分支）。"""
 		self.llm_model = llm_model
 		self.max_llm_calls = max_llm_calls
 		self.logger = logger
 		self._llm = None
 		self._llm_calls_used = 0
+		self.llm_conf_threshold = float(llm_conf_threshold)
+		self.llm_temperature = float(llm_temperature)
+		self.llm_max_output_tokens = int(llm_max_output_tokens)
+		# 简易缓存，避免重复 LLM 调用
+		self.enable_cache = bool(enable_cache)
+		self._cache: Dict[str, Any] = {}
+		self._cache_path = (Path(__file__).parent / ".cache" / "varconst_llm_cache.json").resolve()
+		if self.enable_cache:
+			try:
+				self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+				if self._cache_path.exists():
+					self._cache = json.loads(self._cache_path.read_text(encoding="utf-8"))
+			except Exception:
+				self._cache = {}
 		# 尝试初始化 LLM（若可用）
 		if self.llm_model and self.max_llm_calls > 0 and build_judge and gpt_key_set():
 			try:
-				self._llm = build_judge(model=self.llm_model, timeout=180, retry=1, temperature=0.2, max_output_tokens=4096, verbose=False)
+				self._llm = build_judge(model=self.llm_model, timeout=180, retry=1,
+										temperature=self.llm_temperature, max_output_tokens=self.llm_max_output_tokens,
+										verbose=False)
 				self._log(f"LLM 辅助已启用: {self.llm_model}")
 			except Exception as e:
 				self._llm = None
@@ -125,6 +94,13 @@ class VariableConstantVerifier:
 	# 粗略提取可能的符号：基于 latex/变量命名的启发式
 	_symbol_regex = re.compile(r"\\?([a-zA-Z][a-zA-Z0-9_]*)")
 
+	_common_units = {
+		# SI base and derived units (common)
+		"m","s","kg","A","K","mol","cd","N","Pa","J","W","C","V","F","Ω","ohm","S","H","Hz","T","lm","lx","Bq","Gy","Sv","Wb",
+		# variants and common abbreviations
+		"mm","cm","dm","km","ms","us","μs","ns","deg","rad","sr","eV","MeV","GeV","keV","u","L","ml","mL","bar","atm",
+	}
+
 	def _extract_symbols_and_formulas(self, text: str) -> Dict[str, Any]:
 		symbols = set()
 		formulas = []
@@ -138,96 +114,39 @@ class VariableConstantVerifier:
 				# 排除常见非物理词
 				if sym.lower() in {"final", "answer", "boxed", "ans", "unit", "units"}:
 					continue
+				# 排除常见单位，减小噪声
+				if sym in self._common_units:
+					continue
 				symbols.add(sym)
 		return {"symbols": list(symbols), "formulas": formulas}
 
-	def _infer_symbol_kinds(self, graph: SymbolGraph, question: str, context: str, prediction: str):
-		text = "\n".join([t for t in [question, context, prediction] if t])
-		# 常量库判定：若出现与常量名匹配的符号，优先设为 constant
-		for const_name in DEFAULT_PHYSICAL_CONSTANTS.keys():
-			if re.search(rf"\b{re.escape(const_name)}\b", text):
-				graph.ensure_kind(const_name, "constant", source="constant_library")
+	# 取消符号种类本地推断，完全交给 LLM 主调用
 
-		# 关键字判定："设 X 为常量/固定" -> constant；"令 X 随 t" -> variable
-		for name, node in list(graph.nodes.items()):
-			pass  # 将在后续统一处理
+	# 无任何本地规则兜底
 
-		# 从文本中再扫描“设/定义/为常量/固定/保持不变”等
-		for m in re.finditer(r"(?:设|定义|令)\s*([a-zA-Z][a-zA-Z0-9_]*)\s*(?:为)?\s*(常量|常数|固定|不变)", text):
-			sym = m.group(1)
-			graph.ensure_kind(sym, "constant", source="explicit_decl")
-		for m in re.finditer(r"(?:随|关于)\s*([a-zA-Z][a-zA-Z0-9_]*)\s*(?:变化|改变)", text):
-			sym = m.group(1)
-			graph.ensure_kind(sym, "variable", source="explicit_var_change")
-
-		# 按常见物理量推断（弱启发式）
-		for name in list(graph.nodes.keys()):
-			if name in DEFAULT_PHYSICAL_CONSTANTS:
-				graph.ensure_kind(name, "constant", source="constant_library")
-
-	def _static_checks(self, graph: SymbolGraph, question: str, context: str, prediction: str) -> List[Dict[str, Any]]:
-		diagnostics: List[Dict[str, Any]] = []
-		text = "\n".join([t for t in [question, context, prediction] if t])
-
-		# 规则1：常量被多次赋不同值（启发式：出现 "g = 9.8" 与 "g = 10" 等多处不同数字）
-		for const in DEFAULT_PHYSICAL_CONSTANTS.keys():
-			assigns = re.findall(rf"\b{const}\s*=\s*([-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)", text, flags=re.IGNORECASE)
-			uniq = set(assigns)
-			if len(uniq) > 1:
-				diagnostics.append({
-					"severity": "error",
-					"rule": "constant-multiple-assignment",
-					"symbol": const,
-					"message": f"常量 {const} 在推导中被赋予多个不同的数值：{sorted(uniq)}",
-					"evidence": assigns,
-				})
-
-		# 规则2：显式声明为常量的符号，后续又出现 "随 t/时间/位置/角度 变化"
-		for name, node in graph.nodes.items():
-			if node.kind == "constant":
-				if re.search(rf"\b{name}\b\s*(?:随|关于).*(?:t|x|y|z|r|θ|phi|时间|位置|角度).*(?:变化|改变)", text):
-					diagnostics.append({
-						"severity": "error",
-						"rule": "declared-constant-varies",
-						"symbol": name,
-						"message": f"符号 {name} 被声明为常量，但文本中出现其随其它变量变化的描述",
-					})
-
-		# 规则3：显式“设为常量/固定”，又出现不同赋值
-		for name, node in graph.nodes.items():
-			if node.kind == "constant":
-				assigns = re.findall(rf"\b{name}\s*=\s*([-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)", text, flags=re.IGNORECASE)
-				if len(set(assigns)) > 1:
-					diagnostics.append({
-						"severity": "warning",
-						"rule": "declared-constant-multivalue",
-						"symbol": name,
-						"message": f"符号 {name} 作为常量出现了多个取值：{sorted(set(assigns))}",
-						"evidence": assigns,
-					})
-
-		# 规则4：变量被当常量（粗略）：出现“设 x 为常量/固定”，后续又和 t 的导数/函数同现
-		for name, node in graph.nodes.items():
-			if node.kind == "constant":
-				# 如果明确导数形式出现，如 dx/dt, v(t), a(t)
-				if re.search(rf"(?:d\s*{re.escape(name)}\s*/\s*dt)|\b{re.escape(name)}\s*\(t\)|\b{re.escape(name)}\s*\(x\)", text):
-					diagnostics.append({
-						"severity": "error",
-						"rule": "constant-has-derivative",
-						"symbol": name,
-						"message": f"符号 {name} 被视为常量却出现了随时间/位置变化的函数或导数",
-					})
-
-		# 规则5：公式适用性关键词不一致（仅提示）
-		if re.search(r"匀加速|恒加速度", text) and re.search(r"空气阻力|阻尼|粘滞|变化的力", text):
-			diagnostics.append({
-				"severity": "info",
-				"rule": "kinematics-assumption-mismatch",
-				"symbol": None,
-				"message": "同时出现匀加速假设与阻力等非恒定力的描述，需检查适用性",
-			})
-
-		return diagnostics
+	# ------------------------ LLM 主导的综合判定 ------------------------
+	def _llm_varconst_assess(self, text: str, symbols: List[str], formulas: List[str]) -> Dict[str, Any]:
+		"""调用 LLM 进行主判定，期望返回 {diagnostics:[], symbols:{...}}。包含缓存。"""
+		payload = {"text": text, "symbols": sorted(symbols or []), "formulas": formulas, "model": self.llm_model}
+		cached = self._cache_get("llm_assess", payload)
+		if cached is not None:
+			return cached if isinstance(cached, dict) else {"diagnostics": [], "symbols": {}}
+		system = "你是物理竞赛评分助理。请仅输出 JSON。"
+		user = (
+			"基于下述题目/上下文/作答，判断是否存在变量/常量使用混淆。\n"
+			"请输出 JSON 对象 { diagnostics: [], symbols: {} }：\n"
+			"- diagnostics: JSON 数组，每个元素包含 {severity: 'error'|'warning'|'info', rule: string, symbol: string|null, message: string, evidence: any}\n"
+			"- symbols: 可选的 JSON 对象，键为符号名，值为 { type: 'variable'|'constant'|'parameter'|'unknown', confidence: number(0..1), unit: string|null, known_constant: bool, ambiguous: bool, overloaded: bool, aliases: string[], canonical: string, reason: string }\n"
+			"若无法确定，symbols 可为空对象。\n\n"
+			f"候选符号: {symbols}\n"
+			f"公式(若有): {formulas}\n"
+			f"文本:\n{text}"
+		)
+		data = self._llm_json(system, user, fallback={"diagnostics": [], "symbols": {}})
+		if not isinstance(data, dict):
+			data = {"diagnostics": data if isinstance(data, list) else [], "symbols": {}}
+		self._cache_set("llm_assess", payload, data)
+		return data
 
 	# ------------------------ LLM 辅助模块 ------------------------
 	def _llm_available(self) -> bool:
@@ -249,6 +168,30 @@ class VariableConstantVerifier:
 			self._log(f"LLM JSON 解析失败: {e}")
 			return fallback
 
+	# ------------------------ 缓存工具 ------------------------
+	def _cache_key(self, payload: Any) -> str:
+		try:
+			blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+		except Exception:
+			blob = str(payload)
+		return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+	def _cache_get(self, namespace: str, payload: Any) -> Optional[Any]:
+		if not self.enable_cache:
+			return None
+		key = f"{namespace}:{self._cache_key(payload)}"
+		return self._cache.get(key)
+
+	def _cache_set(self, namespace: str, payload: Any, value: Any) -> None:
+		if not self.enable_cache:
+			return
+		key = f"{namespace}:{self._cache_key(payload)}"
+		self._cache[key] = value
+		try:
+			self._cache_path.write_text(json.dumps(self._cache, ensure_ascii=False), encoding="utf-8")
+		except Exception:
+			pass
+
 	@staticmethod
 	def _safe_parse_json_from_text(text: str):
 		text = text.strip()
@@ -266,114 +209,55 @@ class VariableConstantVerifier:
 				return None
 		return None
 
-	def _llm_initial_semantic_judgment(self, symbols: List[str], text: str) -> Dict[str, Dict[str, Any]]:
-		"""使用 LLM 对候选符号进行初始语义分类（变量/常量/参数），返回映射。"""
-		if not symbols:
-			return {}
-		system = (
-			"你是物理竞赛评分助理。请仅输出 JSON，不要解释。"
-		)
-		user = (
-			"根据以下题目与解答文本，从候选符号列表中判断每个符号的语义类型，并给出理由。\n"
-			"请严格输出 JSON 对象，键是符号名，值包含: {type: 'variable'|'constant'|'parameter', reason: string, unit: string|null, known_constant: bool}.\n"
-			f"候选符号: {symbols}\n\n"
-			f"文本:\n{text}\n\n"
-			"注意：常见物理常量如 g, c, h, e, k_B, R, G 等更可能为常量；具体以上下文为准。"
-		)
-		result = self._llm_json(system, user, fallback={})
-		return result if isinstance(result, dict) else {}
-
-	def _llm_parse_formulas(self, formulas: List[str]) -> List[Dict[str, Any]]:
-		if not formulas:
-			return []
-		system = "你是物理解题助手。请仅输出 JSON。"
-		user = (
-			"解析下面的公式列表，输出一个 JSON 数组，每个元素包含:"
-			"{ index: number, formula: string, symbols: string[], assumptions: string[], law: string|null }.\n"
-			f"公式列表: {formulas}"
-		)
-		data = self._llm_json(system, user, fallback=[])
-		return data if isinstance(data, list) else []
-
-	def _llm_check_applicability(self, question: str, context: str, formula_infos: List[Dict[str, Any]]):
-		if not formula_infos:
-			return []
-		text = "\n".join([t for t in [question, context] if t])
-		system = "你是物理竞赛评分助理。请仅输出 JSON。"
-		user = (
-			"基于题目与上下文，检查这些公式的适用性，返回 JSON 数组："
-			"[{ index, formula, applicable: true|false, reason: string }].\n"
-			f"题目与上下文:\n{text}\n\n"
-			f"公式信息: {formula_infos}"
-		)
-		data = self._llm_json(system, user, fallback=[])
-		return data if isinstance(data, list) else []
+	# 删除符号分型/聚合与公式适用性附加 LLM 调用，统一纳入主调用输出
 
 	def analyze(self, sample: Dict[str, Any], dataset_key: Optional[str] = None) -> Dict[str, Any]:
 		q = sample.get("question") or ""
 		c = sample.get("context") or ""
 		p = sample.get("prediction") or ""
 
-		# 构建符号图
+		# 构建符号容器（仅用于存储 LLM 元信息）
 		graph = SymbolGraph()
 		parsed = self._extract_symbols_and_formulas("\n".join([q, c, p]))
 		for sym in parsed["symbols"]:
 			graph.get(sym)
-		for f in parsed["formulas"]:
-			# 这里简单将公式中的变量名都计入
-			syms_in_f = [m.group(1) for m in self._symbol_regex.finditer(f)]
-			graph.add_formula(f, syms_in_f)
 
-		# 推断符号类别
-		self._infer_symbol_kinds(graph, q, c, p)
-
-		# 静态检查（基础规则）
-		diagnostics = self._static_checks(graph, q, c, p)
-
-		# LLM 动态检查：符号分类 + 公式解析 + 适用性
+		# 1) LLM 主诊断（期望含 diagnostics 与 symbols）
 		text_all = "\n".join([q, c, p])
-		if self._llm_available():
-			# 1) 符号初判
-			llm_sym_map = self._llm_initial_semantic_judgment(list(graph.nodes.keys()), text_all)
-			for name, info in llm_sym_map.items():
-				t = str(info.get("type", "unknown")).lower()
-				if t in {"variable", "constant"}:
-					graph.ensure_kind(name, t, source="llm_initial")
-				node = graph.get(name)
-				node.meta.setdefault("llm", {}).update(info)
+		llm_out = self._llm_varconst_assess(text_all, parsed["symbols"], parsed["formulas"])
+		diagnostics: List[Dict[str, Any]] = []
+		diagnostics.extend(llm_out.get("diagnostics", []) if isinstance(llm_out, dict) else [])
 
-			# 2) 公式解析
-			f_infos = self._llm_parse_formulas(parsed["formulas"])
-			# 合并回 graph 的 meta
-			for fi in f_infos:
-				try:
-					idx = int(fi.get("index"))
-				except Exception:
-					idx = None
-				f_str = fi.get("formula")
-				syms = fi.get("symbols", []) or []
-				if f_str and syms:
-					graph.add_formula(str(f_str), [str(s) for s in syms])
-				# 缓存到全局 meta
-			# 3) 适用性检查
-			app_checks = self._llm_check_applicability(q, c, f_infos)
-			for ac in app_checks:
-				applicable = bool(ac.get("applicable", True))
-				if not applicable:
-					diagnostics.append({
-						"severity": "warning",
-						"rule": "formula-inapplicable-llm",
-						"symbol": None,
-						"message": f"公式可能不适用: {ac.get('formula', '')}",
-						"evidence": ac.get("reason", ""),
-					})
+		# 写入每符号元信息（若 LLM 提供）
+		llm_syms = llm_out.get("symbols", {}) if isinstance(llm_out, dict) else {}
+		if isinstance(llm_syms, dict):
+			for name, info in llm_syms.items():
+				n = graph.get(str(name))
+				n.meta.setdefault("llm", {}).update(info if isinstance(info, dict) else {"raw": info})
 
-		# 汇总分数
+		# 去重（按 rule+symbol+message）
+		seen = set()
+		unique_diags: List[Dict[str, Any]] = []
+		for d in diagnostics:
+			rule = str(d.get("rule"))
+			symbol = d.get("symbol")
+			msg = str(d.get("message"))
+			key = (rule, symbol, msg)
+			if key in seen:
+				continue
+			seen.add(key)
+			unique_diags.append(d)
+		diagnostics = unique_diags
+
+		# 2) 无规则兜底，完全依赖 LLM 输出
+
+		# 汇总分数（info 不计分，warning -0.5，error -1.0）
 		score = 0.0
 		for d in diagnostics:
-			if d.get("severity") == "error":
+			sev = d.get("severity")
+			if sev == "error":
 				score -= 1.0
-			elif d.get("severity") == "warning":
+			elif sev == "warning":
 				score -= 0.5
 		return {
 			"id": sample.get("id"),

@@ -71,7 +71,8 @@ def setup_logging(log_dir="logs", dataset_name=None, multi_runs=False):
         if multi_runs:
             log_filename = f"eval_physics_multi_runs_{dataset}_{model}_{timestamp}.log"
         else:
-            log_filename = f"eval_physics_{dataset_name}_{timestamp}.log"
+            # 避免文件名包含路径分隔符
+            log_filename = f"eval_physics_{dataset}_{model}_{timestamp}.log"
     else:
         if multi_runs:
             log_filename = f"eval_physics_multi_runs_all_{timestamp}.log"
@@ -215,25 +216,42 @@ def parse_args():
         default=0,
         help="可用于检查器的LLM调用上限（默认0=不调用）"
     )
+    # 统一为 LLM+符号推理流程，参数保持最小化（llm_model 与 max_llm_calls）
     
     return parser.parse_args()
 
 def setup_environment(args):
-    """设置运行环境"""
+    """设置运行环境，自动将相对路径锚定到脚本目录，避免 cwd 差异导致找不到文件。"""
     # 设置API密钥
     if args.api_key:
         os.environ["OPENAI_API_KEY"] = args.api_key
         log_print(f"✅ 已设置API密钥")
-    
-    # 检查结果目录
+
+    base_dir = Path(__file__).parent.resolve()
+
+    # 规范化结果目录（优先使用 cwd 路径；若不存在则尝试脚本相对路径）
     results_dir = Path(args.results_dir)
+    if not results_dir.is_absolute():
+        if results_dir.exists():
+            results_dir = results_dir.resolve()
+        else:
+            alt = (base_dir / results_dir).resolve()
+            if alt.exists():
+                results_dir = alt
     if not results_dir.exists():
         log_print(f"❌ 结果目录不存在: {results_dir}")
         sys.exit(1)
-    
-    # 创建输出目录
+
+    # 规范化输出目录（相对路径锚到脚本目录）
     output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = (base_dir / output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 将规范化后的路径回写到 args，后续统一使用绝对路径
+    args.results_dir = str(results_dir)
+    args.output_dir = str(output_dir)
+
     log_print(f"📁 输出目录: {output_dir}")
 
 def build_judge_kwargs(args):
@@ -341,18 +359,38 @@ def main():
 
             report = verifier.analyze_batch(norm_samples, dataset_key=ds_key)
 
-            # 保存报告
+            # 构造轻量版报告（仅含分数与诊断，不含符号节点）
+            light_results = []
+            for r in report.get("results", []) or []:
+                light_results.append({
+                    "id": r.get("id"),
+                    "dataset": r.get("dataset"),
+                    "score": r.get("score", 0.0),
+                    "diagnostics": r.get("diagnostics", []),
+                })
+            light_report = {
+                "summary": report.get("summary", {}),
+                "results": light_results,
+            }
+
+            # 保存报告（轻量 + 完整）
             out_dir = Path(args.output_dir) / "varconst_reports"
             out_dir.mkdir(parents=True, exist_ok=True)
             ts = _dt.now().strftime("%Y%m%d_%H%M%S")
             base = ds_key.replace("/", "_")
             if run_name:
-                out_path = out_dir / f"{base}__{run_name}__varconst_{ts}.json"
+                light_path = out_dir / f"{base}__{run_name}__varconst_light_{ts}.json"
+                full_path = out_dir / f"{base}__{run_name}__varconst_full_{ts}.json"
             else:
-                out_path = out_dir / f"{base}__varconst_{ts}.json"
-            with out_path.open("w", encoding="utf-8") as f:
+                light_path = out_dir / f"{base}__varconst_light_{ts}.json"
+                full_path = out_dir / f"{base}__varconst_full_{ts}.json"
+
+            with light_path.open("w", encoding="utf-8") as f:
+                json.dump(light_report, f, ensure_ascii=False, indent=2)
+            with full_path.open("w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
-            log_print(f"🧪 变量/常量检查完成，报告已保存: {out_path}")
+
+            log_print(f"🧪 变量/常量检查完成，报告已保存: {light_path} (light), {full_path} (full)")
         except Exception as e:
             log_print(f"❌ 变量/常量检查失败（{ds_key}）: {e}")
     
@@ -362,8 +400,8 @@ def main():
         available_datasets = evaluator.detect_available_datasets()
         log_print(f"\n📊 发现 {len(available_datasets)} 个可用数据集:")
         for dataset_key in available_datasets:
-            config = evaluator.DATASET_CONFIGS[dataset_key]
-            log_print(f"   ✓ {config['display_name']} ({dataset_key})")
+            # 直接输出数据集键（形如 Dataset/Model），不依赖额外配置
+            log_print(f"   ✓ {dataset_key}")
         log_print("\n✅ 试运行完成")
         return
     
@@ -446,8 +484,8 @@ def main():
             results = evaluator.evaluate_dataset(args.dataset, judge_kwargs)
             
             if results:
-                config = evaluator.DATASET_CONFIGS[args.dataset]
-                log_print(f"\n✅ {config['display_name']} 评测完成！")
+                # 直接输出数据集键
+                log_print(f"\n✅ {args.dataset} 评测完成！")
                 log_print(f"🏆 总体得分: {results['total_score']:.2f} / {results['max_possible_score']:.2f} ({results['score_rate']:.2f}%)")
                 _run_varconst_for_dataset(args.dataset)
             else:

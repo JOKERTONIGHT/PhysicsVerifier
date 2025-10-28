@@ -1,0 +1,12 @@
+python-dotenv
+pandas
+numpy
+openpyxl
+sympy
+rich
+datasets
+# VLMEvalKit (module name: vlmeval)
+# If network allows, this Git URL works cross-platform:
+# pip install -r requirements.txt
+# uv pip install -r requirements.txt
+git+https://github.com/open-compass/VLMEvalKit.git

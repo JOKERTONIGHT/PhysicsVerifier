@@ -19,10 +19,135 @@ from typing import Dict, List, Optional, Union, Any
 from dotenv import load_dotenv
 load_dotenv('.env')
 
-from vlmeval.smp import load, dump, gpt_key_set
-from vlmeval.dataset.physics_r1 import grade, extract_boxed_answer, get_answer_str, answer_tag_reward_fn_for_r1
-from vlmeval.dataset.utils import build_judge
-from vlmeval.utils import track_progress_rich
+"""尽量使用 VLMEvalKit 提供的工具；若不可用，则使用本地降级实现。"""
+try:  # smp：通用 load/dump/密钥检测
+    from vlmeval.smp import load, dump, gpt_key_set  # type: ignore
+except Exception:  # 降级：最小可用实现
+    def load(path: str):  # type: ignore
+        if str(path).endswith('.json'):
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        if str(path).endswith(('.xlsx', '.xls')):
+            return pd.read_excel(path)
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def dump(obj: Any, path: str):  # type: ignore
+        p = str(path)
+        Path(os.path.dirname(p)).mkdir(parents=True, exist_ok=True)
+        if isinstance(obj, pd.DataFrame) or p.endswith(('.xlsx', '.xls')):
+            # 尝试以 DataFrame 方式保存为 Excel
+            if not isinstance(obj, pd.DataFrame):
+                try:
+                    obj = pd.DataFrame(obj)
+                except Exception:
+                    obj = pd.DataFrame({'value': [obj]})
+            obj.to_excel(p, index=False)
+            return
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+
+    def gpt_key_set() -> bool:  # type: ignore
+        return bool(os.getenv('OPENAI_API_KEY'))
+
+try:  # 物理答案解析与评分工具
+    from vlmeval.dataset.physics_r1 import (
+        grade, extract_boxed_answer, get_answer_str, answer_tag_reward_fn_for_r1  # type: ignore
+    )
+except Exception:
+    # 简单的本地实现：提取 boxed 答案、答案列表、基本数值/文本匹配评分
+    _NUM_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+    _BOX_RE = re.compile(r"\\boxed\{([^}]+)\}")
+
+    def extract_boxed_answer(text: str) -> str:  # type: ignore
+        if not text:
+            return ""
+        m = _BOX_RE.findall(text)
+        return m[-1].strip() if m else ""
+
+    def get_answer_str(text: str, return_origin: bool = False, num_answers: int = 10):  # type: ignore
+        if not text:
+            return []
+        boxed = _BOX_RE.findall(text)
+        answers = [s.strip() for s in boxed if s.strip()]
+        if not answers:
+            # 回退：抓取数值片段
+            answers = [m.group(0) for m in _NUM_RE.finditer(text)]
+        # 限制数量
+        return answers[: max(1, int(num_answers))]
+
+    def _normalize_str(s: str) -> str:
+        return ' '.join((s or '').strip().lower().split())
+
+    def _parse_num(s: str) -> Optional[float]:
+        try:
+            m = _NUM_RE.search(s)
+            return float(m.group(0)) if m else None
+        except Exception:
+            return None
+
+    def grade(pred: str, gt: str, strict: bool = False, problem: str = "", use_xverify: bool = True, debug: bool = False, log_callback=None):  # type: ignore
+        # 数值优先
+        pv = _parse_num(pred)
+        gv = _parse_num(gt)
+        if pv is not None and gv is not None:
+            if gv == 0:
+                ok = abs(pv - gv) < 1e-6
+            else:
+                ok = abs(pv - gv) / (abs(gv) + 1e-12) < 1e-3
+            return ok, None, None, {}
+        # 文本归一
+        ok = _normalize_str(pred) == _normalize_str(gt)
+        return ok, None, None, {}
+
+    def answer_tag_reward_fn_for_r1(prediction: str, gt_list: List[str], problem: str = "", points: List[float] = None, use_xverify: bool = True, debug: bool = False, log_callback=None):  # type: ignore
+        points = points or [1.0] * len(gt_list)
+        extracted = get_answer_str(prediction, return_origin=False, num_answers=len(gt_list) or 10)
+        earned = 0.0
+        scored_by = []
+        extracted_gts = []
+        for i, (gt, pt) in enumerate(zip(gt_list, points)):
+            hit = False
+            # 与每个预测答案尝试匹配
+            for ep in extracted:
+                ok, _, _, _ = grade(ep, gt, False, problem=problem, use_xverify=use_xverify, debug=debug, log_callback=log_callback)
+                if ok:
+                    hit = True
+                    break
+            if hit:
+                earned += float(pt)
+                scored_by.append('match')
+            else:
+                scored_by.append('mismatch')
+            extracted_gts.append(gt)
+        # total_score/total_point 简化一致
+        return earned, earned, extracted, extracted_gts, scored_by
+
+try:  # Judge 构建
+    from vlmeval.dataset.utils import build_judge  # type: ignore
+except Exception:
+    class _DummyJudge:
+        def working(self):
+            return False
+
+        def generate(self, prompt: str):
+            raise RuntimeError('Judge not available')
+
+    def build_judge(**kwargs):  # type: ignore
+        return _DummyJudge()
+
+try:  # 进度并行工具
+    from vlmeval.utils import track_progress_rich  # type: ignore
+except Exception:
+    def track_progress_rich(fn, tasks, nproc: int = 1, chunksize: int = 1, keys=None, save: Optional[str] = None):  # type: ignore
+        # 简化为顺序执行，保证兼容性
+        results = []
+        for t in tasks:
+            try:
+                results.append(fn(*t))
+            except Exception:
+                results.append(None)
+        return results
 
 # 线程锁用于同步输出
 output_lock = threading.Lock()
@@ -944,12 +1069,15 @@ RESPOND WITH ONLY THE BOXED SCORE:"""
         """保存评测结果"""
         dataset, model = dataset_key.split('/')
         output_dir = self.eval_dir / dataset / model
+        # 若传入 file_name，则作为子目录；否则直接写入模型目录
         if file_name:
             output_dir = output_dir / file_name
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+        # 统一基础文件名，避免出现 None_xxx.json
+        base_name = file_name if file_name else "results"
+
         # 保存汇总结果
-        score_file = output_dir / f"{file_name}_score.json"
+        score_file = output_dir / f"{base_name}_score.json"
         dump(results, str(score_file))
         
         # 构建详细结果
@@ -986,7 +1114,7 @@ RESPOND WITH ONLY THE BOXED SCORE:"""
             detailed_results.append(detailed_item)
         
         # 保存详细结果
-        detailed_file = output_dir / f"{file_name}_detailed_results.json"
+        detailed_file = output_dir / f"{base_name}_detailed_results.json"
         dump(detailed_results, str(detailed_file))
         
         # 保存Excel格式（带评测结果）
@@ -1002,7 +1130,7 @@ RESPOND WITH ONLY THE BOXED SCORE:"""
                 for r in detailed_results
             ]
             
-            detailed_xlsx_file = output_dir / f"{file_name}_detailed.xlsx"
+            detailed_xlsx_file = output_dir / f"{base_name}_detailed.xlsx"
             dump(eval_data_with_results, str(detailed_xlsx_file))
         except Exception as e:
             safe_print(f"⚠️  保存详细Excel文件失败: {e}")
