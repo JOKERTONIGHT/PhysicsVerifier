@@ -9,6 +9,7 @@
 - `eval_physics.py`：命令行评测入口
 - `universal_physics_evaluator.py`：评测器实现（数据加载、并行评分、统计/导出）
 - `variable_constant_verifier.py`：变量/常量检查器
+- `rule_based_verifier.py`：通用规则检查器（LLM 驱动，结构化规则 Prompt）
 
 ## 快速开始
 
@@ -121,6 +122,36 @@ python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
 - `summary`：样本数、总分/均分
 - `results[*].diagnostics`：逐题诊断（规则名、严重度、证据）
 - `symbol_nodes`：符号图（每个符号的 kind、来源、公式等）
+
+## 规则检查器（LLM 驱动）
+
+该检查器将“规则”结构化后交由 LLM 评估，避免本地复杂规则/图推理；内置一个样例规则：`var_const_consistency`（变量/常量使用一致性）。
+
+启用并运行默认规则（变量/常量一致性）：
+
+```bash
+python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 --rules-check
+```
+
+使用指定 LLM 模型与调用上限：
+
+```bash
+python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
+	--rules-check --rules-llm-model gpt-4o --rules-max-llm-calls 5 --api-key YOUR_KEY
+```
+
+指定规则列表（逗号分隔）：
+
+```bash
+python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
+	--rules-check --rules var_const_consistency
+```
+
+输出在 `evaluation_results/rules_reports/`，生成两份报告：
+- `*_rules(<rule-list>)_light_*.json`：仅包含 summary 与每题 diagnostics、score；
+- `*_rules(<rule-list>)_full_*.json`：包含完整符号元信息（symbol_nodes）。
+
+扩展规则：在 `rule_based_verifier.py` 的 `RULES_REGISTRY` 中新增一个规则构造函数（输入 text/symbols/formulas 等，输出结构化 payload），即可通过 `--rules` 指定运行。
 
 ## 输入字段对齐规则（关键）
 

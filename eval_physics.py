@@ -50,6 +50,7 @@ load_dotenv('.env')
 
 from universal_physics_evaluator import UniversalPhysicsEvaluator
 from variable_constant_verifier import VariableConstantVerifier
+from rule_based_verifier import RuleBasedVerifier
 import json
 from datetime import datetime as _dt
 
@@ -217,6 +218,31 @@ def parse_args():
         help="可用于检查器的LLM调用上限（默认0=不调用）"
     )
     # 统一为 LLM+符号推理流程，参数保持最小化（llm_model 与 max_llm_calls）
+
+    # 规则检查器参数（LLM 驱动）
+    parser.add_argument(
+        "--rules-check",
+        action="store_true",
+        help="启用通用规则检查器（LLM 驱动），将结构化规则交由 LLM 进行诊断"
+    )
+    parser.add_argument(
+        "--rules-llm-model",
+        type=str,
+        default=None,
+        help="规则检查器使用的 LLM 模型（留空则不调用 LLM）"
+    )
+    parser.add_argument(
+        "--rules-max-llm-calls",
+        type=int,
+        default=0,
+        help="规则检查器可用的 LLM 调用次数上限（默认 0 不调用）"
+    )
+    parser.add_argument(
+        "--rules",
+        type=str,
+        default="var_const_consistency",
+        help="逗号分隔的规则 ID 列表（默认: var_const_consistency）"
+    )
     
     return parser.parse_args()
 
@@ -393,6 +419,85 @@ def main():
             log_print(f"🧪 变量/常量检查完成，报告已保存: {light_path} (light), {full_path} (full)")
         except Exception as e:
             log_print(f"❌ 变量/常量检查失败（{ds_key}）: {e}")
+
+    def _run_rules_for_dataset(ds_key: str, run_payload: dict = None):
+        """执行通用规则检查器（LLM 驱动），生成 light/full 报告。
+
+        run_payload: 可选，{"run_name": str, "samples": List[Dict]}，不提供则从 evaluator 加载。
+        """
+        if not args.rules_check:
+            return
+        try:
+            rules = [s.strip() for s in (args.rules or "").split(",") if s.strip()]
+            verifier = RuleBasedVerifier(
+                llm_model=args.rules_llm_model,
+                max_llm_calls=args.rules_max_llm_calls,
+                logger=logger,
+                rules=rules,
+            )
+
+            # 加载样本
+            samples = None
+            run_name = None
+            if run_payload and isinstance(run_payload, dict):
+                samples = run_payload.get("samples")
+                run_name = run_payload.get("run_name")
+            if samples is None:
+                load_fn = getattr(evaluator, "load_inference_results", None)
+                if callable(load_fn):
+                    samples = load_fn(ds_key)
+                else:
+                    log_print(f"⚠️ 无法加载推理结果以运行规则检查（缺少 load_inference_results 方法）: {ds_key}")
+                    return
+
+            # 规范化样本字段
+            norm_samples = []
+            for r in samples or []:
+                norm_samples.append({
+                    "id": (r.get("id") or r.get("problem_id") or r.get("sample_id") or "").strip(),
+                    "question": r.get("question") or r.get("prompt") or r.get("instruction"),
+                    "context": r.get("context") or r.get("passage") or r.get("materials"),
+                    "prediction": r.get("prediction") or r.get("output") or r.get("final_answer") or r.get("answer_text") or "",
+                    "meta": {k: v for k, v in r.items() if k not in {"id","problem_id","sample_id","question","prompt","instruction","context","passage","materials","prediction","output","final_answer","answer_text"}}
+                })
+
+            report = verifier.analyze_batch(norm_samples, dataset_key=ds_key)
+
+            # 轻量报告
+            light_results = []
+            for r in report.get("results", []) or []:
+                light_results.append({
+                    "id": r.get("id"),
+                    "dataset": r.get("dataset"),
+                    "score": r.get("score", 0.0),
+                    "diagnostics": r.get("diagnostics", []),
+                })
+            light_report = {
+                "summary": report.get("summary", {}),
+                "results": light_results,
+            }
+
+            # 保存
+            out_dir = Path(args.output_dir) / "rules_reports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            base = ds_key.replace("/", "_")
+            rule_tag = "-".join(rules) if rules else "default"
+            if run_name:
+                light_path = out_dir / f"{base}__{run_name}__rules({rule_tag})_light_{ts}.json"
+                full_path = out_dir / f"{base}__{run_name}__rules({rule_tag})_full_{ts}.json"
+            else:
+                light_path = out_dir / f"{base}__rules({rule_tag})_light_{ts}.json"
+                full_path = out_dir / f"{base}__rules({rule_tag})_full_{ts}.json"
+
+            with light_path.open("w", encoding="utf-8") as f:
+                json.dump(light_report, f, ensure_ascii=False, indent=2)
+            with full_path.open("w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+
+            log_print(f"📏 规则检查完成，报告已保存: {light_path} (light), {full_path} (full)")
+        except Exception as e:
+            log_print(f"❌ 规则检查失败（{ds_key}）: {e}")
     
     # 试运行模式：仅检查数据集
     if args.dry_run:
@@ -433,6 +538,14 @@ def main():
                             _run_varconst_for_dataset(args.dataset, {"run_name": run_name, "samples": samples})
                     else:
                         log_print("⚠️ 未提供 load_multiple_runs_results，变量/常量检查仅对单次加载支持")
+                if args.rules_check:
+                    load_multi = getattr(evaluator, "load_multiple_runs_results", None)
+                    if callable(load_multi):
+                        runs_map = load_multi(args.dataset)
+                        for run_name, samples in (runs_map or {}).items():
+                            _run_rules_for_dataset(args.dataset, {"run_name": run_name, "samples": samples})
+                    else:
+                        log_print("⚠️ 未提供 load_multiple_runs_results，规则检查仅对单次加载支持")
             else:
                 log_print(f"❌ 数据集 {args.dataset} 多次运行评测失败")
         else:
@@ -471,6 +584,12 @@ def main():
                             runs_map = load_multi(dataset_key)
                             for run_name, samples in (runs_map or {}).items():
                                 _run_varconst_for_dataset(dataset_key, {"run_name": run_name, "samples": samples})
+                    if args.rules_check:
+                        load_multi = getattr(evaluator, "load_multiple_runs_results", None)
+                        if callable(load_multi):
+                            runs_map = load_multi(dataset_key)
+                            for run_name, samples in (runs_map or {}).items():
+                                _run_rules_for_dataset(dataset_key, {"run_name": run_name, "samples": samples})
             
             # 保存所有多次运行结果的汇总
             if all_multi_run_results:
@@ -488,6 +607,7 @@ def main():
                 log_print(f"\n✅ {args.dataset} 评测完成！")
                 log_print(f"🏆 总体得分: {results['total_score']:.2f} / {results['max_possible_score']:.2f} ({results['score_rate']:.2f}%)")
                 _run_varconst_for_dataset(args.dataset)
+                _run_rules_for_dataset(args.dataset)
             else:
                 log_print(f"❌ 数据集 {args.dataset} 评测失败")
         else:
@@ -504,6 +624,10 @@ def main():
                     for ds_key, r in (all_results or {}).items():
                         if r is not None:
                             _run_varconst_for_dataset(ds_key)
+                if args.rules_check:
+                    for ds_key, r in (all_results or {}).items():
+                        if r is not None:
+                            _run_rules_for_dataset(ds_key)
             else:
                 log_print(f"❌ 未能成功评测任何数据集")
     
