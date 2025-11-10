@@ -1,14 +1,14 @@
 """
-优化后的物理规则检查器（LLM 驱动 + 符号节点网络）
-包含对你原始实现的多项改进：
-- 更鲁棒的公式解析（统一 relation 抽取、边界判断）
-- 更精确的符号匹配（避免 \b 导致的误判）
-- 改进的定义检测（lhs 中提取符号视为定义）
-- 更健壮的公式行识别（避免把描述性文本当公式）
-- LLM 调用与 JSON 解析更坚固的回退逻辑
-- 缓存写入采取原子写入（temp -> rename），避免部分损坏
-- 若外部 build_judge 不可用，仍能在本地运行并返回合理结构
-- 若需要可继续加入文件锁等机制（此处使用原子写法以减少依赖）
+优化后的物理规则检查器（LLM 驱动 + 符号节点网络 + 规则插件化）
+
+新增：
+- 规则插件接口（见 PhysicsVerifier.rules.base）；
+- 内置 LLM 规则与图一致性规则迁移为插件（见 PhysicsVerifier.rules.llm_rules 与 rules.graph_consistency）；
+- 支持通过规则 ID（内置映射）或模块路径（module:Class / module.Class）动态加载规则；
+- 统一为每个规则提供 RuleContext（含符号图等）与 RuleRuntime（含 LLM、缓存、日志等）。
+
+保留：
+- 更鲁棒的公式解析、符号过滤、行识别、LLM JSON 解析回退、原子缓存写入等。
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import hashlib
 import os
 import tempfile
 import datetime
+import importlib
 
 # 复用评测框架内的 LLM 构造与 Key 检测（若不可用则退化为本地空结果）
 try:
@@ -84,98 +85,49 @@ class SymbolGraph:
                 if lhs_sym in node.symbols:
                     self.sym(lhs_sym).defined_by.append(fid)
 
+# ------------------------- 规则插件导入 -------------------------
+# 兼容作为脚本运行与作为包导入的两种场景
+try:  # type: ignore
+    # 允许作为脚本直接运行（修正 sys.path 以支持包导入）
+    if __name__ == "__main__" and __package__ is None:
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            __package__ = "PhysicsVerifier"
+        except Exception:
+            pass
 
-# ------------------------- 规则定义与注册 -------------------------
-def rule_var_const_consistency_payload(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": "var_const_consistency",
-        "title": "变量/常量使用一致性检查",
-        "description": (
-            "判断解答中是否存在变量/常量混淆，包括但不限于："
-            "(1) 常量被多次赋不同值；(2) 把变量当常量使用或反之；"
-            "(3) 同一符号被重载为不同物理量导致歧义；(4) 单位或物理含义不一致。"
-        ),
-        "expected_output": {
-            "type": "json_array",
-            "schema": {
-                "severity": "error|warning|info",
-                "rule": "string",
-                "symbol": "string|null",
-                "message": "string",
-                "evidence": "any"
-            }
-        },
-        "inputs": {
-            "text": inputs.get("text", ""),
-            "symbols": inputs.get("symbols", []),
-            "formulas": inputs.get("formulas", []),
-            "sym_stats": inputs.get("sym_stats", {}),
-            "snippets": inputs.get("snippets", {}),
-        }
-    }
+    # ------------------------- 规则插件导入 -------------------------
+    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime  # type: ignore
+except Exception:  # type: ignore
+    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime  # type: ignore
 
-
-def rule_formula_correctness_payload(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": "formula_correctness",
-        "title": "公式正确性检查",
-        "description": (
-            "基于给定的解析公式，检查是否存在物理上不正确或适用性错误的公式，"
-            "包括但不限于：量纲不一致、单位不一致、定律误用、同一变量被相互矛盾的关系定义。"
-        ),
-        "expected_output": {
-            "type": "json_array",
-            "schema": {
-                "severity": "error|warning|info",
-                "rule": "string",
-                "symbol": "string|null",
-                "message": "string",
-                "evidence": "any"
-            }
-        },
-        "inputs": {
-            "text": inputs.get("text", ""),
-            "formulas_structured": inputs.get("formulas_structured", []),
-            "symbols": inputs.get("symbols", []),
-            "sym_stats": inputs.get("sym_stats", {}),
-            "snippets": inputs.get("snippets", {}),
-        }
-    }
-
-
-def rule_precondition_consistency_payload(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": "precondition_consistency",
-        "title": "前提条件一致性检查",
-        "description": (
-            "检查作答中使用的公式/近似是否与所声明或文本隐含的前提条件一致，"
-            "例如小角近似、忽略空气阻力、稳态/准静态、理想气体等。"
-        ),
-        "expected_output": {
-            "type": "json_array",
-            "schema": {
-                "severity": "error|warning|info",
-                "rule": "string",
-                "symbol": "string|null",
-                "message": "string",
-                "evidence": "any"
-            }
-        },
-        "inputs": {
-            "text": inputs.get("text", ""),
-            "formulas_structured": inputs.get("formulas_structured", []),
-            "precondition_cues": inputs.get("precondition_cues", []),
-            "symbols": inputs.get("symbols", []),
-            "snippets": inputs.get("snippets", {}),
-        }
-    }
-
-
-RULES_REGISTRY = {
-    "var_const_consistency": rule_var_const_consistency_payload,
-    "formula_correctness": rule_formula_correctness_payload,
-    "precondition_consistency": rule_precondition_consistency_payload,
+_BUILTIN_RULES_MAP = {
+    # 内置别名映射到插件类（完整模块路径）
+    "graph_consistency": "PhysicsVerifier.rules.graph_consistency:GraphConsistencyRule",
+    "var_const_consistency": "PhysicsVerifier.rules.llm_rules:VarConstConsistencyRule",
+    "formula_correctness": "PhysicsVerifier.rules.llm_rules:FormulaCorrectnessRule",
+    "precondition_consistency": "PhysicsVerifier.rules.llm_rules:PreconditionConsistencyRule",
 }
+
+def _load_rule_class(spec: str):
+    """加载类对象。支持：
+    - "module:Class"
+    - "module.Class"
+    """
+    module_name = None
+    class_name = None
+    if ":" in spec:
+        module_name, class_name = spec.split(":", 1)
+    else:
+        # 尝试按最后一个点分割
+        if "." in spec:
+            module_name, class_name = spec.rsplit(".", 1)
+    if not module_name or not class_name:
+        raise ImportError(f"Invalid rule spec: {spec}")
+    mod = importlib.import_module(module_name)
+    cls = getattr(mod, class_name)
+    return cls
 
 
 # ------------------------- 主检查器实现 -------------------------
@@ -192,8 +144,14 @@ class RuleBasedVerifier:
         self._llm_calls_used = 0
         self.llm_temperature = float(llm_temperature)
         self.llm_max_output_tokens = int(llm_max_output_tokens)
-        # 默认启用三类规则
-        self.rules = rules or ["var_const_consistency", "formula_correctness", "precondition_consistency"]
+        # 默认启用：图一致性 + 三个 LLM 规则
+        self.rule_specs = rules or [
+            "graph_consistency",
+            "var_const_consistency",
+            "formula_correctness",
+            "precondition_consistency",
+        ]
+        self._rule_plugins: List[RulePlugin] = []
 
         # 缓存
         self.enable_cache = bool(enable_cache)
@@ -227,6 +185,9 @@ class RuleBasedVerifier:
             except Exception as e:
                 self._llm = None
                 self._log(f"LLM 初始化失败: {e}")
+
+        # 加载规则插件
+        self._load_plugins()
 
     # ------------------------- 日志/缓存/LLM 工具 -------------------------
     def _log(self, *args):
@@ -309,6 +270,19 @@ class RuleBasedVerifier:
         except Exception as e:
             self._log(f"LLM JSON 解析失败: {e}")
             return fallback
+
+    # ------------------------- 规则插件加载 -------------------------
+    def _load_plugins(self) -> None:
+        plugs: List[RulePlugin] = []
+        for spec in self.rule_specs:
+            try:
+                resolved = _BUILTIN_RULES_MAP.get(spec, spec)
+                cls = _load_rule_class(resolved)
+                inst = cls()  # 规则插件不带参初始化
+                plugs.append(inst)
+            except Exception as e:
+                self._log(f"规则加载失败[{spec}]: {e}")
+        self._rule_plugins = plugs
 
     # ------------------------- 轻量符号/公式提取 -------------------------
     _symbol_regex = re.compile(r"\\?([a-zA-Z][a-zA-Z0-9_]*)")
@@ -474,102 +448,19 @@ class RuleBasedVerifier:
                 cues.append(k)
         return sorted(set(cues))
 
-    # ------------------------- 内置：图一致性检查 -------------------------
-    def _builtin_graph_checks(self, graph: SymbolGraph) -> List[Dict[str, Any]]:
-        diags: List[Dict[str, Any]] = []
-
-        # 1) 自引用：x = f(x)（在等号/近似关系下）
-        for f in graph.formulas.values():
-            if f.relation in {"=", "≈", "~"} and f.lhs:
-                # 如果 LHS 的符号也出现在同一表达的 symbols 中，且该公式含多于 1 个符号，警告
-                m = re.search(r'([A-Za-z][A-Za-z0-9_]*)', f.lhs or "")
-                if m:
-                    lhs_sym = m.group(1)
-                    if lhs_sym in f.symbols and len(f.symbols) > 1:
-                        diags.append({
-                            "severity": "warning",
-                            "rule": "graph_consistency",
-                            "symbol": lhs_sym,
-                            "message": "公式出现在自引用形式（左边变量也出现在右边），需确认是否合理。",
-                            "evidence": {"formula": f.raw, "fid": f.fid}
-                        })
-
-        # 2) 未定义即使用：被频繁使用但没有任何定义/赋值痕迹
-        for name, s in graph.symbols.items():
-            likely_var = len(name) <= 3 or ("_" in name)
-            if not likely_var:
-                continue
-            if not s.defined_by and len(s.used_in) >= 2 and len(s.occurrences) >= 2:
-                diags.append({
-                    "severity": "info",
-                    "rule": "graph_consistency",
-                    "symbol": name,
-                    "message": "符号被多次使用但未在等式左边被明确定义，可能需要给出定义或说明。",
-                    "evidence": {"used_in": s.used_in[:5], "occurrences": s.occurrences[:3]}
-                })
-
-        # 3) 重复且冲突的定义：同一符号多次被不同公式定义（启发式：不同 RHS 文本）
-        rhs_map: Dict[str, Set[str]] = {}
-        for f in graph.formulas.values():
-            if f.lhs and f.relation in {"=", "≈", "~"} and f.rhs:
-                # 记录原始 rhs 文本的启发式签名
-                rhs_map.setdefault(re.search(r'([A-Za-z][A-Za-z0-9_]*)', f.lhs).group(1) if re.search(r'([A-Za-z][A-Za-z0-9_]*)', f.lhs or "") else f.lhs or f.fid, set()).add(f.rhs)
-        for name, rhs_set in rhs_map.items():
-            if len(rhs_set) >= 2:
-                diags.append({
-                    "severity": "warning",
-                    "rule": "graph_consistency",
-                    "symbol": name,
-                    "message": "同一符号在文本中由不同表达式定义，可能存在冲突或重载。",
-                    "evidence": {"rhs_variants": list(sorted(rhs_set))[:5]}
-                })
-
-        return diags
-
-    # ------------------------- 规则执行（逐条 LLM 调用） -------------------------
-    def _run_rule(self, rule_id: str, inputs: Dict[str, Any]) -> List[Dict[str, Any]]:
-        if rule_id not in RULES_REGISTRY:
-            return []
-        rule_payload = RULES_REGISTRY[rule_id](inputs)
-        system = "你是物理竞赛评分助理。请仅输出 JSON。"
-        user = (
-            "现在你将评估一个规则：给定 inputs，请返回 diagnostics（JSON 数组）。\n"
-            "每个 diagnostic 需包含 {severity, rule, symbol, message, evidence}。\n"
-            "注意：\n"
-            "- 严格遵循 JSON 输出，不要输出多余文本；\n"
-            "- 若无问题，返回空数组 [];\n"
-            "- rule 字段请使用规则 id。\n\n"
-            f"rule: {json.dumps({k: v for k, v in rule_payload.items() if k != 'inputs'}, ensure_ascii=False)}\n"
-            f"inputs: {json.dumps(rule_payload.get('inputs', {}), ensure_ascii=False)}"
+    # ------------------------- 规则执行：通过插件统一调度 -------------------------
+    def _make_runtime(self) -> RuleRuntime:
+        return RuleRuntime(
+            llm_model=self.llm_model,
+            max_llm_calls=self.max_llm_calls,
+            llm_calls_used=self._llm_calls_used,
+            llm_temperature=self.llm_temperature,
+            llm_max_output_tokens=self.llm_max_output_tokens,
+            logger=self.logger,
+            cache_get=self._cache_get,
+            cache_set=self._cache_set,
+            llm_json=self._llm_json,
         )
-        payload = {"rule": rule_id, "inputs": inputs, "model": self.llm_model}
-        cached = self._cache_get("rule", payload)
-        if cached is not None:
-            return cached if isinstance(cached, list) else []
-
-        data = self._llm_json(system, user, fallback=[])
-        # 强制保证输出为 list
-        if not isinstance(data, list):
-            data = []
-
-        # 规范化：补齐必要字段并修正 severity
-        norm = []
-        for d in data:
-            if not isinstance(d, dict):
-                continue
-            sev = str(d.get("severity", "info")).lower()
-            if sev not in {"error", "warning", "info"}:
-                sev = "info"
-            norm.append({
-                "severity": sev,
-                "rule": rule_id,
-                "symbol": d.get("symbol"),
-                "message": d.get("message", "") or d.get("detail", ""),
-                "evidence": d.get("evidence"),
-            })
-
-        self._cache_set("rule", payload, norm)
-        return norm
 
     # ------------------------- 公共 API -------------------------
     def analyze(self, sample: Dict[str, Any], dataset_key: Optional[str] = None) -> Dict[str, Any]:
@@ -586,36 +477,32 @@ class RuleBasedVerifier:
         sym_stats = self._collect_symbol_stats(text_all, parsed["symbols"]) if parsed.get("symbols") else {}
         precondition_cues = self._extract_precondition_cues(text_all)
 
-        # 内置图一致性检查
-        diagnostics: List[Dict[str, Any]] = []
-        diagnostics.extend(self._builtin_graph_checks(graph))
+        # 统一构造规则上下文与运行时
+        ctx = RuleContext(
+            sample_id=sample.get("id"),
+            dataset_key=dataset_key,
+            text_all=text_all,
+            lines=parsed.get("lines", []),
+            symbols=parsed["symbols"],
+            formulas_raw=parsed["formulas"],
+            graph=graph,
+            snippets=snippets,
+            sym_stats=sym_stats,
+            precondition_cues=precondition_cues,
+        )
+        rt = self._make_runtime()
 
-        # 逐条规则执行
-        for rid in self.rules:
-            inputs = {
-                "text": text_all,
-                "symbols": parsed["symbols"],
-                "formulas": parsed["formulas"],
-                # 提供结构化公式与前提 cues
-                "formulas_structured": [
-                    {
-                        "fid": f.fid,
-                        "raw": f.raw,
-                        "relation": f.relation,
-                        "lhs": f.lhs,
-                        "rhs": f.rhs,
-                        "symbols": f.symbols,
-                        "line_index": f.line_index,
-                    } for f in graph.formulas.values()
-                ],
-                "precondition_cues": precondition_cues,
-                "sym_stats": sym_stats,
-                "snippets": snippets,
-            }
+        # 执行所有插件
+        diagnostics: List[Dict[str, Any]] = []
+        for plugin in self._rule_plugins:
             try:
-                diagnostics.extend(self._run_rule(rid, inputs) or [])
+                di = plugin.run(ctx, rt) or []
+                # 确保 rule 字段存在
+                for d in di:
+                    d.setdefault("rule", getattr(plugin, "id", "unknown_rule"))
+                diagnostics.extend(di)
             except Exception as e:
-                self._log(f"规则 {rid} 执行出错: {e}")
+                self._log(f"规则执行失败[{getattr(plugin, 'id', str(plugin))}]: {e}")
 
         # 去重（rule+symbol+message）
         seen = set()
