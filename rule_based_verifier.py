@@ -1,20 +1,25 @@
 """
-优化后的物理规则检查器（LLM 驱动 + 符号节点网络 + 规则插件化）
+重构后的物理规则检查器 (LLM-Native)
 
-新增：
-- 规则插件接口（见 PhysicsVerifier.rules.base）；
-- 内置 LLM 规则与图一致性规则迁移为插件（见 PhysicsVerifier.rules.llm_rules 与 rules.graph_consistency）；
-- 支持通过规则 ID（内置映射）或模块路径（module:Class / module.Class）动态加载规则；
-- 统一为每个规则提供 RuleContext（含符号图等）与 RuleRuntime（含 LLM、缓存、日志等）。
+核心逻辑：
+1.  **规则翻译 (离线)**: 使用 `tests/translate_rules.py` 脚本，将所有自然语言规则
+    （如 `var_const_consistency`）翻译成一种清晰、结构化的“符号化规则定义” (SRD)
+    文本，并存储在 `rule_translations.json` 文件中。
+2.  **规则检查 (在线)**: `RuleBasedVerifier` 在运行时加载 `rule_translations.json`。
+    对于每一个待检查的样本，它会：
+    a. 构建符号图 (`SymbolGraph`)，提取符号、公式等结构化信息。
+    b. 将样本的结构化信息和 SRD 文本组合成一个 Prompt。
+    c. 请求 LLM 根据 SRD 规则来检查样本，并返回发现的违规项（Diagnostics）。
 
-保留：
-- 更鲁棒的公式解析、符号过滤、行识别、LLM JSON 解析回退、原子缓存写入等。
+这个架构将“规则定义”和“规则执行”完全分离，使得规则本身变得透明、可审计，
+同时将复杂的逻辑判断任务完全交给强大的 LLM，简化了本地代码。
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple, Set
 from pathlib import Path
+import ast
 import re
 import json
 import hashlib
@@ -23,43 +28,49 @@ import tempfile
 import datetime
 import importlib
 
-# 复用评测框架内的 LLM 构造与 Key 检测（若不可用则退化为本地空结果）
 try:
-    from vlmeval.dataset.utils import build_judge  # type: ignore
-    from vlmeval.smp import gpt_key_set  # type: ignore
-except Exception:  # 允许在无依赖环境下继续工作
-    build_judge = None  # type: ignore
-    def gpt_key_set():  # type: ignore
-        return False
+    from dotenv import load_dotenv  # type: ignore
+except ImportError:  # pragma: no cover
+    load_dotenv = None
+
+# 使用 OpenAI API
+try:
+    import openai
+except ImportError:
+    print("OpenAI package not found. Please run 'pip install openai'")
+    openai = None
 
 
-# ------------------------- 符号节点网络 -------------------------
+# ------------------------- 符号节点网络 (保持不变) -------------------------
 @dataclass
 class SymbolNode:
     name: str
-    kind: str = "unknown"  # variable|constant|parameter|unknown
-    occurrences: List[Dict[str, Any]] = field(default_factory=list)  # {line, context}
-    defined_by: List[str] = field(default_factory=list)  # formula ids
-    used_in: List[str] = field(default_factory=list)     # formula ids
-    meta: Dict[str, Any] = field(default_factory=dict)   # {unit, assigned_values, llm: {...}}
+    kind: str = "unknown"
+    occurrences: List[Dict[str, Any]] = field(default_factory=list)
+    defined_by: List[str] = field(default_factory=list)
+    used_in: List[str] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class FormulaNode:
     fid: str
     raw: str
-    relation: str  # '=', '≈', '~', '∝', 'unknown'
+    relation: str
     lhs: Optional[str]
     rhs: Optional[str]
     symbols: List[str]
     line_index: int
+    # 新增：用于精确的自引用检查
+    lhs_symbols: Set[str] = field(default_factory=set)
+    rhs_symbols: Set[str] = field(default_factory=set)
 
 
 class SymbolGraph:
-    """轻量符号图：包含符号与公式节点及依赖关系。"""
     def __init__(self) -> None:
         self.symbols: Dict[str, SymbolNode] = {}
         self.formulas: Dict[str, FormulaNode] = {}
+        self.edges: List[Dict[str, Any]] = []
 
     def sym(self, name: str) -> SymbolNode:
         if name not in self.symbols:
@@ -72,71 +83,78 @@ class SymbolGraph:
 
     def add_formula(self, fid: str, node: FormulaNode):
         self.formulas[fid] = node
-        # link symbols
         for s in node.symbols:
             self.sym(s).used_in.append(fid)
-        # 增强定义检测：尝试从 lhs 中抽取第一个符号作为定义
+            self.edges.append({"type": "use", "symbol": s, "fid": fid})
         if node.relation in {"=", "≈", "~"} and node.lhs:
-            # 从 lhs 抽取第一个可能的符号 token
             m = re.search(r'([A-Za-z][A-Za-z0-9_]*)', node.lhs)
             if m:
                 lhs_sym = m.group(1)
-                # 只在该符号在公式符号列表中时认为是定义
                 if lhs_sym in node.symbols:
                     self.sym(lhs_sym).defined_by.append(fid)
+                    self.edges.append({"type": "define", "symbol": lhs_sym, "fid": fid})
 
-# ------------------------- 规则插件导入 -------------------------
-# 兼容作为脚本运行与作为包导入的两种场景
-try:  # type: ignore
-    # 允许作为脚本直接运行（修正 sys.path 以支持包导入）
-    if __name__ == "__main__" and __package__ is None:
-        try:
-            import sys as _sys
-            _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            __package__ = "PhysicsVerifier"
-        except Exception:
-            pass
 
-    # ------------------------- 规则插件导入 -------------------------
-    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime  # type: ignore
-except Exception:  # type: ignore
-    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime  # type: ignore
+# ------------------------- 规则插件导入 (保持不变) -------------------------
+try:
+    try:
+        import sys as _sys
+        _CURR_DIR = str(Path(__file__).resolve().parent)
+        if _CURR_DIR not in _sys.path:
+            _sys.path.insert(0, _CURR_DIR)
+    except Exception:
+        pass
+    from rules.base import RulePlugin, RuleContext, RuleRuntime
+except Exception:
+    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime
 
 _BUILTIN_RULES_MAP = {
-    # 内置别名映射到插件类（完整模块路径）
-    "graph_consistency": "PhysicsVerifier.rules.graph_consistency:GraphConsistencyRule",
-    "var_const_consistency": "PhysicsVerifier.rules.llm_rules:VarConstConsistencyRule",
-    "formula_correctness": "PhysicsVerifier.rules.llm_rules:FormulaCorrectnessRule",
-    "precondition_consistency": "PhysicsVerifier.rules.llm_rules:PreconditionConsistencyRule",
+    "graph_consistency": "rules.graph_consistency:GraphConsistencyRule",
+    "var_const_consistency": "rules.llm_rules:VarConstConsistencyRule",
+    "formula_correctness": "rules.llm_rules:FormulaCorrectnessRule",
+    "precondition_consistency": "rules.llm_rules:PreconditionConsistencyRule",
+    "dimensional_homogeneity": "rules.llm_rules:DimensionalHomogeneityRule",
+    "small_angle_approx": "rules.llm_rules:SmallAngleApproxRule",
+    "energy_conservation_context": "rules.llm_rules:EnergyConservationContextRule",
+    "momentum_conservation_context": "rules.llm_rules:MomentumConservationContextRule",
+    "given_data_use": "rules.llm_rules:GivenDataUseRule",
+    "non_empty_solution": "rules.llm_rules:NonEmptySolutionRule",
+    "order_of_magnitude": "rules.llm_rules:OrderOfMagnitudeRule",
+    "safe_divide": "rules.llm_rules:SafeDivideRule",
+    "function_domain_guard": "rules.llm_rules:FunctionDomainRule",
 }
 
 def _load_rule_class(spec: str):
-    """加载类对象。支持：
-    - "module:Class"
-    - "module.Class"
-    """
-    module_name = None
-    class_name = None
+    module_name, class_name = None, None
     if ":" in spec:
         module_name, class_name = spec.split(":", 1)
-    else:
-        # 尝试按最后一个点分割
-        if "." in spec:
-            module_name, class_name = spec.rsplit(".", 1)
+    elif "." in spec:
+        module_name, class_name = spec.rsplit(".", 1)
+    
     if not module_name or not class_name:
         raise ImportError(f"Invalid rule spec: {spec}")
-    mod = importlib.import_module(module_name)
-    cls = getattr(mod, class_name)
-    return cls
+    
+    try:
+        mod = importlib.import_module(module_name)
+        return getattr(mod, class_name)
+    except ImportError:
+        if not module_name.startswith("PhysicsVerifier."):
+            alt_module = f"PhysicsVerifier.{module_name}"
+            mod = importlib.import_module(alt_module)
+            return getattr(mod, class_name)
+        raise
 
 
-# ------------------------- 主检查器实现 -------------------------
+# ------------------------- 主检查器实现 (重构) -------------------------
 class RuleBasedVerifier:
     def __init__(self, llm_model: Optional[str] = None, max_llm_calls: int = 0, logger=None,
-                 enable_cache: bool = True, llm_temperature: float = 0.2,
-                 llm_max_output_tokens: int = 4096,
-                 rules: Optional[List[str]] = None) -> None:
-        """LLM 驱动的通用规则检查器。"""
+                 enable_cache: bool = True, llm_temperature: float = 0.1,
+                 llm_max_output_tokens: int = 2048,
+                 rules: Optional[List[str]] = None,
+                 rule_translations_path: str = "rule_translations.json",
+                 llm_symbol_extraction: bool = False,
+                 rule_mode: str = 'srd',
+                 use_symbol_graph: bool = True) -> None:
         self.llm_model = llm_model
         self.max_llm_calls = int(max_llm_calls)
         self.logger = logger
@@ -144,422 +162,537 @@ class RuleBasedVerifier:
         self._llm_calls_used = 0
         self.llm_temperature = float(llm_temperature)
         self.llm_max_output_tokens = int(llm_max_output_tokens)
-        # 默认启用：图一致性 + 三个 LLM 规则
-        self.rule_specs = rules or [
-            "graph_consistency",
-            "var_const_consistency",
-            "formula_correctness",
-            "precondition_consistency",
-        ]
-        self._rule_plugins: List[RulePlugin] = []
+        self.llm_symbol_extraction = bool(llm_symbol_extraction)
+        self.use_symbol_graph = bool(use_symbol_graph)
+        self.rule_mode = rule_mode
+        
+        if rules is None:
+            self.rules_to_check = list(_BUILTIN_RULES_MAP.keys())
+        else:
+            self.rules_to_check = list(rules)
+            
+        self.rule_translations = {}
+        if self.rule_mode == 'srd':
+            self.rule_translations = self._load_rule_translations(rule_translations_path)
+        else:
+            self.rule_translations = self._load_direct_rule_descriptions()
+            self._log("Running in 'direct' rule mode. Using raw rule descriptions as prompts.")
 
-        # 缓存
         self.enable_cache = bool(enable_cache)
         self._cache: Dict[str, Any] = {}
-        # 放在脚本同目录下的 .cache 子目录
         try:
             base_dir = Path(__file__).parent
         except Exception:
             base_dir = Path(".").resolve()
         self._cache_path = (base_dir / ".cache" / "rule_based_llm_cache.json").resolve()
         if self.enable_cache:
-            try:
-                self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-                if self._cache_path.exists():
-                    # 仅在文件可读且合法 JSON 时加载
-                    try:
-                        self._cache = json.loads(self._cache_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        self._cache = {}
-            except Exception:
-                self._cache = {}
+            self._load_cache()
 
-        # LLM 初始化
-        if self.llm_model and self.max_llm_calls > 0 and build_judge and gpt_key_set():
+        if self.llm_model and openai:
+            if load_dotenv:
+                load_dotenv()
             try:
-                self._llm = build_judge(model=self.llm_model, timeout=180, retry=1,
-                                        temperature=self.llm_temperature,
-                                        max_output_tokens=self.llm_max_output_tokens,
-                                        verbose=False)
-                self._log(f"LLM 辅助已启用: {self.llm_model}")
+                base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+                self._llm = openai.OpenAI(base_url=base_url)
+                if not getattr(self._llm, "api_key", None):
+                    raise ValueError("OPENAI_API_KEY is not set")
+                self._log(f"OpenAI client enabled for model: {self.llm_model}")
             except Exception as e:
                 self._llm = None
-                self._log(f"LLM 初始化失败: {e}")
+                print(f"[Verifier] Failed to initialize OpenAI client: {e}")
 
-        # 加载规则插件
-        self._load_plugins()
+    def _load_rule_translations(self, path: str) -> dict:
+        trans_path = Path(path)
+        if not trans_path.exists():
+            self._log(f"Warning: Rule translations file not found at '{path}'. LLM checks will be skipped.")
+            return {}
+        with trans_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
 
-    # ------------------------- 日志/缓存/LLM 工具 -------------------------
-    def _log(self, *args):
-        if self.logger is not None:
+    def _load_direct_rule_descriptions(self) -> dict:
+        descriptions = {}
+        for rule_id, spec in _BUILTIN_RULES_MAP.items():
             try:
-                self.logger.info(" ".join(map(str, args)))
-            except Exception:
-                pass
+                rule_class = _load_rule_class(spec)
+                rule_instance = rule_class()
+                descriptions[rule_id] = {
+                    "title": getattr(rule_instance, "title", rule_id),
+                    "description": getattr(rule_instance, "description", ""),
+                    "srd": getattr(rule_instance, "description", ""),
+                }
+            except Exception as exc:
+                self._log(f"Failed to load rule '{rule_id}' for direct mode: {exc}")
+        return descriptions
+
+    # ------------------------- 日志/缓存/LLM 工具 (简化) -------------------------
+    def _log(self, *args):
+        if self.logger:
+            self.logger.info(" ".join(map(str, args)))
+
+    def _load_cache(self):
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._cache_path.exists():
+                self._cache = json.loads(self._cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            self._cache = {}
 
     def _cache_key(self, payload: Any) -> str:
-        try:
-            blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        except Exception:
-            blob = str(payload)
+        blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def _cache_get(self, namespace: str, payload: Any) -> Optional[Any]:
-        if not self.enable_cache:
-            return None
+        if not self.enable_cache: return None
         key = f"{namespace}:{self._cache_key(payload)}"
         return self._cache.get(key)
 
-    def _cache_set(self, namespace: str, payload: Any, value: Any) -> None:
-        if not self.enable_cache:
-            return
+    def _cache_set(self, namespace: str, payload: Any, value: Any):
+        if not self.enable_cache: return
         key = f"{namespace}:{self._cache_key(payload)}"
         self._cache[key] = value
-        # 原子写入缓存文件（写入临时文件然后替换）
         try:
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(self._cache_path.parent))
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            with tempfile.NamedTemporaryFile("w", delete=False, dir=self._cache_path.parent, encoding="utf-8") as f:
                 json.dump(self._cache, f, ensure_ascii=False, indent=None)
-            os.replace(tmp_path, str(self._cache_path))
+            os.replace(f.name, str(self._cache_path))
         except Exception:
-            # 忽略写失败
             pass
 
     def _llm_available(self) -> bool:
-        return self._llm is not None and self._llm_calls_used < self.max_llm_calls
-
-    @staticmethod
-    def _safe_parse_json_from_text(text: str):
-        text = (text or "").strip()
-        if not text:
-            return None
-        # 先尝试直接解析
-        try:
-            return json.loads(text)
-        except Exception:
-            pass
-        # 尝试在文本里提取 JSON 结构（[] 或 {}）
-        m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
-        if m:
-            try:
-                return json.loads(m.group(1))
-            except Exception:
-                return None
-        return None
+        if self._llm is None:
+            return False
+        if self.max_llm_calls <= 0:
+            return True
+        return self._llm_calls_used < self.max_llm_calls
 
     def _llm_json(self, system_prompt: str, user_prompt: str, fallback=None) -> Any:
-        if fallback is None:
-            fallback = []
         if not self._llm_available():
-            return fallback
+            return fallback if fallback is not None else []
+        
+        payload = {"system": system_prompt, "user": user_prompt, "model": self.llm_model}
+        cached = self._cache_get("llm_json", payload)
+        if cached is not None:
+            return cached
+
         try:
-            prompt = system_prompt.strip() + "\n\n" + user_prompt.strip()
-            # 不同 judge 接口可能返回不同类型，尽量兼容
-            resp_obj = self._llm.generate(prompt)
-            # 若返回对象带 text 属性
-            if hasattr(resp_obj, "text"):
-                resp = resp_obj.text.strip()
-            else:
-                # 可能直接返回字符串
-                resp = str(resp_obj).strip()
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            
+            response = self._llm.chat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                temperature=self.llm_temperature,
+                max_tokens=self.llm_max_output_tokens,
+                # Request JSON output from models that support it
+                response_format={"type": "json_object"},
+            )
+            resp = response.choices[0].message.content
             self._llm_calls_used += 1
-            data = self._safe_parse_json_from_text(resp)
-            if data is None:
-                return fallback
-            return data
-        except Exception as e:
-            self._log(f"LLM JSON 解析失败: {e}")
-            return fallback
-
-    # ------------------------- 规则插件加载 -------------------------
-    def _load_plugins(self) -> None:
-        plugs: List[RulePlugin] = []
-        for spec in self.rule_specs:
+            
+            # The model should return a JSON string. We'll try to parse it directly.
+            # A regex search is kept as a fallback for models that might wrap the JSON in text.
             try:
-                resolved = _BUILTIN_RULES_MAP.get(spec, spec)
-                cls = _load_rule_class(resolved)
-                inst = cls()  # 规则插件不带参初始化
-                plugs.append(inst)
-            except Exception as e:
-                self._log(f"规则加载失败[{spec}]: {e}")
-        self._rule_plugins = plugs
+                data = json.loads(resp)
+                self._cache_set("llm_json", payload, data)
+                return data
+            except json.JSONDecodeError:
+                match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", resp)
+                if match:
+                    data = json.loads(match.group(1))
+                    self._cache_set("llm_json", payload, data)
+                    return data
+            
+            self._log(f"LLM response could not be parsed as JSON: {resp}")
+            return fallback if fallback is not None else []
+        except Exception as e:
+            self._log(f"LLM call failed: {e}")
+            return fallback if fallback is not None else []
 
-    # ------------------------- 轻量符号/公式提取 -------------------------
+    # ------------------------- 符号/公式提取 (简化和增强) -------------------------
     _symbol_regex = re.compile(r"\\?([a-zA-Z][a-zA-Z0-9_]*)")
-    _common_units = {
-        "m","s","kg","A","K","mol","cd","N","Pa","J","W","C","V","F","Ω","ohm","S","H","Hz","T","lm","lx","Bq","Gy","Sv","Wb",
-        "mm","cm","dm","km","ms","us","μs","ns","deg","rad","sr","eV","MeV","GeV","keV","u","L","ml","mL","bar","atm",
-    }
-    # 常见 LaTeX 控制词与英文停用词，避免被当作符号
-    _latex_words: Set[str] = {
-        "frac","dfrac","tfrac","cfrac","sqrt","text","mathrm","mathbf","mathit","mathbb","operatorname",
-        "cdot","times","left","right","begin","end","over","hat","bar","dot","ddot","vec","cal",
-        "partial","nabla","sum","int","lim","log","ln","sin","cos","tan","arcsin","arccos","arctan",
-        "sinh","cosh","tanh","exp","min","max","arg","det","Tr","trace","sgn","deg","infty","infin",
-    }
-    _stop_words: Set[str] = {
-        # English common
-        "the","of","to","in","for","and","is","we","this","that","with","on","by","as","be","are","or","an","at","from","it",
-        "our","can","will","not","have","has","but","if","then","else","than","which","these","those","their","its","into","using","use",
-        "problem","solution","thus","hence","therefore","let","consider","assume","since","because","also","so","such","where","when","while",
-        "between","within","about","approx","approximate","approximately","given","known","unknown","constant","planck","mass","electron","proton",
-    }
-
-    # 少量常见物理常数/变量白名单（可扩充）
-    _common_physics_names = {"g", "c", "h", "k", "G", "m", "M", "q", "e", "k_B", "R", "T", "P", "V", "E", "U", "F", "v", "u", "t"}
+    _stop_words = {"the", "of", "a", "an", "is", "in", "on", "for", "with", "and", "or", "not", "sin", "cos", "tan", "log", "ln", "exp"}
+    _answer_whitespace_re = re.compile(r"\s+")
+    _answer_text_command_re = re.compile(r"\\text\{([^}]*)\}")
 
     def _looks_like_symbol(self, tok: str) -> bool:
-        """启发式过滤：保留更可能是物理符号的 token。"""
-        if not tok:
-            return False
+        if not tok or len(tok) > 20: return False
         low = tok.lower()
-        if low in self._latex_words or low in self._stop_words:
-            return False
-        if tok in self._common_units:
-            return False
-        # 白名单保留
-        if tok in self._common_physics_names:
-            return True
-        # 全小写且长度 >=4 的英文单词，保守排除
-        if re.fullmatch(r"[a-z]+", tok) and len(tok) >= 4:
-            return False
-        # 带下划线或数字通常是变量名称
-        if ("_" in tok) or re.search(r"\d", tok):
-            return True
-        # 短 token（长度<=3）通常可能是符号
-        if len(tok) <= 3:
-            return True
-        # 其余：保守过滤
-        return False
-
-    def _is_likely_formula_line(self, line: str) -> bool:
-        """更严格判断一行是否为公式表达式，避免将描述性句子误判为公式。"""
-        if not line or len(line) > 500:
-            return False
-        # 必须包含关系符并且左右至少有一个字母/数字/括号
-        if not re.search(r'([A-Za-z0-9_\)\]\}]\s*(=|≈|∝|~)\s*[-+A-Za-z0-9_\(\[\{])', line):
-            return False
-        # 排除纯自然语言句子（小写单词过多）——启发式
-        tokens = re.findall(r"[A-Za-z]+", line)
-        if tokens and sum(1 for t in tokens if len(t) >= 4) > max(3, len(tokens) // 2):
-            return False
+        if low in self._stop_words: return False
+        if re.fullmatch(r"[a-z]+", tok) and len(tok) >= 4: return False
         return True
 
     def _extract_symbols_and_formulas(self, text: str) -> Dict[str, Any]:
-        symbols = []
-        symbol_set = set()
-        formulas = []
-        # 先统一换行与空行处理
         lines = (text or "").splitlines()
-        for li, raw in enumerate(lines):
-            line = raw.strip()
-            # 更严格地认为是公式才加入 formulas
-            if self._is_likely_formula_line(line):
+        symbols, symbol_set = [], set()
+        formulas = []
+        for line in lines:
+            line = line.strip()
+            if re.search(r'(=|≈|~|∝)', line):
                 formulas.append(line)
             for m in self._symbol_regex.finditer(line):
                 sym = m.group(1)
-                if sym.lower() in {"final", "answer", "boxed", "ans", "unit", "units"}:
-                    continue
-                if not self._looks_like_symbol(sym):
-                    continue
-                if sym not in symbol_set:
+                if self._looks_like_symbol(sym) and sym not in symbol_set:
                     symbol_set.add(sym)
                     symbols.append(sym)
         return {"symbols": symbols, "formulas": formulas, "lines": lines}
 
     def _parse_formula_line(self, raw: str, line_idx: int) -> FormulaNode:
         raw = raw.strip()
-        # 找关系符（取第一个出现的）
-        m = re.search(r'(=|≈|∝|~)', raw)
-        if m:
-            relation = m.group(1)
-            parts = [p.strip() for p in raw.split(relation, 1)]
-            lhs = parts[0] if len(parts) == 2 else None
-            rhs = parts[1] if len(parts) == 2 else None
-        else:
-            relation, lhs, rhs = "unknown", None, raw
+        m = re.search(r'(=|≈|~|∝)', raw)
+        relation, lhs, rhs = (m.group(1), *[p.strip() for p in raw.split(m.group(1), 1)]) if m else ("unknown", None, raw)
 
-        # 抽取符号（忽略纯数字）
-        syms: List[str] = []
-        seen: Set[str] = set()
-        for t in self._symbol_regex.findall(raw):
-            if re.fullmatch(r"[-+]?\d+(\.\d+)?([eE][-+]?\d+)?", t):
-                continue
-            if not self._looks_like_symbol(t):
-                continue
-            if t not in seen:
-                seen.add(t)
-                syms.append(t)
+        def get_symbols(text: Optional[str]) -> Set[str]:
+            if not text: return set()
+            return {s for s in self._symbol_regex.findall(text) if self._looks_like_symbol(s)}
 
-        fid = f"F{line_idx:04d}"
-        return FormulaNode(fid=fid, raw=raw, relation=relation, lhs=(lhs or None), rhs=(rhs or None), symbols=syms, line_index=line_idx)
+        lhs_symbols = get_symbols(lhs)
+        rhs_symbols = get_symbols(rhs)
+        all_symbols = list(lhs_symbols | rhs_symbols)
+
+        return FormulaNode(
+            fid=f"F{line_idx:04d}", raw=raw, relation=relation, lhs=lhs, rhs=rhs,
+            symbols=all_symbols, line_index=line_idx,
+            lhs_symbols=lhs_symbols, rhs_symbols=rhs_symbols
+        )
 
     def _build_symbol_graph(self, lines: List[str], symbols: List[str], formulas: List[str]) -> SymbolGraph:
         graph = SymbolGraph()
-        # 符号出现上下文（使用更精确的 token 边界匹配）
         for i, raw in enumerate(lines):
             for s in symbols:
-                pattern = re.compile(rf'(?<![A-Za-z0-9_]){re.escape(s)}(?![A-Za-z0-9_])')
-                if pattern.search(raw):
-                    seg = lines[max(0, i-1): min(len(lines), i+2)]
-                    graph.add_occurrence(s, i, " ".join(x.strip() for x in seg))
-        # 解析公式并接入
+                if re.search(rf'\b{re.escape(s)}\b', raw):
+                    graph.add_occurrence(s, i, raw)
         for i, f_raw in enumerate(formulas):
             fn = self._parse_formula_line(f_raw, i)
             graph.add_formula(fn.fid, fn)
         return graph
 
-    def _build_symbol_contexts(self, lines: List[str], symbols: List[str], window: int = 1) -> Dict[str, List[str]]:
-        """为每个符号截取上下文片段，帮助 LLM 判断语义/重载。"""
-        snippets: Dict[str, List[str]] = {s: [] for s in symbols}
-        for i, raw in enumerate(lines):
-            line = raw.strip()
-            for s in symbols:
-                pattern = re.compile(rf'(?<![A-Za-z0-9_]){re.escape(s)}(?![A-Za-z0-9_])')
-                if pattern.search(line):
-                    seg = lines[max(0, i-window): min(len(lines), i+window+1)]
-                    snippets[s].append(" ".join(x.strip() for x in seg))
-        return snippets
+    def _create_context_summary(self, graph: SymbolGraph, text_all: str) -> str:
+        """为LLM检查创建上下文摘要 (结构化信息)"""
+        symbol_overview = []
+        for name, node in list(graph.symbols.items())[:50]:
+            symbol_overview.append({
+                "name": name,
+                "defined_count": len(node.defined_by),
+                "used_in": node.used_in[:5],
+                "occurrence_count": len(node.occurrences),
+            })
 
-    def _collect_symbol_stats(self, text: str, symbols: List[str]) -> Dict[str, Any]:
-        stats: Dict[str, Any] = {}
-        for s in symbols:
-            # 捕获常见数字格式（整数、浮点、科学计数）
-            assigns = re.findall(rf"\b{re.escape(s)}\s*=\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)", text, flags=re.IGNORECASE)
-            stats[s] = {
-                "frequency": len(re.findall(rf"(?<![A-Za-z0-9_]){re.escape(s)}(?![A-Za-z0-9_])", text)),
-                "assigned_values": sorted(set(assigns)),
+        formula_overview = []
+        for f in list(graph.formulas.values())[:20]:
+            f_dict = {
+                "fid": f.fid,
+                "raw": f.raw,
+                "relation": f.relation,
+                "lhs": f.lhs,
+                "rhs": f.rhs,
+                "symbols": f.symbols,
+                "line_index": f.line_index,
             }
-        return stats
+            formula_overview.append(f_dict)
 
-    def _extract_precondition_cues(self, text: str) -> List[str]:
-        cues = []
-        # 中英文常见前提/近似关键词（可继续扩充）
-        keywords = [
-            # 中文
-            "小角近似", "忽略空气阻力", "忽略摩擦", "理想气体", "稳态", "准静态", "绝热", "等温", "非相对论", "低速近似", "小振幅",
-            # 英文
-            "small angle", "neglect air resistance", "ignore friction", "ideal gas", "steady state", "quasi-static",
-            "adiabatic", "isothermal", "non-relativistic", "low speed", "small amplitude",
-        ]
-        low = text.lower()
-        for k in keywords:
-            if k in text or k in low:
-                cues.append(k)
-        return sorted(set(cues))
+        summary = {
+            "symbol_overview": symbol_overview,
+            "formula_overview": formula_overview,
+            "text_preview": text_all[:1200],
+        }
+        return json.dumps(summary, ensure_ascii=False, indent=2)
 
-    # ------------------------- 规则执行：通过插件统一调度 -------------------------
-    def _make_runtime(self) -> RuleRuntime:
-        return RuleRuntime(
-            llm_model=self.llm_model,
-            max_llm_calls=self.max_llm_calls,
-            llm_calls_used=self._llm_calls_used,
-            llm_temperature=self.llm_temperature,
-            llm_max_output_tokens=self.llm_max_output_tokens,
-            logger=self.logger,
-            cache_get=self._cache_get,
-            cache_set=self._cache_set,
-            llm_json=self._llm_json,
-        )
+    def _parse_expected_answers(self, sample: Dict[str, Any]) -> List[str]:
+        answer_field = sample.get("answer")
+        if answer_field in (None, ""):
+            return []
 
-    # ------------------------- 公共 API -------------------------
-    def analyze(self, sample: Dict[str, Any], dataset_key: Optional[str] = None) -> Dict[str, Any]:
-        q = sample.get("question") or ""
-        c = sample.get("context") or ""
-        p = sample.get("prediction") or ""
-        text_all = "\n".join([q, c, p])
-
-        # 轻量符号推理上下文 + 符号节点网络
-        parsed = self._extract_symbols_and_formulas(text_all)
-        graph = self._build_symbol_graph(parsed.get("lines", []), parsed["symbols"], parsed["formulas"])
-
-        snippets = self._build_symbol_contexts(parsed["lines"], parsed["symbols"]) if parsed.get("lines") else {}
-        sym_stats = self._collect_symbol_stats(text_all, parsed["symbols"]) if parsed.get("symbols") else {}
-        precondition_cues = self._extract_precondition_cues(text_all)
-
-        # 统一构造规则上下文与运行时
-        ctx = RuleContext(
-            sample_id=sample.get("id"),
-            dataset_key=dataset_key,
-            text_all=text_all,
-            lines=parsed.get("lines", []),
-            symbols=parsed["symbols"],
-            formulas_raw=parsed["formulas"],
-            graph=graph,
-            snippets=snippets,
-            sym_stats=sym_stats,
-            precondition_cues=precondition_cues,
-        )
-        rt = self._make_runtime()
-
-        # 执行所有插件
-        diagnostics: List[Dict[str, Any]] = []
-        for plugin in self._rule_plugins:
+        candidates: Any = answer_field
+        if isinstance(answer_field, str):
             try:
-                di = plugin.run(ctx, rt) or []
-                # 确保 rule 字段存在
-                for d in di:
-                    d.setdefault("rule", getattr(plugin, "id", "unknown_rule"))
-                diagnostics.extend(di)
-            except Exception as e:
-                self._log(f"规则执行失败[{getattr(plugin, 'id', str(plugin))}]: {e}")
+                parsed = ast.literal_eval(answer_field)
+                candidates = parsed
+            except (ValueError, SyntaxError, TypeError):
+                candidates = answer_field
 
-        # 去重（rule+symbol+message）
+        if isinstance(candidates, (list, tuple, set)):
+            return [str(item) for item in candidates if item not in (None, "")]
+        return [str(candidates)]
+
+    def _normalize_answer_text(self, text: Any) -> str:
+        if text in (None, ""):
+            return ""
+        cleaned = str(text)
+        replacements = ["\\boxed", "\\left", "\\right", "$", "\\mathrm", "\\operatorname", "\\textbf", "\\mathit"]
+        for token in replacements:
+            cleaned = cleaned.replace(token, "")
+        cleaned = self._answer_text_command_re.sub(r"\1", cleaned)
+        cleaned = cleaned.replace("{", "").replace("}", "")
+        cleaned = cleaned.lower()
+        cleaned = self._answer_whitespace_re.sub("", cleaned)
+        return cleaned
+
+    def _answer_matches(self, sample: Dict[str, Any]) -> bool:
+        expected_answers = [self._normalize_answer_text(a) for a in self._parse_expected_answers(sample)]
+        expected_answers = [a for a in expected_answers if a]
+        if not expected_answers:
+            return False
+        normalized_prediction = self._normalize_answer_text(sample.get("prediction", ""))
+        if not normalized_prediction:
+            return False
+        return any(ans in normalized_prediction for ans in expected_answers)
+
+    # ------------------------- 新的LLM驱动的规则检查 -------------------------
+    def _get_check_prompt(self, srd: str, raw_answer: str, context_summary: str, rule_id: str) -> tuple[str, str]:
+        system_prompt = (
+            "You are an expert physics grader. Your task is to check a student's answer "
+            "against a specific, formal rule and report any violations in a structured JSON format. "
+            "You must be conservative: it is better to miss a subtle issue than to incorrectly mark a correct solution as wrong. "
+            "Output ONLY a valid JSON object (for a single violation) or a JSON array (for multiple violations). "
+            "If no violations are found, output an empty array `[]`."
+        )
+        trimmed_answer = raw_answer.strip()
+        # 适当放宽截断上限，保留更多原始作答内容
+        max_chars = 12000
+        if len(trimmed_answer) > max_chars:
+            trimmed_answer = trimmed_answer[:max_chars] + "\n...[truncated]"
+        if self.rule_mode == "direct":
+            rule_block = f"Rule Description:\n{srd.strip()}"
+        else:
+            rule_block = f"You must enforce the following Symbolic Rule Definition (SRD):\n```\n{srd.strip()}\n```"
+
+        user_prompt = f"""
+{rule_block}
+
+The student's submission (verbatim text):
+---
+{trimmed_answer}
+---
+
+Structured extraction summary (JSON helpers, may be incomplete):
+{context_summary}
+
+Instructions:
+1. First rely on the raw text to understand the student's reasoning.
+2. Use the structured summary only as a helper to locate symbols, equations, and counts; it may be incomplete or noisy.
+3. Compare the student's work against the SRD step by step.
+4. Only flag a violation if all of the following are true:
+    - You can quote at least one concrete sentence or formula from the student's text that clearly contradicts the rule.
+    - That quote cannot be reasonably interpreted as correct, harmless, or unrelated to this rule.
+    - You are at least 80% confident that a real violation exists.
+5. Distinguish severity:
+    - Use "error" ONLY for clear, undeniable violations with strong direct evidence.
+    - Use "warning" ONLY when there is strong indication of a problem but some minor uncertainty remains.
+    - If you are not sure (for example, the text is ambiguous, the context is missing, or the rule's preconditions may not hold), you MUST treat the solution as compliant for this rule and return [].
+6. It is acceptable to miss some subtle issues. It is NOT acceptable to invent problems or penalize a solution that could reasonably be correct.
+
+JSON Output Schema:
+[
+    {{
+        "severity": "error" | "warning" | "info",
+        "rule": "{rule_id}",
+        "symbol": "symbol_or_equation_identifier",
+        "message": "Short human-readable explanation",
+        "evidence": {{ "quote": "direct quote or formula from student's text" }}
+    }}
+]
+
+Respond with only the JSON output (array or empty array).
+"""
+        return system_prompt, user_prompt
+
+    def analyze(self, sample: Dict[str, Any], dataset_key: Optional[str] = None, export_graph: bool = False) -> Dict[str, Any]:
+        # 使用完整回答，不再截断，让 LLM 看到全部作答
+        text_all = "\n".join([
+            sample.get("question", ""),
+            sample.get("context", ""),
+            sample.get("prediction", ""),
+        ])
+
+        answer_correct = self._answer_matches(sample)
+
+        graph: Optional[SymbolGraph] = None
+        context_summary: Optional[str] = None
+
+        if self.use_symbol_graph and not answer_correct:
+            parsed = self._extract_symbols_and_formulas(text_all)
+            graph = self._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
+            context_summary = self._create_context_summary(graph, text_all)
+        
+        all_diagnostics: List[Dict[str, Any]] = []
+
+        if (not answer_correct) and self._llm_available() and self.rule_translations:
+            for rule_id in self.rules_to_check:
+                rule_info = self.rule_translations.get(rule_id)
+                if not rule_info or not rule_info.get("srd") or "failed" in rule_info["srd"].lower():
+                    continue
+
+                srd = rule_info["srd"]
+
+                # 若不使用符号图，则只提供原始回答文本，不提供结构化 JSON
+                if self.use_symbol_graph and context_summary is not None:
+                    system_prompt, user_prompt = self._get_check_prompt(
+                        srd=srd,
+                        raw_answer=text_all,
+                        context_summary=context_summary,
+                        rule_id=rule_id,
+                    )
+                else:
+                    system_prompt, user_prompt = self._get_check_prompt(
+                        srd=srd,
+                        raw_answer=text_all,
+                        context_summary="{}",
+                        rule_id=rule_id,
+                    )
+                
+                diagnostics = self._llm_json(system_prompt, user_prompt, fallback=[])
+                if isinstance(diagnostics, dict):
+                    diagnostics = [diagnostics]
+                elif isinstance(diagnostics, str):
+                    diagnostics = [diagnostics]
+                elif diagnostics is None:
+                    diagnostics = []
+                all_diagnostics.extend(diagnostics)
+
+        # 去重和计分
         seen = set()
-        uniq: List[Dict[str, Any]] = []
-        for d in diagnostics:
-            key = (str(d.get("rule")), d.get("symbol"), str(d.get("message")))
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq.append(d)
-        diagnostics = uniq
+        unique_diagnostics = []
+        for d in all_diagnostics:
+            if isinstance(d, str):
+                key = (None, None, d)
+                payload = {"severity": "info", "rule": None, "symbol": None, "message": d}
+            else:
+                key = (d.get("rule"), d.get("symbol"), d.get("message"))
+                payload = d
+            if key not in seen:
+                unique_diagnostics.append(payload)
+                seen.add(key)
+        
+        score = sum(-1.0 if d.get("severity") == "error" else -0.5 for d in unique_diagnostics if d.get("severity") in ["error", "warning"])
 
-        # 计分：error -1.0，warning -0.5，info 0
-        score = 0.0
-        for d in diagnostics:
-            sev = d.get("severity")
-            if sev == "error":
-                score -= 1.0
-            elif sev == "warning":
-                score -= 0.5
-
-        # 输出序列化 symbol_nodes / formula_nodes（使用 vars）
-        symbol_nodes = {k: vars(v) for k, v in graph.symbols.items()}
-        formula_nodes = {k: vars(v) for k, v in graph.formulas.items()}
-
-        return {
+        out = {
             "id": sample.get("id"),
             "dataset": dataset_key,
-            "diagnostics": diagnostics,
-            "symbol_nodes": symbol_nodes,
-            "formula_nodes": formula_nodes,
-            "precondition_cues": precondition_cues,
+            "diagnostics": unique_diagnostics,
             "score": score,
+            "answer_correct": answer_correct,
+        }
+        if export_graph and graph is not None:
+            out["symbol_nodes"] = {k: vars(v) for k, v in graph.symbols.items()}
+            out["formula_nodes"] = {k: vars(v) for k, v in graph.formulas.items()}
+            out["graph_edges"] = graph.edges
+        return out
+
+    def analyze_batch(self, samples: List[Dict[str, Any]], dataset_key: Optional[str] = None, export_graph: bool = False) -> Dict[str, Any]:
+        results = [self.analyze(s, dataset_key=dataset_key, export_graph=export_graph) for s in samples or []]
+        total_score = sum(r.get("score", 0.0) for r in results)
+        return {
+            "summary": {
+                "dataset": dataset_key,
+                "num_samples": len(results),
+                "total_score": total_score,
+                "avg_score": (total_score / len(results)) if results else 0.0,
+                "created_at": datetime.datetime.now().isoformat(),
+            },
+            "results": results,
         }
 
-    def analyze_batch(self, samples: List[Dict[str, Any]], dataset_key: Optional[str] = None) -> Dict[str, Any]:
-        results = [self.analyze(s, dataset_key=dataset_key) for s in samples or []]
-        total = sum(r.get("score", 0.0) for r in results)
-        summary = {
-            "dataset": dataset_key,
-            "num_samples": len(results),
-            "total_score": total,
-            "avg_score": (total / len(results)) if results else 0.0,
-            "created_at": datetime.datetime.now().isoformat(),
-        }
-        return {"summary": summary, "results": results}
 
-
-# ------------------------- 若作为脚本运行时的简单示例 -------------------------
+# ------------------------- 脚本运行 (重构为独立CLI) -------------------------
 if __name__ == "__main__":
-    # 简单示例，演示 analyzer 在无 LLM 环境下也能运行
-    rv = RuleBasedVerifier(llm_model=None, max_llm_calls=0, enable_cache=True)
-    sample = {
-        "id": "demo1",
-        "question": "A block slides with initial speed v. Show that v^2 = u^2 + 2as.",
-        "context": "Assume constant acceleration a. Let u be initial speed.",
-        "prediction": "Using v = u + at and s = ut + 1/2 at^2, we get v^2 = u^2 + 2as. Also assume v = v0."
-    }
-    out = rv.analyze(sample)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Physics Rule-Based Verifier using LLMs.")
+    parser.add_argument("--input", "-i", type=str, default="data/evaluation_input.json",
+                        help="Path to the input JSON file containing samples to verify.")
+    parser.add_argument("--output", "-o", type=str, default="results/rule_check_report.json",
+                        help="Path to save the output report JSON file.")
+    parser.add_argument("--rules", nargs="+", default=None,
+                        help=f"A list of rules to check. Defaults to all built-in rules: {list(_BUILTIN_RULES_MAP.keys())}")
+    parser.add_argument("--llm-model", type=str, default="gpt-4o",
+                        help="The LLM model to use for checking (e.g., 'gpt-4o', 'gpt-3.5-turbo').")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="Disable LLM-based checks entirely.")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Disable caching for LLM calls.")
+    parser.add_argument("--export-graph", action="store_true",
+                        help="Export symbol and formula graphs in the output.")
+    parser.add_argument("--output-mode", type=str, choices=['full_report', 'errors_only'], default='full_report',
+                        help="Output mode: 'full_report' (default) or 'errors_only'.")
+    parser.add_argument("--rule-mode", type=str, choices=['direct', 'srd'], default='srd',
+                        help="Rule checking mode: 'srd' for symbolic rule definitions, 'direct' for raw descriptions.")
+    parser.add_argument("--max-llm-calls", type=int, default=0,
+                        help="Maximum total LLM calls (0 means unlimited).")
+    
+    if len(sys.argv) == 1:
+        print("No arguments provided, running a simple demonstration.")
+        # 示例：演示在无LLM或无翻译文件时如何优雅降级
+        verifier = RuleBasedVerifier(llm_model=None, rules=["var_const_consistency"])
+        sample = {
+            "id": "demo1",
+            "prediction": "Let v = 5. Later, v = 10. This is a self-reference v=v+1."
+        }
+        result = verifier.analyze(sample, export_graph=True)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        args = parser.parse_args()
+
+        input_path = Path(args.input)
+        output_path = Path(args.output)
+
+        if not input_path.exists():
+            print(f"Error: Input file not found at '{input_path}'")
+            sys.exit(1)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with input_path.open("r", encoding="utf-8") as f:
+                samples_to_check = json.load(f)
+        except json.JSONDecodeError:
+            print(f"Error: Could not decode JSON from '{input_path}'")
+            sys.exit(1)
+
+        print(f"Initializing verifier...")
+        print(f"  - LLM Model: {'Disabled' if args.no_llm else args.llm_model}")
+        print(f"  - Rules: {args.rules or 'All'}")
+        print(f"  - Cache: {'Disabled' if args.no_cache else 'Enabled'}")
+
+        verifier = RuleBasedVerifier(
+            llm_model=None if args.no_llm else args.llm_model,
+            rules=args.rules,
+            enable_cache=not args.no_cache,
+            max_llm_calls=args.max_llm_calls,
+            rule_mode=args.rule_mode,
+        )
+
+        print(f"Analyzing {len(samples_to_check)} samples from '{input_path}'...")
+        report = verifier.analyze_batch(
+            samples_to_check, 
+            dataset_key=input_path.stem, 
+            export_graph=args.export_graph
+        )
+
+        # 根据输出模式决定最终要保存的内容
+        if args.output_mode == 'errors_only':
+            print("Filtering for samples with errors...")
+            errors_found = []
+            for i, result in enumerate(report['results']):
+                if result.get('diagnostics'):  # 如果 diagnostics 列表不为空
+                    original_sample = samples_to_check[i]
+                    error_item = {
+                        "id": original_sample.get('id'),
+                        "question": original_sample.get('question'),
+                        "prediction": original_sample.get('prediction'),
+                        "answer": original_sample.get('answer'),
+                        "diagnostics": result['diagnostics']
+                    }
+                    errors_found.append(error_item)
+            
+            output_data = errors_found
+            print(f"Found {len(errors_found)} samples with errors.")
+        else:
+            output_data = report
+
+        print(f"Analysis complete. Saving report to '{output_path}'...")
+        with output_path.open("w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        
+        print("Done.")

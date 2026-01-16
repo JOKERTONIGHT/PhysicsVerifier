@@ -11,3 +11,4 @@ PhysicsVerifier.rules
 """
 
 from .base import RulePlugin, RuleContext, RuleRuntime  # noqa: F401
+from . import symbolic_new  # Register symbolic rules

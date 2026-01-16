@@ -1,0 +1,4429 @@
+# Physics Problem-Solving Rules Catalog
+# This file contains rule cards that can be used by a verification engine
+# Rules are automatically appended by the rule_judge.py workflow
+
+# Unit Rules
+rule_id: UR-001
+name: Unit consistency
+statement: "All quantities must use consistent SI units, and numeric calculations should occur only at the final step."
+trigger_domain:
+  conditions:
+    - "problem_has_units == true"
+failure_domain:
+  examples:
+    - "Mixing cgs and SI units in the same calculation"
+    - "Converting units mid-calculation instead of at the end"
+post_conditions:
+  - "All units consistent throughout calculation"
+ops_template:
+  - NormalizeUnits("SI")
+  - ConstraintAdd("numeric_only_at_end")
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+---
+
+rule_id: UR-002
+name: Dimensionless function arguments
+statement: "Functions expecting dimensionless arguments (sin, cos, log, exp) must receive dimensionless inputs."
+trigger_domain:
+  conditions:
+    - "function_call_type in ['sin', 'cos', 'log', 'exp', 'ln']"
+failure_domain:
+  examples:
+    - "sin(30 rad) without converting to dimensionless angle"
+    - "log(5 kg) with dimensional argument"
+post_conditions:
+  - "All function arguments are dimensionless"
+ops_template:
+  - CheckDimensionlessArgs()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Dimensional Analysis
+rule_id: DA-001
+name: Dimensional equivalence on every equality
+statement: "Every equality must have dimensionally equivalent left and right sides."
+trigger_domain:
+  conditions:
+    - "equality_present == true"
+failure_domain:
+  examples:
+    - "F = ma where F has wrong dimensions"
+    - "v = at² without checking dimensions"
+post_conditions:
+  - "DimensionCheck(pass)=true"
+ops_template:
+  - DimensionCheck()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Conservation Laws
+rule_id: EN-001
+name: Energy conservation trigger domain
+statement: "Energy conservation applies only when no nonconservative work is done."
+trigger_domain:
+  conditions:
+    - "energy_conservation_attempted == true"
+    - "nonconservative_work_present == false"
+failure_domain:
+  examples:
+    - "Using energy conservation with friction present"
+    - "Ignoring work done by external forces"
+post_conditions:
+  - "EnergyConservationCheck(pass)=true"
+ops_template:
+  - CheckNonConservativeWork()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+---
+
+rule_id: MO-001
+name: Linear momentum conservation trigger domain
+statement: "Linear momentum conservation requires zero net external force."
+trigger_domain:
+  conditions:
+    - "momentum_conservation_attempted == true"
+    - "net_external_force == 0"
+failure_domain:
+  examples:
+    - "Conserving momentum when external force is present"
+post_conditions:
+  - "MomentumConservationCheck(pass)=true"
+ops_template:
+  - CheckNetExternalForce()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+rule_id: AM-001
+name: Angular momentum conservation trigger domain
+statement: "Angular momentum conservation requires zero net external torque."
+trigger_domain:
+  conditions:
+    - "angular_momentum_conservation_attempted == true"
+    - "net_external_torque == 0"
+failure_domain:
+  examples:
+    - "Conserving angular momentum with external torque"
+post_conditions:
+  - "AngularMomentumConservationCheck(pass)=true"
+ops_template:
+  - CheckNetExternalTorque()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Kinematics
+rule_id: KI-001
+name: Constant acceleration gate
+statement: "Kinematic equations require constant acceleration; verify before applying."
+trigger_domain:
+  conditions:
+    - "kinematic_equations_used == true"
+    - "acceleration_constant == true"
+failure_domain:
+  examples:
+    - "Using v = v₀ + at when acceleration is not constant"
+post_conditions:
+  - "ConstantAccelerationCheck(pass)=true"
+ops_template:
+  - VerifyConstantAcceleration()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Approximations
+rule_id: AP-001
+name: Small-angle approximation domain + posterior consistency
+statement: "Small-angle approximations (sin θ ≈ θ, cos θ ≈ 1) require θ << 1 rad and posterior verification."
+trigger_domain:
+  conditions:
+    - "small_angle_approximation_used == true"
+    - "angle << 1 (radians)"
+failure_domain:
+  examples:
+    - "sin(30°) ≈ 30° (should use radians: 0.524 rad)"
+    - "Using approximation for large angles"
+post_conditions:
+  - "SmallAngleCheck(pass)=true AND PosteriorCheck(pass)=true"
+ops_template:
+  - CheckSmallAngleCondition()
+  - VerifyPosteriorConsistency()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+---
+
+# Root Selection
+rule_id: SE-001
+name: Physical root selection / domain filter
+statement: "When solving equations with multiple roots, select only physically meaningful solutions."
+trigger_domain:
+  conditions:
+    - "quadratic_or_higher_order_equation == true"
+    - "multiple_roots_found == true"
+failure_domain:
+  examples:
+    - "Accepting negative distance as solution"
+    - "Using negative time as valid answer"
+post_conditions:
+  - "PhysicalRootSelected(pass)=true"
+ops_template:
+  - FilterPhysicalRoots()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Frame Consistency
+rule_id: FR-001
+name: Frame consistency
+statement: "All velocities, accelerations, and forces must be referenced to a single, declared inertial frame."
+trigger_domain:
+  conditions:
+    - "frame_declared == true"
+failure_domain:
+  examples:
+    - "Mixing velocities from different reference frames"
+    - "Adding velocities incorrectly (not using relativistic addition when needed)"
+post_conditions:
+  - "FrameConsistencyCheck(pass)=true"
+ops_template:
+  - DeclareInertialFrame()
+  - CheckFrameConsistency()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Gauge Invariance
+rule_id: GP-001
+name: Gauge invariance of potential
+statement: "Physical quantities must be gauge-invariant; potential differences matter, not absolute potentials."
+trigger_domain:
+  conditions:
+    - "electrostatic_or_electromagnetic_potential_used == true"
+failure_domain:
+  examples:
+    - "Using absolute potential value instead of potential difference"
+post_conditions:
+  - "GaugeInvariantCheck(pass)=true"
+ops_template:
+  - CheckGaugeInvariance()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Initial Conditions
+rule_id: IC-001
+name: Initial/boundary conditions determine constants
+statement: "Integration constants must be determined from explicitly stated initial or boundary conditions."
+trigger_domain:
+  conditions:
+    - "integration_performed == true"
+    - "arbitrary_constants_introduced == true"
+failure_domain:
+  examples:
+    - "Leaving integration constants undetermined"
+    - "Using wrong boundary conditions"
+post_conditions:
+  - "ConstantsDetermined(pass)=true"
+ops_template:
+  - ApplyBoundaryConditions()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+---
+
+# Back-Substitution
+rule_id: RS-001
+name: Back-sub residuals (EED)
+statement: "Verify solutions by back-substitution into original equations (EED: Equation-Evaluation-Difference)."
+trigger_domain:
+  conditions:
+    - "solution_obtained == true"
+failure_domain:
+  examples:
+    - "Not checking if solution satisfies original equation"
+post_conditions:
+  - "BackSubstitutionCheck(pass)=true"
+ops_template:
+  - BackSubstitute()
+verification:
+  tests:
+    - type: "numeric_back_substitution"
+
+---
+
+# Safe Divide
+rule_id: SD-001
+name: Safe divide
+statement: "Never divide by quantities that can be zero or epsilon without guard/check first."
+trigger_domain:
+  conditions:
+    - "division_operation_present == true"
+failure_domain:
+  examples:
+    - "Dividing by velocity that could be zero"
+    - "Dividing by sin(θ) when θ could be 0"
+    - "Dividing by small quantities near zero without epsilon check"
+post_conditions:
+  - "SafeDivideCheck(pass)=true"
+ops_template:
+  - CheckDivisionByZero()
+  - CheckDivisionByEpsilon()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Limits/Series
+rule_id: LM-001
+name: Limit/series consistency
+statement: "Limits and series expansions must converge; verify convergence before applying, distinguishing local vs global behavior."
+trigger_domain:
+  conditions:
+    - "limit_or_series_used == true"
+failure_domain:
+  examples:
+    - "Using divergent series"
+    - "Taking limit incorrectly"
+    - "Applying local approximation globally"
+    - "Mixing local and global behavior without justification"
+post_conditions:
+  - "ConvergenceCheck(pass)=true AND LocalGlobalCheck(pass)=true"
+ops_template:
+  - CheckConvergence()
+  - VerifyLocalVsGlobal()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Inertial Frame Declaration
+rule_id: IN-001
+name: Declare inertial vs non-inertial frame
+statement: "Explicitly declare whether the reference frame is inertial or non-inertial, and apply appropriate physics."
+trigger_domain:
+  conditions:
+    - "reference_frame_used == true"
+failure_domain:
+  examples:
+    - "Using Newton's laws in non-inertial frame without fictitious forces"
+post_conditions:
+  - "FrameTypeDeclared(pass)=true"
+ops_template:
+  - DeclareFrameType()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Constraints
+rule_id: CN-001
+name: Ideal constraints do no work
+statement: "Ideal constraints (strings, rods, surfaces) do no work on the system."
+trigger_domain:
+  conditions:
+    - "constraints_present == true"
+    - "constraint_type == 'ideal'"
+failure_domain:
+  examples:
+    - "Counting constraint force work incorrectly"
+post_conditions:
+  - "ConstraintWorkCheck(pass)=true"
+ops_template:
+  - CheckConstraintWork()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Non-Dimensionalization
+rule_id: ND-001
+name: Non-dimensionalization preserves dimensions
+statement: "Non-dimensionalization must preserve dimensional relationships and equation-equivalence-difference (EED) relationships."
+trigger_domain:
+  conditions:
+    - "nondimensionalization_performed == true"
+failure_domain:
+  examples:
+    - "Losing dimensional information during scaling"
+    - "Incorrectly scaling dimensional quantities"
+post_conditions:
+  - "DimensionPreservationCheck(pass)=true AND EEDPreserved(pass)=true"
+ops_template:
+  - VerifyDimensionPreservation()
+  - VerifyEEDPreservation()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Sign Convention
+rule_id: SC-001
+name: Sign convention immutability (SignGuard)
+statement: "Once a sign convention is declared, it must remain consistent throughout the solution."
+trigger_domain:
+  conditions:
+    - "sign_convention_declared == true"
+failure_domain:
+  examples:
+    - "Changing sign convention mid-calculation"
+    - "Mixing up signs for force directions"
+post_conditions:
+  - "SignConventionCheck(pass)=true"
+ops_template:
+  - EnforceSignConvention()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Vector Completeness
+rule_id: VF-001
+name: Vector component completeness
+statement: "All vector quantities must have all components specified or justified as zero."
+trigger_domain:
+  conditions:
+    - "vector_quantity_used == true"
+failure_domain:
+  examples:
+    - "Dropping vector components without justification"
+post_conditions:
+  - "VectorComponentCheck(pass)=true"
+ops_template:
+  - CheckVectorComponents()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Free Body Diagram
+rule_id: FL-001
+name: Free-body list completeness
+statement: "All forces acting on a body must be listed in the free-body diagram."
+trigger_domain:
+  conditions:
+    - "free_body_diagram_required == true"
+failure_domain:
+  examples:
+    - "Missing friction in FBD"
+    - "Forgetting normal force"
+post_conditions:
+  - "FBDCompletenessCheck(pass)=true"
+ops_template:
+  - VerifyFBDCompleteness()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Constant Acceleration Witness
+rule_id: CW-001
+name: Constant-acceleration witness needed
+statement: "Constant acceleration must be explicitly stated or derived before using kinematic equations."
+trigger_domain:
+  conditions:
+    - "constant_acceleration_kinematics_used == true"
+failure_domain:
+  examples:
+    - "Using v² = v₀² + 2ax without verifying constant acceleration"
+post_conditions:
+  - "ConstantAccelerationWitnessed(pass)=true"
+ops_template:
+  - RequireConstantAccelerationWitness()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Torque
+rule_id: TR-001
+name: Torque about declared axis
+statement: "Torque calculations must specify the axis about which torque is computed."
+trigger_domain:
+  conditions:
+    - "torque_calculated == true"
+failure_domain:
+  examples:
+    - "Computing torque without specifying axis"
+post_conditions:
+  - "TorqueAxisDeclared(pass)=true"
+ops_template:
+  - DeclareTorqueAxis()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Parallel Axis Theorem
+rule_id: PA-001
+name: Parallel-axis usage
+statement: "When using parallel-axis theorem, verify the axes are actually parallel and measure distance correctly."
+trigger_domain:
+  conditions:
+    - "parallel_axis_theorem_used == true"
+failure_domain:
+  examples:
+    - "Using parallel-axis theorem with non-parallel axes"
+    - "Incorrect distance measurement in I = I_cm + md²"
+post_conditions:
+  - "ParallelAxisCheck(pass)=true"
+ops_template:
+  - VerifyParallelAxis()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Rolling Constraints
+rule_id: RC-001
+name: Rolling constraint enforcement
+statement: "Rolling without slipping requires v = ωR; this constraint must be enforced consistently."
+trigger_domain:
+  conditions:
+    - "rolling_motion_present == true"
+    - "no_slipping == true"
+failure_domain:
+  examples:
+    - "Violating rolling constraint v = ωR"
+post_conditions:
+  - "RollingConstraintCheck(pass)=true"
+ops_template:
+  - EnforceRollingConstraint()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Collision Restitution
+rule_id: COL-001
+name: Restitution line-of-impact consistency
+statement: "Coefficient of restitution applies only along the line of impact, not perpendicular components."
+trigger_domain:
+  conditions:
+    - "collision_present == true"
+    - "restitution_coefficient_used == true"
+failure_domain:
+  examples:
+    - "Applying restitution to perpendicular velocity components"
+post_conditions:
+  - "RestitutionLineOfImpactCheck(pass)=true"
+ops_template:
+  - CheckRestitutionLineOfImpact()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Circuit Analysis
+rule_id: EL-001
+name: KCL/KVL pre-check (circuit topology)
+statement: "Before applying Kirchhoff's laws, verify the circuit topology and identify all nodes/branches."
+trigger_domain:
+  conditions:
+    - "kirchhoff_laws_used == true"
+failure_domain:
+  examples:
+    - "Missing nodes in KCL"
+    - "Wrong loop selection for KVL"
+post_conditions:
+  - "CircuitTopologyCheck(pass)=true"
+ops_template:
+  - VerifyCircuitTopology()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# AC Circuits
+rule_id: AC-001
+name: Phasor RMS/peak consistency
+statement: "When using phasors, maintain consistency between RMS and peak values throughout calculations."
+trigger_domain:
+  conditions:
+    - "phasor_analysis_used == true"
+    - "ac_circuit == true"
+failure_domain:
+  examples:
+    - "Mixing RMS and peak values incorrectly"
+post_conditions:
+  - "PhasorConsistencyCheck(pass)=true"
+ops_template:
+  - EnforcePhasorConsistency()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Electromagnetism
+rule_id: EM-001
+name: RHR/Lenz compliance
+statement: "Right-hand rule and Lenz's law must be applied consistently for magnetic fields and induced currents."
+trigger_domain:
+  conditions:
+    - "magnetic_field_or_induction_present == true"
+failure_domain:
+  examples:
+    - "Wrong direction from right-hand rule"
+    - "Incorrect Lenz's law application"
+post_conditions:
+  - "RHRLenzCheck(pass)=true"
+ops_template:
+  - VerifyRHR()
+  - VerifyLenz()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Thermodynamics
+rule_id: TH-001
+name: First-law sign convention declared
+statement: "First law of thermodynamics requires explicit sign convention for work and heat (system vs surroundings)."
+trigger_domain:
+  conditions:
+    - "first_law_thermodynamics_used == true"
+failure_domain:
+  examples:
+    - "Inconsistent signs for work done on/by system"
+post_conditions:
+  - "FirstLawSignConventionCheck(pass)=true"
+ops_template:
+  - DeclareFirstLawSigns()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Optics
+rule_id: OP-001
+name: Optics sign convention fixed
+statement: "Optics problems require a fixed sign convention (e.g., object distance positive, image distance sign by type)."
+trigger_domain:
+  conditions:
+    - "optics_problem == true"
+failure_domain:
+  examples:
+    - "Wrong sign for image distance in lens equation"
+post_conditions:
+  - "OpticsSignConventionCheck(pass)=true"
+ops_template:
+  - EnforceOpticsSignConvention()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Waves
+rule_id: WV-001
+name: Wave boundary conditions honored
+statement: "Wave solutions must satisfy all stated boundary conditions (fixed ends, free ends, continuity, etc.)."
+trigger_domain:
+  conditions:
+    - "wave_problem == true"
+    - "boundary_conditions_specified == true"
+failure_domain:
+  examples:
+    - "Wave solution not satisfying boundary conditions"
+post_conditions:
+  - "BoundaryConditionCheck(pass)=true"
+ops_template:
+  - VerifyBoundaryConditions()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Relativity
+rule_id: SR-001
+name: Relativistic regime switch
+statement: "Identify when relativistic effects are significant (v/c > 0.1) and switch to relativistic formulas."
+trigger_domain:
+  conditions:
+    - "high_velocity_present == true"
+    - "v_over_c > 0.1"
+failure_domain:
+  examples:
+    - "Using classical mechanics for v ~ 0.5c"
+post_conditions:
+  - "RelativisticRegimeCheck(pass)=true"
+ops_template:
+  - CheckRelativisticRegime()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Quantum Mechanics
+rule_id: QM-001
+name: Schrödinger BC & normalization
+statement: "Schrödinger equation solutions must satisfy boundary conditions and normalization requirements."
+trigger_domain:
+  conditions:
+    - "schrodinger_equation_used == true"
+failure_domain:
+  examples:
+    - "Unnormalized wavefunction"
+    - "Wavefunction not continuous at boundaries"
+post_conditions:
+  - "SchrodingerBCCheck(pass)=true AND NormalizationCheck(pass)=true"
+ops_template:
+  - VerifyBoundaryConditions()
+  - VerifyNormalization()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Function Domain Guards
+rule_id: GX-001
+name: Function domain guard (log/root/inv-trig)
+statement: "Functions like log, sqrt, arcsin must have arguments within their valid domains."
+trigger_domain:
+  conditions:
+    - "domain_restricted_function_used == true"
+failure_domain:
+  examples:
+    - "log(negative number)"
+    - "sqrt(negative number) without justification"
+    - "arcsin(x) where |x| > 1"
+post_conditions:
+  - "FunctionDomainCheck(pass)=true"
+ops_template:
+  - CheckFunctionDomain()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Given-Use Sanity
+rule_id: GV-001
+name: Given-use sanity (every given used or justified)
+statement: "Every given parameter must be used in the solution or explicitly justified as unnecessary."
+trigger_domain:
+  conditions:
+    - "given_parameters_present == true"
+failure_domain:
+  examples:
+    - "Ignoring given parameters without justification"
+    - "Introducing parameters not in problem statement"
+post_conditions:
+  - "GivenUseCheck(pass)=true"
+ops_template:
+  - VerifyGivenUse()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Coordinate System
+rule_id: CR-001
+name: Coordinate system fixed & consistent
+statement: "The coordinate system must be explicitly declared and used consistently throughout the solution."
+trigger_domain:
+  conditions:
+    - "coordinate_system_used == true"
+failure_domain:
+  examples:
+    - "Switching coordinate systems mid-calculation"
+    - "Using Cartesian coordinates without declaring axes"
+    - "Mixing polar and Cartesian components inconsistently"
+post_conditions:
+  - "CoordinateSystemConsistencyCheck(pass)=true"
+ops_template:
+  - DeclareCoordinateSystem()
+  - CheckCoordinateConsistency()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Equation System
+rule_id: EQ-001
+name: Equation–unknowns balance (well-posedness count)
+statement: "The number of independent equations must equal the number of unknowns for a well-posed problem."
+trigger_domain:
+  conditions:
+    - "multiple_equations_present == true"
+    - "multiple_unknowns_present == true"
+failure_domain:
+  examples:
+    - "More unknowns than equations (underdetermined)"
+    - "More equations than unknowns without checking consistency"
+    - "Missing equation needed to solve system"
+post_conditions:
+  - "EquationUnknownBalanceCheck(pass)=true"
+ops_template:
+  - CountEquations()
+  - CountUnknowns()
+  - VerifyWellPosedness()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+rule_id: EQ-002
+name: Independent-equations rank (no hidden dependence)
+statement: "All equations used must be linearly independent; verify rank equals number of equations."
+trigger_domain:
+  conditions:
+    - "multiple_equations_present == true"
+    - "system_of_equations == true"
+failure_domain:
+  examples:
+    - "Using redundant equations (linear dependence)"
+    - "Hidden dependence between equations not recognized"
+    - "Rank deficiency in equation system"
+post_conditions:
+  - "EquationIndependenceCheck(pass)=true AND RankCheck(pass)=true"
+ops_template:
+  - CheckLinearIndependence()
+  - VerifyRank()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Documentation/Declaration
+rule_id: DOC-001
+name: Axes/sign conventions explicitly declared
+statement: "All axes and sign conventions must be explicitly declared before use in calculations."
+trigger_domain:
+  conditions:
+    - "coordinate_axes_used == true OR sign_convention_used == true"
+failure_domain:
+  examples:
+    - "Using x, y, z axes without declaration"
+    - "Assuming positive direction without stating convention"
+    - "Changing sign convention without declaration"
+post_conditions:
+  - "AxesDeclared(pass)=true AND SignConventionDeclared(pass)=true"
+ops_template:
+  - DeclareAxes()
+  - DeclareSignConvention()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Definition Rules
+rule_id: DEF-001
+name: Define-before-use (every symbol introduced)
+statement: "Every symbol must be defined before use; no undefined variables or constants."
+trigger_domain:
+  conditions:
+    - "symbols_used == true"
+failure_domain:
+  examples:
+    - "Using variable before defining it"
+    - "Undefined constants in equations"
+    - "Symbols not explicitly introduced"
+post_conditions:
+  - "DefineBeforeUseCheck(pass)=true"
+ops_template:
+  - CheckSymbolDefinitions()
+  - VerifySymbolUsage()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Order of Magnitude
+rule_id: OM-001
+name: Order-of-magnitude sanity (plausible scale)
+statement: "Final answers must have physically plausible order of magnitude for the problem domain."
+trigger_domain:
+  conditions:
+    - "solution_obtained == true"
+    - "numeric_result == true"
+failure_domain:
+  examples:
+    - "Velocity of 10^8 m/s for human motion (should be ~10 m/s)"
+    - "Mass of 10^-10 kg for macroscopic object (should be ~1 kg)"
+    - "Time scale inconsistent with problem setup"
+post_conditions:
+  - "OrderOfMagnitudeCheck(pass)=true"
+ops_template:
+  - CheckOrderOfMagnitude()
+  - VerifyPhysicalScale()
+verification:
+  tests:
+    - type: "numeric_back_substitution"
+
+---
+
+# Parameter Range
+rule_id: PR-001
+name: Parameter physical-range guard (constants/materials)
+statement: "All physical constants and material parameters must be within their valid physical ranges."
+trigger_domain:
+  conditions:
+    - "physical_constants_used == true OR material_properties_used == true"
+failure_domain:
+  examples:
+    - "Coefficient of friction > 1 without justification"
+    - "Refractive index < 1 for non-exotic materials"
+    - "Mass negative or zero"
+    - "Speed > c for non-relativistic problem"
+post_conditions:
+  - "ParameterRangeCheck(pass)=true"
+ops_template:
+  - CheckPhysicalConstantsRange()
+  - VerifyMaterialPropertiesRange()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Reference Level
+rule_id: REF-001
+name: Reference level fixed & used consistently (e.g., potentials)
+statement: "Reference levels (e.g., zero potential, ground, datum) must be explicitly fixed and used consistently."
+trigger_domain:
+  conditions:
+    - "reference_level_required == true"
+    - "potential_energy_or_potential_used == true"
+failure_domain:
+  examples:
+    - "Changing reference level for potential energy mid-calculation"
+    - "Using different ground references inconsistently"
+    - "Not specifying zero point for potential"
+post_conditions:
+  - "ReferenceLevelConsistencyCheck(pass)=true"
+ops_template:
+  - DeclareReferenceLevel()
+  - CheckReferenceConsistency()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+
+---
+
+# Boundary Conditions
+rule_id: BC-001
+name: Boundary-condition completeness (type & count match model)
+statement: "The type and number of boundary conditions must match the requirements of the physical model (e.g., PDE order)."
+trigger_domain:
+  conditions:
+    - "boundary_conditions_specified == true"
+    - "differential_equation_present == true"
+failure_domain:
+  examples:
+    - "Insufficient boundary conditions for 2nd-order ODE"
+    - "Wrong type of boundary condition (Dirichlet vs Neumann)"
+    - "Too many boundary conditions creating overdetermined system"
+post_conditions:
+  - "BoundaryConditionCompletenessCheck(pass)=true AND BoundaryTypeCheck(pass)=true"
+ops_template:
+  - CountBoundaryConditions()
+  - VerifyBoundaryTypeMatch()
+  - CheckBCCompleteness()
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+---
+
+# Meta Rules
+rule_id: META1
+name: Problem-context alignment (solution matches the asked scenario)
+statement: "A proposed solution must address the same physical domain, givens, and required outputs specified by the problem statement."
+trigger_domain:
+  conditions:
+    - "problem_keywords_extracted == true"
+    - "solution_keywords_extracted == true"
+failure_domain:
+  examples:
+    - "Fluid dynamics problem answered with electrostatics."
+    - "Optics question answered using rotational dynamics."
+    - "Thermodynamics data given; solution derives kinematics."
+post_conditions:
+  - "ProblemContextAlign(pass)=true AND GivenUseCheck(pass)=true"
+ops_template:
+  - ConstraintAdd("context_alignment")
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+
+rule_id: ORB-REL-001
+name: Rigid Body Rotation Misapplication in Orbital Constellations
+statement: "In multi-spacecraft orbital systems with independent Keplerian trajectories, relative speed between spacecraft must not be derived from apparent constellation rotation rate using rigid body rotation formulas."
+trigger_domain:
+  conditions:
+    - "Problem context describes multiple spacecraft in individual orbits around central body (e.g., Sun)"
+    - "Solution computes relative speed as v_rel = ω * d where ω = 2π/T_constellation"
+    - "Constellation exhibits apparent rotation but lacks physical rigid connection"
+failure_domain:
+  examples: ["LISA constellation relative speed calculated as 1.0 km/s using ω=2π/year", "Earth-trailing satellite formation using rigid rotation for relative velocity", "Interplanetary array with independent orbits treated as solid body"]
+post_conditions:
+  - "Solution yields relative speed >100× expected Keplerian differential velocity"
+  - "Checker flags rigid rotation formula application without orbital mechanics justification"
+ops_template:
+  - "Block: rigid_body_rotation_relative_speed"
+  - "Apply: keplerian_differential_motion"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DIM-CONS-001
+name: Dimensional Consistency Check
+statement: "In any physical equation, the dimensions of the left-hand side must identically match the dimensions of the right-hand side."
+trigger_domain:
+  conditions:
+    - "solution contains an equality relation (e.g., '=')"
+    - "both sides represent dimensional physical quantities"
+failure_domain:
+  examples: ["T = h / g", "F = m * v", "E = m * c"]
+post_conditions:
+  - "dimensional analysis yields identical dimension vectors for LHS and RHS (M^a L^b T^c K^d)"
+  - "dimensionally inconsistent equations are rejected during validation"
+ops_template:
+  - "Apply dimensional analysis to both sides of equation before acceptance"
+  - "Block equation usage if dimension vectors differ"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-DIM-001
+name: Dimensional Consistency
+statement: "All equations must have identical physical dimensions on both sides."
+trigger_domain:
+  conditions:
+    - "equation_present: true"
+    - "physical_quantities_involved: true"
+failure_domain:
+  examples:
+    - "t = h / g; [t]=T, [h/g]=T^2"
+    - "F = m * v; [F]=MLT^{-2}, [m*v]=MLT^{-1}"
+post_conditions:
+  - "dimension(left_hand_side) == dimension(right_hand_side)"
+ops_template:
+  - "Apply dimensional analysis to verify equation consistency"
+  - "Block solution if dimensional inconsistency is detected"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ORB-ADD-001
+name: Incorrect Addition of Identical Left-Hand Sides
+statement: "When adding multiple equations sharing identical left-hand side expressions, the left-hand side must be scaled by the count of equations added."
+trigger_domain:
+  conditions:
+    - "Solution contains two or more distinct equations with algebraically equivalent left-hand side expressions"
+    - "Solution presents a summed equation where left-hand side remains unscaled while right-hand sides are summed"
+failure_domain:
+  examples: ["F = ma and F = mb → F = ma + mb", "k = x and k = y → k = x + y"]
+post_conditions:
+  - "Checker flags unscaled left-hand side in summed equation"
+ops_template:
+  - "Block: Adding equations with identical LHS without scaling LHS by equation count"
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: numeric_back_substitution
+
+
+rule_id: DIM-ANAL-001
+name: Dimensional Consistency
+statement: "Every equality relation must have dimensionally consistent left-hand and right-hand sides."
+trigger_domain:
+  conditions:
+    - "is_equality_relation"
+    - "dimensions_defined_for_all_symbols"
+failure_domain:
+  examples: ["t = h / g", "F = m * v", "E = m * c"]
+post_conditions:
+  - "dimensional_exponents(LHS) == dimensional_exponents(RHS)"
+ops_template:
+  - "block_solution"
+  - "require_dimensional_verification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DATA-INV-001
+name: No Invented Data
+statement: "Solutions must not introduce numerical values for physical quantities that are not provided in the problem statement or derived from given data."
+trigger_domain:
+  conditions:
+    - "solution contains unverified numerical constant for key parameter (e.g., time, distance)"
+    - "constant lacks derivation from problem-provided data or explicit problem statement"
+failure_domain:
+  examples: ["Assuming P-wave arrival time=4.5s without seismogram data", "Using travel time=10s when problem gives no timing data", "Stating velocity=5m/s without calculation or given value"]
+post_conditions:
+  - "checker flags solution as invalid due to unsupported numerical assumption"
+ops_template:
+  - "block: invented_numerical_data"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CRUST-DEPTH-001
+name: Crust Depth Constraint Violation
+statement: "The turning point depth of a seismic ray must not exceed the specified crustal depth when using a crustal velocity model."
+trigger_domain:
+  conditions:
+    - "Problem context specifies a finite crustal depth (e.g., 'depth of Earth crust layer is X km')"
+    - "Solution uses velocity model v(z) = v₀ + az for ray path calculation"
+    - "Solution computes turning point depth z_max = (1/p - v₀)/a"
+failure_domain:
+  examples: ["Crust depth=30 km, z_max=35 km", "Crust depth=25 km, z_max=26 km", "Crust depth=30 km, z_max=30.1 km"]
+post_conditions:
+  - "z_max <= crust_depth"
+ops_template:
+  - "Block solution if z_max > crust_depth"
+  - "Require explicit crust_depth validation before distance calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: BEAM-AREA-001
+name: Constant Beam Area Assumption
+statement: "The beam cross-sectional area must not be assumed constant across a constraining aperture unless the aperture dimensions are explicitly specified and match the beam dimensions."
+trigger_domain:
+  conditions:
+    - "problem contains a beam description with initial cross section"
+    - "problem includes a constraining element (e.g., slit, aperture) in the beam path"
+    - "solution uses identical cross-sectional area for regions before and after the constraining element"
+    - "constraining element dimensions are unspecified in the problem"
+failure_domain:
+  examples: ["Using initial 500nm×500nm beam area after narrow slit with unspecified width", "Assuming constant area through collimator without verifying post-aperture dimensions"]
+post_conditions:
+  - "solution applies single area value across regions separated by constraining element"
+  - "constraining element dimensions remain undefined in problem context"
+ops_template:
+  - "block: use_same_area_across_aperture"
+  - "require: area_specification_per_region"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-CASE-001
+name: Case-Specific Parameter Misuse
+statement: "In multi-case problems, parameters explicitly defined for one case must not be used in expressions for another case."
+trigger_domain:
+  conditions:
+    - "problem contains multiple labeled cases (e.g., (a), (b))"
+    - "problem assigns case-specific value/label to parameter (e.g., 'T = T_b' for case (b))"
+    - "solution uses case-specific parameter in expression for different case"
+failure_domain:
+  examples: ["Using T_b (case b period) to compute V_a in case (a)", "Using R_2 (case 2 resistance) in case 1 voltage expression"]
+post_conditions:
+  - "solution references parameter outside its defined case context"
+ops_template:
+  - "block: parameter_usage_outside_case"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "case_context_alignment"
+
+
+rule_id: MAG-CMP-001
+name: Incorrect Magnitude Comparison
+statement: "When comparing fractional frequency shifts, the solution must not claim a larger-magnitude shift is much smaller than a smaller-magnitude shift."
+trigger_domain:
+  conditions:
+    - "solution contains comparative phrasing (e.g., 'much smaller than', 'negligible compared to') between two fractional frequency shifts"
+    - "numerical values for both shifts are explicitly computed or referenced"
+failure_domain:
+  examples: ["Claiming 5.5e-9 is much smaller than 1e-15", "Asserting 0.01 is negligible compared to 0.0001"]
+post_conditions:
+  - "|shift_A| > 100 * |shift_B| when solution claims shift_A is much smaller than shift_B"
+ops_template:
+  - "Block solution if |shift_A| exceeds 100×|shift_B| but solution claims shift_A << shift_B"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ASTRO-GRAV-001
+name: UniformDensityGravPEForIsothermalCollapse
+statement: "Do not apply the uniform density gravitational potential energy formula to isothermal collapse scenarios where radiation efficiency implies non-uniform density profiles."
+trigger_domain:
+  conditions:
+    - "Problem context specifies radiation-efficient collapse phase (e.g., gas transparent until critical radius r₃)"
+    - "Solution uses gravitational potential energy formula U = -kGM²/R with k=3/5 (uniform sphere constant)"
+failure_domain:
+  examples: 
+    - "Using U = -3/5 GM²/R for collapse to opacity radius r₃ in radiation-transparent phase"
+    - "Applying uniform density potential energy to isothermal Jeans collapse without density profile justification"
+post_conditions:
+  - "Checker flags k=3/5 usage when problem context implies non-uniform density from radiation efficiency"
+ops_template:
+  - "Block uniform density constant (3/5) in gravitational potential energy for radiation-transparent collapse phases"
+  - "Require density profile validation before gravitational potential energy formula application"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "problem_context_align"
+
+
+rule_id: GRAV-UNIF-001
+name: UniformSphereGravityLaw
+statement: "When modeling gravitational acceleration within a uniform spherical mass distribution, the acceleration must scale linearly with radius, not as inverse-square."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'uniform density'"
+    - "motion occurs from initial radius r0 to smaller radius r < r0"
+    - "gravity_field_change is explicitly neglected"
+failure_domain:
+  examples: ["Using a = -GM/r² for interior points of uniform sphere", "Calculating collapse time with constant g approximation in uniform density context"]
+post_conditions:
+  - "Checker flags inverse-square gravity usage when uniform sphere conditions are met"
+  - "Requires acceleration proportional to r (a ∝ r) for interior points"
+ops_template:
+  - "Block: PointMassGravityLaw"
+  - "Apply: UniformSphereGravityLaw (a = -(4πGρ₀/3)r)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Verify acceleration expression contains linear r dependence"
+    - type: "numeric_back_substitution"
+      description: "Check a(r=0.95r0) = 0.95a(r0) holds"
+
+
+rule_id: DPL-POWER-001
+name: Missing dE/dt Term in Dipole Power
+statement: "For a dipole of constant magnitude in a time-dependent electric field, the instantaneous power delivered by the field must include a term proportional to the time derivative of the electric field."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'electric dipole' and 'constant magnitude' and 'time-dependent electric field'"
+    - "solution contains expression for 'power delivered' or 'power to the dipole'"
+failure_domain:
+  examples: ["power = -p0 * E(t) * sinθ(t) * dθ/dt", "power = p0 * E(t) * sinθ(t) * (-dθ/dt)"]
+post_conditions:
+  - "checker confirms power expression contains dE/dt term (e.g., derivative of E with respect to time)"
+  - "checker verifies equivalence to p0 * (dE/dt * cosθ - E * sinθ * dθ/dt)"
+ops_template:
+  - "add_term: p0 * (dE/dt) * cosθ"
+  - "block_solution: if power expression lacks dE/dt term"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: COSMO-DOM-001
+name: Incorrect Omega-1 Time Evolution for Domination Era
+statement: "The time dependence of Ω(t)−1 must match the expected functional form for the specified energy component domination era."
+trigger_domain:
+  conditions:
+    - "Problem explicitly states domination era (e.g., radiation, matter, dark energy) or equation of state parameter w"
+    - "Solution provides explicit time-dependent expression for Ω(t)−1"
+failure_domain:
+  examples:
+    - "Problem states matter domination (w=0), solution gives Ω(t)−1 ∝ e^{-2Ht}"
+    - "Problem states radiation domination (w=1/3), solution gives Ω(t)−1 ∝ t^{2/3}"
+post_conditions:
+  - "Symbolic equivalence between solution's Ω(t)−1 expression and expected form for given w"
+ops_template:
+  - Apply: DominationEraConsistencyCheck
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: numeric_back_substitution
+
+
+rule_id: HUMID-MASS-001
+name: HumidityMassFractionMisinterpretation
+statement: "When humidity is specified by mass, the mean molar mass must be computed using the harmonic mean formula, not the arithmetic mean."
+trigger_domain:
+  conditions:
+    - "Problem states humidity as a percentage by mass (e.g., 'x% by mass water vapor')"
+    - "Solution computes mean molar mass as a weighted sum of component molar masses using given percentages as weights"
+failure_domain:
+  examples: ["Given 2% by mass water vapor, solution uses M' = 0.98*28.8 + 0.02*18", "Given 5% mass fraction humidity, solution applies linear combination for molar mass"]
+post_conditions:
+  - "Checker flags arithmetic mean usage for molar mass when humidity is specified by mass"
+ops_template:
+  - "block: arithmetic_mean_molar_mass"
+  - "apply: harmonic_mean_molar_mass"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SEIS-LAYER-001
+name: LayeredMediumTravelTimeIntegral
+statement: "For layered Earth models, the travel time integral must be expressed as a sum of integrals over each layer with continuous velocity functions."
+trigger_domain:
+  conditions:
+    - "problem_context contains explicit layer boundaries (e.g., 'crust depth', 'mantle layer')"
+    - "solution presents a single integral expression for travel time spanning multiple layers"
+failure_domain:
+  examples:
+    - "Integral from hypocenter depth (15 km) to surface (0 km) without splitting at crust-mantle boundary (30 km) for DNP station (500 km distance)"
+    - "Using unified v(z) in travel time integral when problem specifies distinct crust/mantle velocity structures"
+post_conditions:
+  - "solution must split integral at all layer boundaries with layer-specific velocity functions"
+ops_template:
+  - "RequirePiecewiseIntegral"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: META-CTX-001
+name: VelocityRangeDirectionAssumption
+statement: "Solutions must not assume the direction of velocity range exclusion (above or below a given velocity) when the problem references an undefined 'previous velocity range' without explicit bounds."
+trigger_domain:
+  conditions:
+    - "Problem mentions 'previous velocity range' or equivalent term without specifying numerical bounds"
+    - "Solution contains directional assumption (e.g., 'less than vx' or 'greater than vx') for excluded velocities"
+failure_domain:
+  examples: ["'all neutrons with velocities less than vx are absorbed' when problem only states 'outside previous velocity range'", "'band is from vx to infinity' without problem context support"]
+post_conditions:
+  - "Solution includes unjustified directional assumption about velocity range exclusion"
+ops_template:
+  - "Block: Directional velocity range assumption without problem context"
+  - "Apply: Require explicit problem context for velocity range bounds"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: COND-SIGN-001
+name: Conductor Charge Sign Consistency
+statement: "For conductors in electrostatic equilibrium, the sign of the total charge must be negative when the specified electric field direction is inward relative to the surface outward normal."
+trigger_domain:
+  conditions:
+    - "problem_involves_conductor_electrostatics"
+    - "electric_field_direction_specified_as_inward"
+    - "solution_computes_total_charge"
+failure_domain:
+  examples: ["Earth surface with downward field reporting positive Q", "Spherical conductor with inward field reporting positive total charge"]
+post_conditions:
+  - "total_charge_sign_matches_field_direction: negative_for_inward_field"
+ops_template:
+  - "Apply sign correction based on field-normal alignment"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CYL-COMP-001
+name: SpokeLengthInCompositeCylinder
+statement: "In composite cylinder models with cylindrical shells and spokes, the spoke length used for moment of inertia calculations must match the inner radius of the shell or specified attachment point, not the outer radius."
+trigger_domain:
+  conditions:
+    - "problem describes cylindrical shell with distinct inner radius (R_i) and outer radius (R_0)"
+    - "problem specifies spokes connecting hub to shell structure"
+    - "solution uses outer radius (R_0) for spoke length in moment of inertia calculation"
+failure_domain:
+  examples: ["Using R_0 for spokes when R_i=0.8R_0 given and spokes attach to inner shell surface", "Assuming spoke length equals outer radius in thick-walled wheel models"]
+post_conditions:
+  - "spoke moment of inertia term contains R_0 instead of R_i in rotational inertia formula"
+ops_template:
+  - "Block: Using outer radius for spoke length when inner radius is defined"
+  - "Apply: Using inner radius (R_i) as spoke length for moment of inertia calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: FRIC-ANISO-001
+name: AnisotropicFrictionModelRequired
+statement: "When friction anisotropy is specified by distinct coefficients along primary axes, the friction force model must use the anisotropic form with separate coefficients for each axis."
+trigger_domain:
+  conditions:
+    - "problem_context.contains('anisotropic friction')"
+    - "problem_context.contains('μ_x') and problem_context.contains('μ_y')"
+    - "problem_context.contains('primary axes')"
+failure_domain:
+  examples: ["Using single μ for friction when problem gives μ_x and μ_y", "Assuming friction force parallel to velocity vector in anisotropic case"]
+post_conditions:
+  - "solution.uses_friction_model('F_x = -(|N|/|v|) μ_x v_x, F_y = -(|N|/|v|) μ_y v_y')"
+ops_template:
+  - BlockIsotropicFrictionAssumption
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: TUMOR-PRESS-001
+name: Uniform Pressure in Confined Growth
+statement: "In confined spherical growth models with compressible tissues, pressure must not be assumed uniform without explicit problem justification."
+trigger_domain:
+  conditions:
+    - "problem involves spherical tumor growth inside fixed-volume tissue"
+    - "tissues exhibit compressibility (density-pressure relation given)"
+    - "solution assumes single pressure value for entire domain"
+failure_domain:
+  examples:
+    - "Assuming uniform pressure in tumor growth with inextensible boundary"
+    - "Using identical pressure for tumor/normal tissue without spatial derivation"
+post_conditions:
+  - "Solution must derive pressure distribution or cite explicit uniformity condition"
+ops_template:
+  - block: uniform_pressure_assumption
+  - apply: pressure_gradient_analysis
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SIGN-001
+name: SignAssumptionWithoutJustification
+statement: "When an expression contains a variable defined to take negative values in the problem context, the solution must not assert the expression is universally positive without conditional sign analysis."
+trigger_domain:
+  conditions:
+    - "Problem defines a variable with domain including negative values (e.g., k ∈ {-1,0,1})"
+    - "Solution contains absolute sign assertion (e.g., 'is positive', 'are positive') about expression containing said variable"
+    - "Solution lacks conditional clauses (e.g., 'if k<0', 'for negative k') addressing sign variation"
+failure_domain:
+  examples: ["Asserting 'all terms positive' for k c² expression when k=-1 is possible", "Claiming gravitational potential energy is always positive without specifying coordinate convention"]
+post_conditions:
+  - "Solution includes conditional sign analysis matching variable's domain"
+  - "Solution explicitly restricts variable range before sign assertion"
+ops_template:
+  - "Require conditional sign analysis for expressions with sign-ambiguous variables"
+  - "Block absolute sign assertions without domain-restricted justification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "textual_analysis"
+
+
+rule_id: DIM-001
+name: DimensionalHomogeneity
+statement: "All terms in an equation must have identical physical dimensions."
+trigger_domain:
+  conditions:
+    - "algebraic_equation_present"
+failure_domain:
+  examples: ["H^2 = (Ω H^2)/c^2", "F = m a + v", "E = m c + p"]
+post_conditions:
+  - "dimensional_inconsistency_detected"
+ops_template:
+  - "block_step: dimensional_inconsistency"
+verification:
+  tests:
+    - type: "dimensional_homogeneity"
+
+
+rule_id: REL-DOP-001
+name: ClassicalDopplerInRelativity
+statement: "In relativistic scenarios involving light propagation, the Doppler shift factor must use the relativistic formula √[(1+β)/(1-β)] rather than the classical approximation (c±v)/(c∓v)."
+trigger_domain:
+  conditions:
+    - "Problem context explicitly mentions relativistic motion (v comparable to c) and light propagation"
+    - "Solution contains Doppler shift expression matching (c ± v)/(c ∓ v) for electromagnetic waves"
+failure_domain:
+  examples: ["Using (c+v)/(c-v) for clock ticking rate ratio in relativistic mirror problem", "Applying classical Doppler formula to starlight from approaching galaxy at 0.8c"]
+post_conditions:
+  - "Doppler factor must be expressed as √[(1+β)/(1-β)] for approach or √[(1-β)/(1+β)] for recession where β=v/c"
+ops_template:
+  - "Replace classical Doppler expression with relativistic equivalent"
+  - "Block classical Doppler formula application to light in relativistic contexts"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: FRICTION-ANISO-001
+name: Anisotropic Friction Model Mismatch
+statement: "When the problem specifies anisotropic friction with direction-dependent coefficients, the solution must not assume isotropic friction by using a single friction coefficient or by assuming the friction force is always antiparallel to velocity."
+trigger_domain:
+  conditions:
+    - "problem context explicitly defines distinct friction coefficients (μ_x, μ_y) for primary axes"
+    - "problem mentions 'anisotropic friction', 'friction anisotropy', or 'primary axes'"
+failure_domain:
+  examples: ["Using single μ in F = -μN(v/|v|) when μ_x ≠ μ_y given", "Assuming friction force direction is exactly opposite velocity vector in anisotropic context", "Calculating normal acceleration using isotropic friction model despite anisotropy specification"]
+post_conditions:
+  - "Friction force expression must contain separate coefficients for orthogonal directions"
+  - "Solution must verify friction force direction is not necessarily antiparallel to velocity"
+ops_template:
+  - "Require explicit μ_x and μ_y in force component equations"
+  - "Block isotropic friction assumptions when anisotropy parameters are provided"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "problem_context_align"
+
+
+rule_id: SATELLITE-001
+name: SolarPanelAreaOmission
+statement: "When solar panels or sun-facing appendages are present, the solution must include their projected area in solar absorption calculations."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'solar panels' or 'appendages' with 'extending' and 'exposed to sun'"
+    - "solution computes solar absorption power using only main body cross-section (e.g., πr² for sphere)"
+failure_domain:
+  examples:
+    - "Satellite with solar panels: solution uses sphere cross-section only for absorption"
+    - "Spacecraft with radiators: solution ignores radiator area in solar absorption calculation"
+post_conditions:
+  - "absorption area expression lacks appendage area variables"
+  - "no justification for neglecting appendage area provided"
+ops_template:
+  - "block: using_main_body_cross_section_only"
+  - "apply: include_projected_area_of_appendages"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: GPR-PATH-001
+name: Radar Path Length Mismatch
+statement: "The attenuation exponent must use one-way path length when amplitude condition is specified at the target location, and two-way path length when specified at the receiver."
+trigger_domain:
+  conditions:
+    - "problem involves electromagnetic wave reflection (e.g., radar, GPR)"
+    - "amplitude threshold condition references specific location (e.g., 'at the object', 'at the detector')"
+failure_domain:
+  examples: ["Using depth z for detector amplitude condition (should be 2z)", "Using 2z for object amplitude condition (should be z)"]
+post_conditions:
+  - "checker verifies path length factor (1 or 2) matches condition location specification"
+ops_template:
+  - "VerifyLocationPath: Cross-check amplitude condition location against path length factor in attenuation exponent"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: OPT-MECH-001
+name: Inverted refractive index in potential energy
+statement: "In optical-mechanical analogies for light propagation in refractive index gradients, the potential energy must be inversely proportional to the square of the refractive index."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'refractive index gradient' and 'mass point analogy'"
+    - "solution_derives_potential_energy and total_energy_zero"
+failure_domain:
+  examples: ["E_p = - (m v_0^2 n^2)/(2 n_1^2)", "E_p = k * n^2 where k is constant"]
+post_conditions:
+  - "potential_energy_expression matches pattern: constant * (1 / n^2)"
+  - "at n = n_1, potential_energy equals -0.5 * m * v_0^2"
+ops_template:
+  - "block: potential_energy_expression with n^2 in numerator and no n^2 in denominator"
+  - "apply: replace n^2 with 1/n^2 and adjust constant using n_1 boundary condition"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SLOWROLL-DIFF-001
+name: Missing Hubble Parameter Differentiation in Slow-Roll
+statement: "When deriving the acceleration term $\ddot{\phi}$ under slow-roll approximation, the time derivative of the Hubble parameter must be explicitly included in the differentiation of the slow-roll equation $3H\dot{\phi} = -V'(\phi)$."
+trigger_domain:
+  conditions:
+    - "Problem involves slow-roll inflation cosmology with potential $V(\phi)$"
+    - "Solution references slow-roll approximation for $\ddot{\phi}$ derivation"
+    - "Equation $\ddot{\phi} + 3H\dot{\phi} = -V'$ appears in context"
+failure_domain:
+  examples: ["States $\ddot{\phi} \approx -V''\dot{\phi}/(3H)$ without differentiating $3H\dot{\phi} = -V'$", "Derives $\delta$ without accounting for $\dot{H}$ in time differentiation"]
+post_conditions:
+  - "Derivation shows explicit time differentiation of $3H\dot{\phi} = -V'$ yielding $3\dot{H}\dot{\phi} + 3H\ddot{\phi} = -V''\dot{\phi}$"
+  - "Solution expresses $\dot{H}$ via slow-roll parameter $\epsilon$ or retains $\dot{H}$ term"
+ops_template:
+  - "Require explicit differentiation step of slow-roll equation before approximating $\ddot{\phi}$"
+  - "Block direct substitution of $\ddot{\phi}$ approximations without derivation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DYN-NEGL-001
+name: Negligible Quantity Used Non-Negligibly
+statement: "When a problem explicitly states a physical quantity is negligible, the solution must treat it as zero in all equations of motion."
+trigger_domain:
+  conditions:
+    - "problem statement contains phrases indicating negligibility (e.g., 'can be ignored', 'negligible', 'ignored')"
+    - "solution assigns non-zero value to stated-negligible quantity in dynamic equations"
+failure_domain:
+  examples: ["Problem states 'moment of inertia can be ignored' but uses I = m d²/2 in torque equation", "Problem specifies 'friction negligible' but includes kinetic friction term in force balance", "Problem declares 'air resistance ignored' yet adds drag force in energy equation"]
+post_conditions:
+  - "checker flags non-zero usage of stated-negligible quantity in equations of motion"
+ops_template:
+  - BLOCK: using non-zero value for stated-negligible quantity in dynamic equations
+  - REQUIRE: setting negligible quantity to zero or omitting it from motion equations
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: problem_context_align
+
+
+rule_id: FRAME-ENERGY-001
+name: Frame-Inconsistent Kinetic Energy Usage
+statement: "Solutions must not use kinetic energy values from one reference frame to compute motion parameters in a different reference frame without explicit frame transformation."
+trigger_domain:
+  conditions:
+    - "Problem involves multiple reference frames (e.g., lab frame and drift frame)"
+    - "Solution uses kinetic energy value specified in one frame for radius/circular motion calculation in another frame"
+    - "No frame transformation applied to kinetic energy value"
+failure_domain:
+  examples: ["Using lab-frame kinetic energy to compute gyration radius in E×B drift frame", "Applying total kinetic energy (including drift motion) to pure magnetic circular motion formula without separation"]
+post_conditions:
+  - "Computed radius exceeds physical bounds (e.g., > anode-cathode distance)"
+  - "Checker flags untransformed energy-frame mismatch in motion parameter calculation"
+ops_template:
+  - "BLOCK: direct_use_of_kinetic_energy_without_frame_check"
+  - "APPLY: reference_frame_consistency_verification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Verify kinetic energy frame matches motion parameter frame in radius formula"
+    - type: "numeric_back_substitution"
+      description: "Check if computed radius exceeds system dimensions (e.g., >15mm anode-cathode gap)"
+
+
+rule_id: SYS-RESP-001
+name: NonEmptySolutionRequired
+statement: "The solution must contain non-whitespace content."
+trigger_domain:
+  conditions:
+    - "solution_text.strip() == ''"
+failure_domain:
+  examples: ["", "   ", "HTTP timeout error message"]
+post_conditions:
+  - "verification engine rejects solution with 'empty_solution' error code"
+ops_template:
+  - "block: empty_solution"
+verification:
+  tests:
+    - type: "empty_string_test"
+
+
+rule_id: COSMO-LOGIC-001
+name: AvoidCircularConsequence
+statement: "A defining condition of a physical phenomenon must not be listed as a consequence of that same condition."
+trigger_domain:
+  conditions:
+    - "Solution identifies a specific condition as the fundamental requirement for a phenomenon (e.g., 'inflation requires \ddot{a}>0')"
+    - "Solution subsequently lists that identical condition as an implied consequence"
+failure_domain:
+  examples: ["'Inflation condition (\ddot{a}>0) implies negative pressure, \ddot{a}>0, and decreasing Hubble radius'", "'Black hole formation requires event horizon implies event horizon existence'"]
+post_conditions:
+  - "Verification engine flags solutions where defining condition appears in consequence list"
+ops_template:
+  - "Block: Including defining condition in consequence enumeration"
+  - "Suggest: Restructure argument to state defining condition implies only non-identical consequences"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DOPPLER-RES-001
+name: Unapplied Resonance Condition in Doppler Shift
+statement: "When resonance in the moving atom's frame is specified, the solution must eliminate laboratory-frame laser frequency and wave number using the Doppler shift relation."
+trigger_domain:
+  conditions:
+    - "Problem involves Doppler shift for atomic resonance (e.g., laser cooling with counterpropagating beams)"
+    - "Problem states laser frequency is tuned for resonance in atom's rest frame"
+    - "Solution contains laboratory laser frequency (ω_L) or wave number (q) in final energy expression"
+failure_domain:
+  examples: ["ε_at = ℏω_0 + ½mv² - ℏq v", "Leaving ω_L unsubstituted in energy conservation", "Using q without relating to ω_0 via Doppler condition"]
+post_conditions:
+  - "Final expression contains no ω_L or q; all terms use ω_0, v, c, and fundamental constants"
+ops_template:
+  - "Apply Doppler shift: ω_L = ω_0(1 - v/c) to eliminate ω_L"
+  - "Block direct use of ω_L/q in final answer without substitution"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      params: { forbidden_symbols: ["ω_L", "q"] }
+    - type: "numeric_back_substitution"
+      params: { substitution: "ω_L = ω_0(1 - v/c), q = ω_L/c", expected_form: "ℏω_0 + ½mv² - (ℏω_0 v)/c" }
+
+
+rule_id: ORB-PER-001
+name: SatelliteMassInOrbitalPeriod
+statement: "The satellite mass must not be used in the calculation of the orbital period for a Keplerian orbit around a central body."
+trigger_domain:
+  conditions:
+    - "problem requires orbital period calculation for a satellite orbiting a central body"
+    - "satellite mass is provided in the given data"
+    - "solution references satellite mass in the period derivation or formula"
+failure_domain:
+  examples:
+    - "T = 2 * pi * sqrt(a^3 / (G * (M_earth + m_satellite)))"
+    - "T = 2 * pi * sqrt(a^3 * m_satellite / (G * M_earth))"
+post_conditions:
+  - "symbolic checker detects satellite mass in period expression"
+ops_template:
+  - "block: use of satellite mass in orbital period formula"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHOTON-ANGMOM-001
+name: Photon angular momentum value override
+statement: "When the problem explicitly states the angular momentum per photon for circularly polarized light, the model must use the stated value without substitution of standard physical constants."
+trigger_domain:
+  conditions:
+    - "problem contains explicit phrase assigning angular momentum per photon (e.g., 'is h', 'equals h', 'has value h')"
+    - "assigned symbol matches Planck's constant notation (e.g., 'h') but differs from reduced Planck's constant (ħ)"
+failure_domain:
+  examples: ["Problem states 'angular momentum h' but model uses ħ = h/(2π)", "Problem specifies 'angular momentum 6.63e-34 J·s' but model uses 1.05e-34 J·s"]
+post_conditions:
+  - "model uses exact symbol/value from problem statement for angular momentum per photon"
+ops_template:
+  - UseGivenValue: angular_momentum_per_photon
+verification:
+  tests:
+    - type: symbolic_consistency
+      description: "Verify angular momentum symbol in solution matches problem statement"
+    - type: numeric_back_substitution
+      description: "Confirm numerical value substitution aligns with problem's specified value"
+
+
+rule_id: COMP-EFF-001
+name: Exobase Height Analytical Solution
+statement: "The exobase height must be computed using direct algebraic solution from the pressure exponential profile and ideal gas law, avoiding numerical integration or iterative methods."
+trigger_domain:
+  conditions:
+    - "Problem defines exobase by mean free path equal to scale height condition"
+    - "Pressure profile is given as exponential decay with known scale height and reference altitude"
+failure_domain:
+  examples: ["Numerical integration of velocity distribution to determine escape fraction for height calculation", "Iterative root-finding for height in pressure equation when direct logarithmic solution exists"]
+post_conditions:
+  - "Solution steps contain only arithmetic operations and logarithmic functions on given constants"
+ops_template:
+  - Block: NumericalIntegration
+  - Block: IterativeRootFinding
+  - Apply: DirectLogarithmicSolution
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: numeric_back_substitution
+
+
+rule_id: BUBBLE-PRESS-001
+name: "Soap Bubble Interface Factor"
+statement: "For a soap bubble, the pressure difference must account for two liquid-air interfaces, requiring a factor of 4 in the Laplace pressure formula (ΔP = 4γ/R)."
+trigger_domain:
+  conditions:
+    - "problem_context.soap_bubble"
+    - "solution.uses_laplace_pressure"
+failure_domain:
+  examples: ["Using ΔP = 2γ/R for soap bubble", "Deriving pressure difference with single-interface factor (2γ/R)"]
+post_conditions:
+  - "Pressure difference expression contains factor 4 (4γ/R)"
+ops_template:
+  - "Require factor 4 in Laplace pressure derivation for soap bubbles"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DATA-UNPR-001
+name: Unprovided Data Usage
+statement: "Solutions must not introduce specific numerical values for physical parameters that are absent from the problem statement."
+trigger_domain:
+  conditions:
+    - "Problem statement contains no numerical values for astronomical parameters (e.g., separation, distance)"
+    - "Solution contains numerical values for unprovided parameters (e.g., AU, parsecs, light-years)"
+failure_domain:
+  examples: ["Using Alpha Centauri's 35 AU separation without problem specification", "Inserting 4.37 light-year distance for unmentioned systems", "Quoting 1.34 pc conversion for unspecified binaries"]
+post_conditions:
+  - "Solution uses only symbolic expressions or explicitly states data insufficiency"
+ops_template:
+  - "Block: External astronomical database queries"
+  - "Apply: Symbolic derivation using problem-given constants only"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: GPR-MEDIA-001
+name: Ground Medium Wave Speed Assumption
+statement: "The wave speed in ground medium must not be assumed equal to the speed of light in vacuum unless explicitly stated that the ground has vacuum properties (μ=μ₀, ε=ε₀, σ=0)."
+trigger_domain:
+  conditions:
+    - "Problem context involves ground-penetrating radar in soil/earth medium"
+    - "Solution uses c = 1/√(μ₀ε₀) for wave speed in ground"
+    - "Problem does not specify ground has vacuum properties"
+failure_domain:
+  examples: ["Assuming v=3e8 m/s for GPR in soil without justification", "Using c in travel time calculation when ground conductivity σ is implied"]
+post_conditions:
+  - "Checker flags vacuum speed assumption in non-vacuum ground medium"
+ops_template:
+  - "Require explicit ground property specification before wave speed assignment"
+  - "Block c substitution when medium is specified as ground"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: NUM-CTX-001
+name: Unjustified Numerical Assumption
+statement: "When a problem requires numerical calculation of an expression containing a variable not assigned a numerical value in the problem statement, the solution must not assume a value for that variable."
+trigger_domain:
+  conditions:
+    - "Problem statement requests numerical calculation for an expression with symbolic variables"
+    - "Analytical solution contains a variable without numerical assignment in problem context"
+    - "Solution computes numerical value using assumed value for unassigned variable"
+failure_domain:
+  examples:
+    - "Problem: Find v = a*t with a=2 m/s². Compute v numerically. Solution assumes t=1s to get v=2 m/s"
+    - "Problem: Calculate F = m*a with m=5 kg. Solution assumes a=10 m/s² to get F=50 N"
+post_conditions:
+  - "No numerical value is computed for variables lacking problem-specified assignments"
+  - "Solution explicitly states numerical calculation requires missing parameter values"
+ops_template:
+  - "Block: Introduction of numerical values for unassigned variables during computation"
+  - "Apply: ProblemContextAlign checker to validate all required numerical inputs"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: BIN-RES-001
+name: UnprovidedParameterNumericalUse
+statement: "Solutions must not assign numerical values to problem-specific parameters that are not explicitly provided in the problem statement."
+trigger_domain:
+  conditions:
+    - "solution_uses_numerical_value_for(unprovided_parameter) and unprovided_parameter in [orbital_period, distance, stellar_mass]"
+failure_domain:
+  examples: ["Using '10 years' for orbital period when not given", "Assuming '10 parsecs' distance without specification", "Assigning '2 solar masses' total mass without stellar mass data"]
+post_conditions:
+  - "All numerical values for problem-specific parameters must originate from explicitly provided data"
+ops_template:
+  - block: numerical_assignment_to_unprovided_parameter
+  - suggest: symbolic_representation_for_missing_parameters
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: problem_context_align
+
+
+rule_id: EST-ORD-001
+name: OrderOfMagnitudeOnly
+statement: "Solutions to problems specifying 'order of magnitude only' must not include detailed numerical calculations with precise values."
+trigger_domain:
+  conditions:
+    - "problem_statement contains 'order of magnitude only' or equivalent phrasing"
+failure_domain:
+  examples: ["U = 0.05 * 4000 * 66 = 13200 J", "m = 50 g, c = 4184 J/kg·K, ΔT = 66 K → U = 13800 J", "Precise arithmetic steps for energy calculation when only 10^4 order required"]
+post_conditions:
+  - "solution contains no arithmetic operations with specific numerical values beyond rough approximations"
+  - "final answer is expressed solely as a power of 10 (e.g., 10^4) without intermediate calculations"
+ops_template:
+  - "block: detailed_numerical_calculation"
+  - "apply: order_of_magnitude_estimation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ELEC-POT-001
+name: Potential Reference Misattribution
+statement: "The electrostatic potential value must be correctly associated with the specified object in the problem context when deriving charge expressions."
+trigger_domain:
+  conditions:
+    - "Problem statement assigns electrostatic potential to an object distinct from the object whose charge is solved for"
+    - "Solution uses potential variable without explicit reference to its source object"
+failure_domain:
+  examples:
+    - "Using pipe's given potential φ to compute drop's charge as Q=4πε₀rφ, assuming φ is drop's self-potential"
+    - "Given spherical shell's potential, solving for enclosed sphere's charge using shell's potential as sphere's"
+post_conditions:
+  - "All potential variables in charge derivation are explicitly linked to their source objects in the problem statement"
+ops_template:
+  - "Require object specification for all potential variables in solution"
+  - "Block charge derivation steps that omit potential source attribution"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DYN-PUL-001
+name: Pulley Attachment Force Omission
+statement: "When a pulley is rigidly attached to a constrained body, the vector sum of tension forces acting on the pulley must be included in the force balance for that body."
+trigger_domain:
+  conditions:
+    - "Pulley is rigidly attached to primary constrained object (e.g., prism, cart)"
+    - "Masses connected by string over pulley on inclined surfaces"
+    - "Analysis of horizontal/vertical equilibrium for constrained object"
+failure_domain:
+  examples: ["Triangular prism equilibrium ignoring pulley tension horizontal components", "Cart with overhead pulley neglecting string tension reaction forces", "Movable wedge problem omitting pulley force contributions"]
+post_conditions:
+  - "Force balance equation contains explicit tension vector sum terms for attached pulleys"
+  - "Net horizontal force expression includes ±T(cos θ₁ + cos θ₂) type terms"
+ops_template:
+  - "Block solutions deriving equilibrium conditions without pulley force terms when pulley is attached to constrained body"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DROP-SHAPE-001
+name: SphericalDropAssumptionInDetachment
+statement: "The volume of a liquid drop at the point of detachment from a nozzle must not be modeled as a full sphere."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: context_type = 'drop_detachment'"
+    - "SymbolicPattern: solution contains 'volume = (4/3)\\pi r^3' for the drop"
+failure_domain:
+  examples: ["Using V = (4/3)πr³ for drop volume in nozzle separation problem", "Deriving r_max by equating mg (with m = ρ(4/3)πr³) to 2πaγ"]
+post_conditions:
+  - "Checker flags spherical volume assumption in drop detachment context"
+ops_template:
+  - "BLOCK: spherical_volume_formula"
+  - "SUGGEST: correction_factor_model"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PARAM-ASSUME-001
+name: Unjustified Numerical Assumption
+statement: "Solutions must not assign numerical values to problem-specific parameters that are not provided in the problem statement and are not standard physical constants."
+trigger_domain:
+  conditions:
+    - "problem_requires_numerical_answer"
+    - "solution_uses_numerical_value_for_parameter(P)"
+    - "problem_does_not_specify_value_for(P)"
+    - "P_is_not_standard_constant"
+failure_domain:
+  examples:
+    - "Prism problem: solution assumes A=60° and n=1.5 without problem providing them"
+    - "Pendulum problem: solution assumes L=1m to compute period"
+    - "Lens problem: solution assumes R=20cm to compute focal length"
+post_conditions:
+  - "solution must express answer symbolically if parameters are missing"
+  - "solution must not contain numerical substitutions for unspecified non-constant parameters"
+ops_template:
+  - BLOCK: numerical_substitution_for_undefined_parameters
+  - SUGGEST: symbolic_expression_for_missing_parameters
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: numeric_back_substitution
+
+
+rule_id: PHYS-DATA-001
+name: IgnoredProvidedData
+statement: "When the problem provides specific numerical data for the calculation, the solution must use that data in the derivation of the answer."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: problem_contains_relevant_numerical_data"
+    - "GivenUseCheck: solution_uses_no_provided_data"
+failure_domain:
+  examples:
+    - "Lightning problem: solution uses typical charge (5 C) without given h=1km or E0=300 kV/m"
+    - "Digital camera problem: solution ignores L=35mm, Np=5Mpix, f=38mm and uses generic pixel size"
+post_conditions:
+  - "GivenUseCheck: solution_uses_at_least_one_provided_data_point"
+ops_template:
+  - "Block: ExternalTypicalValueWithoutDataReference"
+  - "Apply: ProvidedDataUsage"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Check solution references at least one provided data point in derivation"
+    - type: "numeric_back_substitution"
+      description: "Verify numerical values match provided data when used"
+
+
+rule_id: PHYS-LIGHTNING-001
+name: Lightning Charge from Graph
+statement: "The charge transferred in a lightning strike must be computed by integrating the provided current-time graph, not by using an external typical value."
+trigger_domain:
+  conditions:
+    - "Problem statement references a current-time graph for lightning"
+    - "Solution states a charge value without derivation from the graph"
+failure_domain:
+  examples:
+    - "Using 15 C for charge without integrating the given current-time graph"
+    - "Citing 'standard value' for charge when graph is provided"
+post_conditions:
+  - "Solution computes charge as integral of current over time from graph"
+  - "Solution contains no reference to external typical charge values"
+ops_template:
+  - "Block: Use of typical charge values (e.g., 15 C) without graph integration"
+  - "Require: Explicit charge calculation from current-time graph area"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: FIG-USE-001
+name: "Figure Measurement Omission"
+statement: "Solutions must derive geometric ratios from explicit ruler measurements of the provided figure rather than assuming typical values."
+trigger_domain:
+  conditions:
+    - "Problem statement contains explicit instruction to use a ruler for measurements from a figure"
+    - "Solution references a geometric ratio without citing measured lengths"
+failure_domain:
+  examples: 
+    - "Assuming streamline spacing ratio is 0.8 without ruler measurements"
+    - "Using 'typical' wing curvature value instead of figure measurement"
+post_conditions:
+  - "Checker flags solution if geometric ratio is stated without associated measured lengths (e.g., 'd0 = X mm, dP = Y mm')"
+ops_template:
+  - "Require explicit statement of measured lengths with units for any geometric ratio"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: STATE-VAR-001
+name: StateVariableOmission
+statement: "When a problem specifies a physical state using a variable, the solution's expression for a requested quantity must include that variable unless explicitly stated to be independent."
+trigger_domain:
+  conditions:
+    - "Problem contains state specification phrase (e.g., 'at the instant when [X] is [value]')"
+    - "Solution provides expression for quantity without containing state variable X"
+failure_domain:
+  examples: ["Problem states 'at capacitor charge q', solution gives Q0 without q", "Problem states 'at height H', solution gives velocity without H"]
+post_conditions:
+  - "Expression contains state variable or derived dependent quantity"
+  - "Explicit justification for independence provided if variable omitted"
+ops_template:
+  - "Block: Omitting state variable in expression"
+  - "Apply: Include state variable in expression"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-POT-001
+name: ParameterRedefinitionWithoutBasis
+statement: "Solutions must not redefine a problem-given parameter to absorb other variables without explicit problem statement justification."
+trigger_domain:
+  conditions:
+    - "Problem defines potential energy as U(r) = -β/r with β as a fixed parameter"
+    - "Solution contains equation redefining β as expression involving other variables (e.g., r₀, m)"
+failure_domain:
+  examples: ["2β/(m r₀) = β", "β = β/(m r₀)", "β ≡ 2β/(m r₀)"]
+post_conditions:
+  - "Same symbol (β) used for both original parameter and redefined quantity"
+  - "Final answer omits necessary variable (r₀) required by physics"
+ops_template:
+  - "Block: Parameter redefinition without new symbol or problem justification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Detect multiple definitions of same symbol in solution"
+    - type: "numeric_back_substitution"
+      description: "Verify redefinition causes numerical inconsistency with sample values"
+
+
+rule_id: ASTRO-INPUT-001
+name: Unprovided Problem-Specific Input Values
+statement: "Solutions must not compute numerical answers using assumed values for problem-specific inputs that are not explicitly provided in the current problem statement or referenced context."
+trigger_domain:
+  conditions:
+    - "problem requires numerical answer for derived quantity (e.g., luminosity)"
+    - "solution uses specific numerical values for problem-specific inputs (e.g., star masses) not stated in current problem statement"
+    - "inputs are neither standard constants (e.g., solar mass) nor defined in referenced figures/tables within current context"
+failure_domain:
+  examples: ["Assuming M1=2M_Sun, M2=1M_Sun for binary stars when only 'previous sections' reference exists", "Inventing orbital parameters for exoplanet when problem cites unreferenced prior data"]
+post_conditions:
+  - "checker flags unverified numerical inputs for problem-specific variables"
+ops_template:
+  - "Require explicit citation of input values from current problem statement"
+  - "Block numerical substitution for inputs lacking direct numerical definition in context"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: EXTERNAL-RES-001
+name: ExternalResourceUsage
+statement: "The solution must not attempt to access external resources when all necessary physical constants and formulas are explicitly provided in the problem statement."
+trigger_domain:
+  conditions:
+    - "problem_statement contains all required equations (e.g., n=1+aP) and numerical values (e.g., a, particle masses)"
+    - "solution references external data sources, APIs, or unprovided reference tables"
+failure_domain:
+  examples: ["Model attempts API call for refractive index despite given n=1+aP formula", "Solution cites 'standard tables' for particle masses when problem provides M values"]
+post_conditions:
+  - "All numerical values and formulas used match problem-provided data"
+ops_template:
+  - "block: external_api_call"
+  - "block: unprovided_table_lookup"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: OPT-ANG-001
+name: Unused exit angle condition
+statement: "The solution must incorporate the given exit angle when calculating the exit position in ray optics problems with spatially varying refractive index."
+trigger_domain:
+  conditions:
+    - "problem specifies an exit angle for the light beam"
+    - "solution computes exit position without referencing the exit angle symbol"
+failure_domain:
+  examples: ["plate with n(x) variation, exit angle α given but absent in x_B derivation", "ray path calculation ignoring specified emergence angle"]
+post_conditions:
+  - "exit angle symbol appears in solution derivation or final expression"
+ops_template:
+  - "RequireGivenUse: exit_angle"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ORDER-MAG-001
+name: OrderOfMagnitudePrecision
+statement: "When the problem specifies an order of magnitude estimate, the solution must provide a value rounded to one significant figure or as a power of ten."
+trigger_domain:
+  conditions:
+    - "problem_statement contains 'order of magnitude' and ('estimate only' or 'not for a precise answer')"
+failure_domain:
+  examples:
+    - "Answer 0.15 m when problem requires order of magnitude estimate"
+    - "Answer 14.55 cm when problem states 'order of magnitude only'"
+post_conditions:
+  - "solution_answer has at most one significant figure"
+  - "solution_answer is expressed as a power of ten or rounded to one significant figure"
+ops_template:
+  - "Round the final answer to one significant figure"
+  - "Replace precise numerical answers with order of magnitude equivalent (e.g., 0.15 → 0.1)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: WAVE-REG-001
+name: Multi-Region Wavelength Consistency
+statement: "When particle paths cross a boundary between distinct physical regions, the de Broglie wavelength must be region-specific and derived from local kinetic energy."
+trigger_domain:
+  conditions:
+    - "Problem describes a boundary between two regions with implied/explained property differences (e.g., potential steps)"
+    - "Solution computes phase differences using de Broglie wavelength"
+failure_domain:
+  examples: ["Single wavelength used across potential step in interference calculation", "Phase difference derived with uniform λ despite region boundary", "Wavelength not recalculated after crossing partition"]
+post_conditions:
+  - "Checker flags absence of region-specific wavelength definitions in phase expressions"
+  - "Solution must explicitly justify wavelength uniformity or define λ per region"
+ops_template:
+  - "Require region-aware wavelength declaration before phase calculation"
+  - "Block global wavelength usage without boundary homogeneity verification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Validate wavelength symbols are subscripted by region in phase terms"
+    - type: "numeric_back_substitution"
+      description: "Substitute test potentials to verify region-dependent λ calculation"
+
+
+rule_id: DYN-ACCEL-001
+name: Unjustified Braking Acceleration Assumption
+statement: "Solutions must not introduce unprovided numerical acceleration values for braking scenarios without explicit justification from problem data or standard references."
+trigger_domain:
+  conditions:
+    - "problem context involves automotive braking without specified acceleration value"
+    - "solution contains numerical acceleration value not present in problem data"
+failure_domain:
+  examples: ["using a=5 m/s² for normal braking when problem provides no acceleration data", "assuming collision acceleration of 30 m/s² without citation"]
+post_conditions:
+  - "checker verifies all acceleration values match problem data or standard constants (e.g., g) with explicit scaling"
+ops_template:
+  - "Require explicit citation for non-problem acceleration values"
+  - "Block solutions introducing arbitrary acceleration magnitudes"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: OPT-SENS-001
+name: SensorResolutionThreshold
+statement: "When determining the F-number to avoid optical diffraction limiting image quality, the sensor resolution threshold must be the pixel pitch, not the Nyquist period."
+trigger_domain:
+  conditions:
+    - "Problem involves digital camera sensor resolution and optical diffraction limit"
+    - "Solution computes pixel pitch (p) and uses 2p in diffraction condition"
+failure_domain:
+  examples: ["Using 2p=17.5μm threshold when p=8.75μm is correct", "Condition 1.22λF# ≤ 2p instead of 1.22λF# ≤ p"]
+post_conditions:
+  - "Computed maximum F# exceeds correct value by factor ≥3.5"
+ops_template:
+  - "Block use of Nyquist period (2p) as sensor resolution threshold in diffraction condition"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CAP-ELEC-001
+name: FinalAnswerUsesUndefinedVariable
+statement: "The final answer must not contain any variable that is not explicitly provided in the problem statement or a standard physical constant."
+trigger_domain:
+  conditions:
+    - "GivenUseCheck: problem has explicitly stated given parameters"
+    - "FinalAnswer: contains symbolic variables not in problem's given parameters list"
+failure_domain:
+  examples:
+    - "Problem specifies separation d but final answer uses E (electric field) without it being given"
+    - "Problem provides Q and A but final answer uses σ without derivation in expression"
+post_conditions:
+  - "FinalAnswer: all variables match problem's given parameters or standard constants (e.g., ε0)"
+ops_template:
+  - "Require: express final answer using only problem-stated parameters"
+  - "Block: final answer containing non-given variables"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DOPPLER-EMIT-001
+name: Incorrect Doppler Shift Sign for Emitted Photon
+statement: "The energy of a photon emitted by a moving atom must exhibit blueshift when emission direction aligns with atomic velocity and redshift when opposing it."
+trigger_domain:
+  conditions:
+    - "solution computes emitted photon energy with Doppler shift in atomic cooling context"
+    - "atom velocity and emission direction are explicitly defined in one dimension"
+failure_domain:
+  examples: ["atom +x velocity, +x emission: energy = ħω₀(1 - v/c)", "atom +x velocity, -x emission: energy = ħω₀(1 + v/c)"]
+post_conditions:
+  - "Doppler shift sign contradicts velocity-emission direction alignment"
+ops_template:
+  - "Apply DopplerShiftSignCheck: verify shift sign matches (velocity • emission_direction)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: META-NO-RESP-001
+name: Non-empty Valid Solution
+statement: "The solution response must be non-empty and must not contain timeout error indicators."
+trigger_domain:
+  conditions:
+    - "solution_text is empty string"
+    - "solution_text matches pattern '.*timeout.*' (case-insensitive)"
+    - "solution_text matches pattern '.*HTTPConnectionPool.*' (case-insensitive)"
+failure_domain:
+  examples:
+    - "''"
+    - "'HTTPConnectionPool(host=\'localhost\', port=8000): Read timed out.'"
+    - "'Max retries exceeded with url: /v1/chat/completions'"
+post_conditions:
+  - "checker returns failure with code 'NO_VALID_SOLUTION'"
+ops_template:
+  - "BLOCK: empty_or_error_response"
+verification:
+  tests:
+    - type: "empty_string_check"
+    - type: "timeout_error_pattern_check"
+
+
+rule_id: PHYS-DEN-001
+name: NonNegativeMassDensity
+statement: "Derived mass density expressions must evaluate to non-negative values throughout their defined spatial domain."
+trigger_domain:
+  conditions:
+    - "solution contains symbolic mass density expression as function of position"
+    - "expression involves gravitational or astrophysical context"
+failure_domain:
+  examples: ["dark matter density ρ(r) = v₀²/(4πGr²) - nmₛ negative for r > √(v₀²/(4πGnmₛ))", "stellar density model yielding negative values within galactic radius"]
+post_conditions:
+  - "all mass density expressions pass non-negativity verification across entire domain"
+ops_template:
+  - RequireNonNegativityCheck
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Symbolic proof that ρ(r) ≥ 0 for all r in domain via inequality solving"
+    - type: "numeric_back_substitution"
+      description: "Numerical evaluation at domain boundaries and critical points using physical parameters"
+
+
+rule_id: AC-DC-001
+name: Unjustified DC Formula in AC Context
+statement: "When solving for AC phenomena, the use of a DC-derived formula must be justified by verifying the low-frequency condition or by demonstrating quasi-static equilibrium."
+trigger_domain:
+  conditions:
+    - "The problem involves alternating current (AC) or time-varying fields"
+    - "The solution applies a formula derived exclusively for direct current (DC) or steady-state conditions"
+    - "The solution lacks explicit justification for low-frequency approximation (e.g., ω << 1/τ)"
+failure_domain:
+  examples:
+    - "Hall voltage calculation using V_H = -I(t)B(t)/(n e c) for AC fields without ω << 1/τ condition"
+    - "DC drift velocity formula v = μE applied to AC magnetic field scenarios without frequency validation"
+post_conditions:
+  - "The solution must state the low-frequency validity condition (e.g., ω << 1/τ) or implement the frequency-dependent AC model"
+ops_template:
+  - "Require explicit low-frequency justification"
+  - "Block DC formula substitution in AC contexts without validation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ORB-IMP-001
+name: UnspecifiedImpulseDirection
+statement: "When a velocity impulse direction is unspecified in the problem, solutions must not assume tangential or radial impulse direction to determine orbital element alignment."
+trigger_domain:
+  conditions:
+    - "Problem describes velocity impulse (Δv) without specifying direction relative to orbital frame"
+    - "Solution assumes tangential/radial impulse to conclude position vector aligns with major axis"
+failure_domain:
+  examples: ["Problem states 'accidental misfire causes Δv' without direction; solution assumes tangential and sets α=0°", "Problem mentions 'unspecified thruster impulse'; solution assumes radial and calculates periapsis shift"]
+post_conditions:
+  - "Solution must either state directional assumption as explicit hypothesis or derive result without directional assumption"
+ops_template:
+  - "Block derivation of orbital element alignment (e.g., periapsis location) from assumed impulse direction"
+  - "Require explicit problem statement of impulse direction before allowing directional analysis"
+verification:
+  tests:
+    - type: "ProblemContextAlign"
+    - type: "GivenUseCheck"
+
+
+rule_id: AIRBAG-TIME-001
+name: Missing Activation Time Verification
+statement: "When calculating impact time in airbag deployment scenarios, the solution must compute and compare the airbag activation time against the impact time."
+trigger_domain:
+  conditions:
+    - "Problem specifies airbag activation threshold (e.g., voltage Vs)"
+    - "Solution calculates time to impact (t1) without computing activation time"
+failure_domain:
+  examples: ["Solution provides t1=0.25s but omits activation time calculation", "Impact time estimated without system dynamics verification", "t1 stated without comparison to voltage threshold crossing time"]
+post_conditions:
+  - "Activation time derived from system parameters (M, keff, Vs)"
+  - "Explicit verification that activation time < t1"
+ops_template:
+  - "Require mass-spring dynamics solution for voltage evolution"
+  - "Block submission if activation time comparison is absent"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERMO-GAS-001
+name: Unjustified Specific Heat Assumption
+statement: "The solution must not assume a specific numerical value for molar specific heat unless the problem explicitly specifies the gas type or specific heat values."
+trigger_domain:
+  conditions:
+    - "Problem statement lacks explicit gas type specification (e.g., monatomic/diatomic/polyatomic)"
+    - "Solution contains numerical coefficients for molar specific heat (e.g., 3/2, 5/2, 7/2) in energy/work calculations"
+failure_domain:
+  examples: ["Assuming diatomic gas (Cv=5/2 R) for unspecified 'molecular gas'", "Using Cp=7/2 R when problem only states 'perfect gas'"]
+post_conditions:
+  - "Solution expresses energy in terms of general specific heat (Cv/Cp) or adiabatic index γ"
+ops_template:
+  - "Block: Numerical specific heat coefficients without problem justification"
+  - "Require: Explicit gas type reference matching problem data"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "problem_context_align"
+
+
+rule_id: PUL-STAT-001
+name: FixedPulleyFromStationaryCart
+statement: "When a pulley is attached to a cart specified as held stationary, the pulley must be treated as fixed, requiring equal acceleration magnitudes for masses connected by its string."
+trigger_domain:
+  conditions:
+    - "pulley.attached_to.cart.held_stationary == true"
+    - "string.connects.two_masses(pulley)"
+failure_domain:
+  examples: ["Solver models pulley as moving despite stationary cart attachment", "Unequal acceleration magnitudes assigned to string-connected masses"]
+post_conditions:
+  - "acceleration_magnitude(mass1) == acceleration_magnitude(mass2)"
+  - "stationary_cart.excluded_from_dynamics == true"
+ops_template:
+  - Apply: FixedPulleyConstraint
+  - Block: MovingPulleyDynamics
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ORB-KEP-001
+name: Missing Orbital Validity Condition
+statement: "When deriving orbital period formulas after velocity changes, the condition for a bound elliptical orbit must be explicitly stated."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: 'circular orbit' and 'velocity change' and 'elliptical orbit derivation'"
+    - "GivenUseCheck: 'Kepler third law' or 'vis-viva equation'"
+    - "not DomainConditionCheck: 'bound orbit condition'"
+failure_domain:
+  examples: ["T = T₀(1/(1-β))³/² without β<1", "a = a₀/(1-β) without energy constraint", "Numerical β=1/4 calculation without validity disclaimer"]
+post_conditions:
+  - "Solution states explicit bound orbit condition (e.g., β<1 or total energy negative)"
+ops_template:
+  - "Require bound orbit condition statement before period derivation"
+  - "Block final answer without validity domain specification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Verify derived formula includes domain restriction (e.g., β<1) in solution text"
+    - type: "numeric_back_substitution"
+      description: "Test formula with β=1.5 to confirm solution acknowledges invalid orbit"
+
+
+rule_id: LASER-INTENSE-001
+name: IntenseLaserPowerBroadeningIgnored
+statement: "When problem specifies intense laser causing saturation, solution must include power broadening in transition linewidth; using only natural linewidth is incorrect."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: context contains 'intense laser' or 'saturated' or 'no time in ground state'"
+    - "GivenUseCheck: solution uses Γ for linewidth without intensity-dependent broadening terms"
+failure_domain:
+  examples:
+    - "Laser cooling: Δv = cΓ/E under intense laser"
+    - "Saturated absorption: Doppler width calculated with natural linewidth only"
+post_conditions:
+  - "solution.linewidth_expression contains Rabi frequency Ω or saturation parameter s"
+ops_template:
+  - block: natural_linewidth_only
+  - apply: power_broadening_inclusion
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ANG-MOM-001
+name: Unjustified Tangential Assumption
+statement: "Angular momentum expressions must not assume tangential motion without explicit problem context justification when velocity direction is unspecified."
+trigger_domain:
+  conditions:
+    - "problem requires angular momentum about central point (e.g., planetary center)"
+    - "given variables include speed magnitude but not velocity direction angle"
+    - "solution expresses angular momentum as m*v*r without angular dependence factor"
+failure_domain:
+  examples:
+    - "L0 = m v0 RT for Earth surface object with unspecified velocity direction"
+    - "L = m v r for satellite with speed v but unknown orbital inclination"
+post_conditions:
+  - "angular momentum expression contains angular factor (e.g., sinθ) or solution explicitly states tangential motion assumption with context support"
+ops_template:
+  - "Require explicit assumption statement if tangential motion is used"
+  - "Block expressions omitting angular dependence without justification"
+verification:
+  tests:
+    - type: symbolic_consistency
+    - type: problem_context_align
+
+
+rule_id: MECH-LIMIT-001
+name: Unconstrained Displacement in Bounded Systems
+statement: "In mechanical systems with a defined physical displacement limit, the solution must constrain computed displacements to not exceed the limit parameter."
+trigger_domain:
+  conditions:
+    - "Problem context defines a physical displacement limit parameter (e.g., capacitor gap d)"
+    - "Solution displacement expression is purely algebraic without min() or conditional constraints"
+failure_domain:
+  examples: ["Capacitor plate displacement > d in braking scenario", "Spring extension beyond natural length without stop considered"]
+post_conditions:
+  - "Displacement expression contains min(computed_value, limit_parameter) or explicit validity condition"
+ops_template:
+  - "Apply physical constraint: displacement = min(expression, d)"
+  - "Block solutions omitting limit parameter in displacement calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Check displacement expression contains min() with limit parameter"
+    - type: "numeric_back_substitution"
+      description: "Verify displacement ≤ d for all valid input parameters"
+
+
+rule_id: STAB-DER-001
+name: Stability Derivative Sign Reversal
+statement: "In one-dimensional mechanical equilibrium, a positive derivative of the net force with respect to displacement must indicate unstable equilibrium, not stable."
+trigger_domain:
+  conditions:
+    - "problem_involves_1d_constrained_motion"
+    - "solution_uses_net_force_derivative_for_stability_analysis"
+failure_domain:
+  examples:
+    - "Claiming dF/dy > 0 implies stable equilibrium in vertical charge-gravity system"
+    - "Stating negative net force derivative indicates instability in spring-mass system"
+post_conditions:
+  - "stability_derivative_sign_check.passed"
+ops_template:
+  - "block: stability_analysis_with_derivative_sign_reversed"
+  - "apply: stability_derivative_sign_check"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PREC-SF-001
+name: Excessive Significant Figures
+statement: "The final numerical answer must not report more significant figures than the least precise input quantity."
+trigger_domain:
+  conditions:
+    - "solution contains a numerical final answer"
+    - "problem provides input quantities with explicit numerical values"
+failure_domain:
+  examples:
+    - "Tension calculated as 1.18 N when masses are given as 0.3 kg and 0.2 kg (one significant figure each)"
+    - "Acceleration reported as 9.810 m/s² when mass is given as 5 kg (one significant figure)"
+post_conditions:
+  - "number of significant figures in final answer <= min(significant figures of input quantities)"
+ops_template:
+  - "Round final answer to min significant figures of inputs"
+  - "Block output with excessive significant figures"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ASTRO-DISC-001
+name: DiscreteSystemContinuousFormula
+statement: "Solutions must not apply continuous distribution formulas to explicitly discrete particle systems without stating the approximation and its conditions."
+trigger_domain:
+  conditions:
+    - "problem_description contains explicit discrete particle count (e.g., 'N particles', 'N galaxies')"
+    - "problem_description describes spatial distribution (e.g., 'distributed homogeneously in a sphere')"
+    - "solution uses continuous-distribution-specific formula (e.g., gravitational potential energy of uniform sphere)"
+failure_domain:
+  examples:
+    - "Using U = -3GM²/(5R) for N discrete galaxies without approximation statement"
+    - "Applying solid-sphere moment of inertia to N discrete particles"
+post_conditions:
+  - "solution must include explicit continuous approximation statement with validity condition (e.g., 'for large N')"
+ops_template:
+  - "Require approximation statement: 'This uses the continuous approximation for large N.'"
+  - "Block continuous formula without approximation statement"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "problem_context_alignment"
+
+
+rule_id: DOPPLER-SHIFT-001
+name: Incorrect Doppler Shift Sign for Emission in Direction of Motion
+statement: "When an atom emits a photon parallel to its direction of motion, the Doppler shift in the laboratory frame must produce a redshift (frequency decrease), not a blueshift."
+trigger_domain:
+  conditions:
+    - "Problem involves spontaneous photon emission by a non-relativistic atom"
+    - "Emission direction is parallel to atom's velocity vector"
+    - "Solution contains Doppler shift expression for photon frequency in lab frame"
+failure_domain:
+  examples: ["Atom moving +x emits +x photon: solution gives ω₀(1+v/c) instead of (1-v/c)", "Atom receding from observer emits toward observer: solution uses blueshift formula"]
+post_conditions:
+  - "Doppler shift term for parallel emission must have negative sign (1 - v/c)"
+  - "Photon energy expression must evaluate to ħω₀ at v=0 and decrease for v>0"
+ops_template:
+  - "Apply DopplerShiftSignCheck: verify sign based on emission-motion alignment"
+  - "Block solutions with (1 + v/c) for parallel emission cases"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Confirm frequency expression contains (1 - v/c) factor for parallel emission"
+    - type: "numeric_back_substitution"
+      description: "Validate ω < ω₀ when v>0 and ω=ω₀ when v=0"
+
+
+rule_id: OPT-BEAM-001
+name: Incorrect Aperture Selection for Beam Divergence
+statement: "When calculating pointing accuracy for beam propagation to a distant target smaller than the incident beam spot, the source aperture diameter must be used for divergence calculations, not the target size."
+trigger_domain:
+  conditions:
+    - "Problem involves beam propagation from source aperture (D) to target size (d) at distance L"
+    - "Incident beam diameter at target (1.22λL/D) exceeds target size (d)"
+    - "Solution uses target size (d) in angular divergence formula θ = 1.22λ/d"
+failure_domain:
+  examples: ["Lunar laser reflector experiment using d=20cm instead of D=2.6m", "Satellite comms using receiver aperture for transmitter pointing accuracy", "LIDAR system using retroreflector size for beam spread calculation"]
+post_conditions:
+  - "Computed angular accuracy θ > 1.22λ/D (correct minimum value)"
+ops_template:
+  - "Block: target_size_in_source_divergence"
+  - "Apply: verify_beam_spot_vs_target_size"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Check divergence formula uses source aperture D when beam_spot > target_size"
+    - type: "numeric_back_substitution"
+      description: "Confirm 1.22λL/D > d and θ_solution > 1.22λ/D"
+
+
+rule_id: CAP-ACC-001
+name: SeriesCapacitorOmission
+statement: "The series capacitance to ground must be included in the denominator when calculating the voltage at the movable plate in a differential capacitor accelerometer circuit."
+trigger_domain:
+  conditions:
+    - "Problem involves a movable plate forming two variable capacitors with fixed plates and connected to ground through a series capacitor Cs"
+    - "Solution computes voltage at the movable plate node"
+failure_domain:
+  examples: ["Omitting Cs in denominator of voltage expression", "Using C1+C2 instead of C1+C2+Cs in denominator", "Treating Cs as open circuit in DC analysis"]
+post_conditions:
+  - "Derived voltage expression lacks Cs in the denominator sum"
+ops_template:
+  - "Require explicit inclusion of Cs in denominator during node voltage calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Verify denominator contains sum of C1, C2, and Cs"
+    - type: "numeric_back_substitution"
+      description: "Validate expression with Cs=0 reduces to expected differential form"
+
+
+rule_id: DATA-UNJ-001
+name: Unjustified Numerical Assumption
+statement: "Solutions must not introduce numerical values not explicitly provided in the problem statement or standard physical constants sheets."
+trigger_domain:
+  conditions:
+    - "solution contains numerical values absent from problem's given data section"
+    - "solution references assumed values without citing problem statement or standard constants"
+failure_domain:
+  examples: ["Assuming T₁=300 K without problem provision", "Inventing h₁=0.2 m displacement data", "Using Δh=0.1 m not in problem"]
+post_conditions:
+  - "All numerical inputs trace to problem-provided data or standard constants sheet"
+ops_template:
+  - "Block: Numerical value introduction without explicit source"
+  - "Apply: Require data provenance tagging for all numbers"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DOP-EM-001
+name: DopplerShiftDirectionEmission
+statement: "The Doppler shift for photons emitted by a moving atom must correctly assign blueshift when the atom moves toward the emission direction and redshift when moving away."
+trigger_domain:
+  conditions:
+    - "Problem involves spontaneous emission from moving atom in lab frame"
+    - "Solution computes photon frequency/momentum with Doppler shift"
+    - "Atom velocity direction and emission axes are explicitly defined"
+failure_domain:
+  examples: ["Atom +x motion, +x emission: redshift applied instead of blueshift", "Atom +x motion, -x emission: blueshift applied instead of redshift"]
+post_conditions:
+  - "Computed average photon momentum sign matches atom velocity direction"
+ops_template:
+  - "Block: DopplerShiftDirectionCheck if relative motion/emission direction mismatch"
+  - "Apply: DopplerShiftDirectionCheck with velocity and emission vector inputs"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CONC-SURF-001
+name: ConcaveSurfaceNormalForce
+statement: "For objects on the inner surface of concave structures, the normal force must be directed toward the center of curvature."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: detects 'hollow sphere' or 'concave surface' with 'inside' context"
+    - "GivenUseCheck: normal force direction specified as radially outward"
+failure_domain:
+  examples:
+    - "hollow sphere rotation: normal force modeled outward when block is inside"
+    - "rotating bowl problem: normal force direction error for inner surface contact"
+post_conditions:
+  - "normal force direction must be inward (toward center of curvature)"
+ops_template:
+  - CorrectNormalForceDirection: set to inward
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CAP-FIXV-001
+name: FixedVoltageForceSign
+statement: "When capacitors are held at fixed voltages by external sources, the net electrical force on a conductor must be derived as the positive derivative of electrostatic energy with respect to displacement, not the negative derivative."
+trigger_domain:
+  conditions:
+    - "capacitor_system_present: true"
+    - "all_conductors_at_fixed_potentials: true"
+    - "energy_method_used_for_force: true"
+    - "force_expression_uses_negative_derivative: true"
+failure_domain:
+  examples: ["Deriving F = -dU/dx for capacitor connected to battery", "Using negative derivative in accelerometer model with fixed V/-V sources"]
+post_conditions:
+  - "checker_outcome: failure"
+ops_template:
+  - "Require: force = +dU/dx for fixed-voltage systems"
+  - "Block: force = -dU/dx when voltage sources are present"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "problem_context_check"
+
+
+rule_id: THERMO-POT-001
+name: PistonPotentialEnergyMisidentification
+statement: "The mechanical potential energy of a movable piston in a gravitational field must be exclusively the gravitational potential energy (m·g·Δh), not the total work done by the gas (P_ext·ΔV)."
+trigger_domain:
+  conditions:
+    - "problem involves a movable piston in gravitational field"
+    - "piston has non-negligible mass (e.g., glass plate, metal piston)"
+    - "solution computes energy conversion efficiency involving piston motion"
+failure_domain:
+  examples: ["Using PΔV as piston potential energy in atmospheric cylinder", "Equating total gas work to piston potential energy without atmospheric work subtraction", "Ignoring P₀ contribution when defining useful mechanical output"]
+post_conditions:
+  - "solution incorrectly substitutes P_ext·ΔV for gravitational potential energy (m·g·Δh)"
+ops_template:
+  - "Require explicit separation of atmospheric work (P₀·ΔV) and gravitational work (m·g·Δh)"
+  - "Block direct assignment of P_ext·ΔV to piston potential energy"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: API-CONN-001
+name: API Service Availability
+statement: "The verification engine must confirm target API service responsiveness via health check before initiating any request."
+trigger_domain:
+  conditions:
+    - "engine attempts external API request submission"
+failure_domain:
+  examples: ["HTTPConnectionPool timeout", "ReadTimeoutError after 180 seconds"]
+post_conditions:
+  - "API endpoint responds to health probe within 5 seconds"
+ops_template:
+  - "execute_health_check: target=endpoint, timeout=5s"
+  - "block_request: if health check fails"
+verification:
+  tests:
+    - type: "network_connectivity_test"
+    - type: "service_health_check"
+
+
+rule_id: EXPR-REQ-001
+name: Expression Required But Numerical Answer Given
+statement: "When the problem explicitly requests a symbolic expression, the solution must provide the expression and not a numerical value."
+trigger_domain:
+  conditions:
+    - "problem_instruction contains one of ['expression', 'symbolic form', 'in terms of'] and lacks numerical computation directives"
+failure_domain:
+  examples: ["Problem: 'Obtain expression for work' → Solution: '2.02e7 J'", "Problem: 'Write symbolic force formula' → Solution: '10 N'"]
+post_conditions:
+  - "solution_final_answer contains no variables and consists solely of numerical values with/without units"
+ops_template:
+  - "BLOCK: numerical_evaluation"
+  - "REQUIRE: symbolic_expression_output"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: META-EXT-001
+name: NoExternalAPIDependence
+statement: "Solutions must not rely on external API calls for derivation or computation."
+trigger_domain:
+  conditions:
+    - "Solution text contains patterns indicating external API failure (e.g., 'timeout', 'HTTP', 'API', 'localhost', 'port')"
+failure_domain:
+  examples: ["Solution includes 'HTTPConnectionPool(host=''localhost'', port=8000): Read timed out.'", "Solution states 'Failed to get response from external service after 5 attempts'"]
+post_conditions:
+  - "Solution text contains no external API call indicators"
+ops_template:
+  - "BLOCK: External API call during solution generation"
+verification:
+  tests:
+    - type: "text_pattern_match"
+      patterns: ["timeout", "HTTP", "API", "localhost", "port", "connection pool", "read timed out"]
+
+
+rule_id: VDW-EXCL-001
+name: MissingFactor4InExcludedVolume
+statement: "The excluded volume constant b must equal four times the total molecular volume per mole when accounting for finite molecular size in van der Waals-type equations."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: ['van der Waals', 'excluded volume', 'finite molecular size', 'P(V-b)=RT']"
+    - "GivenUseCheck: b is defined as the excluded volume constant in the equation of state"
+failure_domain:
+  examples: ["b = N_A * π * d^3 / 6", "b = (4/3) * π * (d/2)^3 * N_A"]
+post_conditions:
+  - "b == (2/3) * π * N_A * d^3"
+ops_template:
+  - "ApplyFactor4: Multiply total molecular volume by 4 to obtain excluded volume"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: TOR-DRIFT-001
+name: ToroidalDriftCentripetalMistake
+statement: "When a charged particle moves parallel to a curved magnetic field line, the required additional magnetic field for radial confinement must counteract curvature drift, not provide centripetal force for orbital motion."
+trigger_domain:
+  conditions:
+    - "problem involves curved magnetic geometry (e.g., toroidal, solenoidal curvature)"
+    - "particle initial velocity parallel to magnetic field lines"
+    - "solution computes additional field B1 via m*v^2/R = q*v*B1"
+failure_domain:
+  examples: ["Electron in toroidal field: setting e*v*B1 = m*v^2/R for circular orbit", "Proton in curved solenoid: using m*v^2/R = q*v*B1 for transverse field"]
+post_conditions:
+  - "solution uses perpendicular-motion centripetal formula despite parallel velocity"
+ops_template:
+  - "Block: Application of m*v^2/R = q*v*B1 when velocity || main field"
+  - "Apply: Curvature drift compensation formula (v_drift = (m*v_parallel^2)/(q*B*R_c) * (B×R_c)/B^2)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: IND-FLX-001
+name: Sinusoidal Phase Sign Error
+statement: "The phase of the induced EMF sinusoidal expression must correctly reflect the sign from Faraday's law and trigonometric identities when converting sin(k(X_c - vt)) to the standard ωt - kX_c form."
+trigger_domain:
+  conditions:
+    - "solution_uses_faradays_law"
+    - "solution_expresses_emf_as_sinusoidal"
+    - "solution_has_time_dependent_position_in_flux"
+failure_domain:
+  examples: ["sin(k(X_c - vt)) written as sin(ωt - kX_c) without negative sign", "EMF expression missing -sin(ωt - kX_c) conversion"]
+post_conditions:
+  - "emf_phase_matches_derivative_of_flux_with_sign"
+  - "trigonometric_identity_applied_for_sin(k(X_c - vt))_to_-sin(ωt - kX_c)"
+ops_template:
+  - "Apply identity: sin(α - β) = -sin(β - α) when converting to ωt - kx form"
+  - "Block direct substitution of sin(k(X_c - vt)) as sin(ωt - kX_c)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DIFFR-SPOT-001
+name: DiffractionSpotSizeHalfAngleError
+statement: "The diameter of a diffraction-limited spot from a circular aperture must be computed as 2.44 * wavelength * distance / aperture_diameter."
+trigger_domain:
+  conditions:
+    - "Problem involves laser beam propagation through circular aperture to distant target"
+    - "Solution calculates spot diameter using expression matching: L * (1.22 * λ / D)"
+failure_domain:
+  examples: ["Lunar laser spot = L * (1.22λ/D_telescope)", "Receiver spot size = L * (1.22λ/D_transmitter)"]
+post_conditions:
+  - "Spot diameter underestimated by factor of 2, causing area ratios to be overestimated by factor of 4"
+ops_template:
+  - "Replace spot_size = L * (1.22 * λ / D) with spot_size = 2.44 * λ * L / D"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MASS-ASSUMPTION-001
+name: Mass Assumption Violation
+statement: "The solution must strictly adhere to the problem's specified mass properties for all particles in energy-momentum relations."
+trigger_domain:
+  conditions:
+    - "Problem explicitly states mass simplification (e.g., 'treat as massless' or 'has mass m')"
+    - "Solution uses energy-momentum relation inconsistent with specified mass property"
+failure_domain:
+  examples: ["Problem states 'treat muon as massless' but solution uses muon mass in energy calculation", "Problem specifies electron mass as 0.511 MeV but solution uses E = |p| for electron", "Problem declares all particles massless except top/W bosons but solution assigns mass to neutrino"]
+post_conditions:
+  - "For particles specified as massless: solution uses E = |p| without mass term"
+  - "For particles with specified mass: solution uses E = sqrt(p^2 + m^2) with given m"
+ops_template:
+  - "Block: Use of mass term for particles declared massless"
+  - "Block: Massless energy relation for particles with specified non-zero mass"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: APPROX-001
+name: UnjustifiedApproximation
+statement: "Solutions must not introduce additional approximations beyond those explicitly instructed in the problem part."
+trigger_domain:
+  conditions:
+    - "Problem part specifies exact approximation(s) to employ (e.g., 'use tan δ ≈ sin δ')"
+    - "Solution applies approximation not listed in problem instructions"
+failure_domain:
+  examples: ["Using ε_r - 1 ≈ ε_r when only tan δ ≈ sin δ was instructed", "Assuming δ negligible to drop constant terms beyond given approximation"]
+post_conditions:
+  - "All approximations used are verifiably derived from problem-specified approximations"
+ops_template:
+  - "Block: Introducing unstated approximations during derivation"
+  - "Apply: Require explicit citation of problem instruction for each approximation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "Verify all approximations match problem instructions or direct consequences (e.g., tan δ ≈ sin δ → cos δ ≈ 1, but not ε_r - 1 ≈ ε_r)"
+    - type: "numeric_back_substitution"
+      description: "Test solution with non-large ε_r (e.g., ε_r=2) to detect unstated ε_r >> 1 assumption"
+
+
+rule_id: BIOHEAT-001
+name: NeglectBloodPerfusion
+statement: "Heat transfer models in living tissue must include blood perfusion effects when calculating temperature distributions."
+trigger_domain:
+  conditions:
+    - "problem_domain == 'biological_tissue' AND heat_transfer_model == 'pure_conduction' AND NOT model_includes('perfusion_term')"
+failure_domain:
+  examples:
+    - "Tumor heating calculation ignoring blood flow cooling"
+    - "Hyperthermia model without perfusion term in bioheat equation"
+post_conditions:
+  - "bioheat_equation contains perfusion_term"
+ops_template:
+  - "Block: PureConductionModel"
+  - "Apply: PennesBioheatEquation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SYS-EXTCALL-001
+name: ExternalCallTimeoutGuard
+statement: "The verification engine must enforce a hard timeout of 30 seconds for any external service call."
+trigger_domain:
+  conditions:
+    - "external_service_call_initiated"
+    - "call_duration > 30.0"
+failure_domain:
+  examples:
+    - "HTTP request to symbolic solver times out after 180 seconds during equation validation"
+    - "Network latency causes external physics checker to exceed maximum allowed response time"
+post_conditions:
+  - "verification engine returns timeout error within 30 seconds of call initiation"
+ops_template:
+  - "block: external_service_call if call_duration > 30.0"
+  - "apply: set_global_timeout(30.0) for all external service calls"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: EST-ORDMAG-001
+name: OrderOfMagnitudeOverCalculation
+statement: "Solutions to problems requiring only an order of magnitude estimate must not perform detailed calculations with numerical values having more than one significant figure."
+trigger_domain:
+  conditions:
+    - "ProblemContextAlign: problem statement contains 'order of magnitude only' or equivalent phrasing"
+    - "GivenUseCheck: solution contains numerical values with two or more significant figures in calculation steps"
+failure_domain:
+  examples:
+    - "Using specific heat capacity as 3500 J/(kg·K) in an order-of-magnitude estimate"
+    - "Calculating time as 600 seconds instead of 10^3 seconds"
+post_conditions:
+  - "All numerical inputs and intermediate results have at most one significant figure"
+  - "Final answer is expressed as a power of ten (e.g., 10^1) or its exponent (e.g., 1)"
+ops_template:
+  - "Approximate all numerical inputs to one significant figure"
+  - "Block solutions containing arithmetic operations on precise numerical values"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MONO-DYN-001
+name: Unaccounted Motion Along Constraint
+statement: "When a particle is constrained to move along a frictionless path, solutions must incorporate the particle's time-dependent position in force and torque calculations rather than assuming fixed coordinates."
+trigger_domain:
+  conditions:
+    - "Problem states particle is 'confined to move along' or 'constrained to' a path with 'no resistance/friction'"
+    - "Solution computes time-dependent electromagnetic forces/torques using static particle coordinates"
+failure_domain:
+  examples: ["Charge on circular wire: torque calculated with fixed (x,y) during monopole motion", "Bead on frictionless rod: electric force expression uses initial position for entire trajectory"]
+post_conditions:
+  - "Force/torque expressions lack explicit time-dependence from constrained particle motion"
+ops_template:
+  - Block: "FixedPositionAssumptionForFreeParticle"
+  - Apply: "ConstrainedMotionDynamics"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: COMP-MASS-001
+name: Composite Mass Consistency
+statement: "The sum of masses of all components in a composite object must equal the total mass of the object."
+trigger_domain:
+  conditions:
+    - "Problem describes an object composed of multiple distinct materials or parts"
+    - "Solver assigns mass values to individual components"
+failure_domain:
+  examples: ["Assigning mass m/n to cylinder walls without verifying total mass", "Ignoring liquid mass contribution in hollow-filled cylinder"]
+post_conditions:
+  - "Sum of component masses ≠ total object mass"
+ops_template:
+  - "Block: Assigning component mass without density/volume derivation"
+  - "Apply: Derive component masses from total mass and density/volume constraints"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RAD-AGE-001
+name: Missing Constant in Isochron Slope
+statement: The slope of the isochron-line must be expressed as $e^{\lambda t} - 1$, not $e^{\lambda t}$.
+trigger_domain:
+  conditions:
+    - "slope_expression == 'e^{\\lambda t}'"
+failure_domain:
+  examples: ["a(t) = e^{\\lambda t}", "slope = e^{\\lambda t}", "expression: e^{\\lambda t} (missing '-1')"]
+post_conditions:
+  - "slope_expression must contain '-1' as a subtracted term"
+ops_template:
+  - "Block solution output containing 'e^{\\lambda t}' as slope expression"
+  - "Require explicit '-1' in slope expression for isochron-line"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-TRIG-001
+name: Trigonometric Angle Rounding Precision
+statement: "The arctangent of a ratio with three significant figures must be rounded to three significant figures."
+trigger_domain:
+  conditions:
+    - "ratio has three significant figures and angle is derived from arctan(ratio)"
+failure_domain:
+  examples: ["tan⁻¹(0.763) = 37.3° (should be 37.4°)"]
+post_conditions:
+  - "Angle value equals arctan(ratio) rounded to three significant figures"
+ops_template:
+  - "Compute arctan(ratio) numerically, then round to three significant figures"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: GRAV-WAVE-001
+name: "Incorrect gravitational wave frequency behavior"
+statement: "The frequency of the gravitational wave decreases as the binary system inspirals due to gravitational wave emission."
+trigger_domain:
+  conditions:
+    - "the model's reasoning states that the gravitational wave frequency increases during the inspiral"
+failure_domain:
+  examples: 
+    - "The gravitational wave frequency increases as the orbital separation decreases."
+    - "As the binary system inspirals, the frequency of the gravitational wave increases."
+post_conditions:
+  - "The model's reasoning is flagged as incorrect for the gravitational wave frequency behavior."
+ops_template:
+  - "Correct the statement to indicate that the frequency decreases during the inspiral."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+      description: "The model's reasoning must not contain the phrase 'frequency increases' in the context of gravitational wave emission from an inspiraling binary."
+    - type: "numeric_back_substitution"
+      description: "N/A (no numerical values to substitute)"
+
+
+rule_id: PHYS-K-001
+name: Boltzmann Constant Precision
+statement: "The Boltzmann constant must be used with its standard value of 1.380649 × 10⁻²³ J/K in all thermodynamic calculations involving gas density or pressure."
+trigger_domain:
+  conditions:
+    - "k is assigned a value not equal to 1.380649e-23"
+failure_domain:
+  examples: ["Model uses k=1.38e-23 leading to 1.15 μPa instead of 1.151 μPa", "Model uses k=1.381e-23 causing height error of 0.1 km"]
+post_conditions:
+  - "k must equal 1.380649e-23 exactly in all relevant calculations"
+ops_template:
+  - "Use standard value k = 1.380649e-23 J/K for all thermodynamic calculations"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RAINBOW-INT-001
+name: Incorrect Air Resistance Integral Factor
+statement: "The horizontal component of air resistance force on a quarter-sphere must include the π/4 factor from surface integration."
+trigger_domain:
+  conditions:
+    - "F_a expression for quarter-sphere horizontal component lacks π/4 factor"
+failure_domain:
+  examples: ["F_a = ρgR³/3", "D_M = 1.2 mm (incorrect value)"]
+post_conditions:
+  - "Checker fails if F_a derivation misses π/4 factor in quarter-sphere integration"
+ops_template:
+  - "Block solutions using F_a = ρgR³/3 for quarter-sphere horizontal component"
+  - "Require integration factor π/4 in F_a derivation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: TIDAL-ROUND-001
+name: Numerical precision in tidal height calculation
+statement: Final numerical answers must preserve calculated precision without premature integer rounding.
+trigger_domain:
+  conditions:
+    - "problem requires numerical tidal height calculation with decimal results"
+    - "calculated value has non-zero decimal part"
+failure_domain:
+  examples: ["22.38 rounded to 22", "0.54 rounded to 0", "12.99 rounded to 13"]
+post_conditions:
+  - "final answer must match calculated value to at least one decimal place"
+ops_template:
+  - "retain all decimal places during intermediate calculations"
+  - "round final answer to one decimal place unless problem specifies otherwise"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MAG-ANAL-001
+name: Magnetic monopole Lorentz force vector direction error
+statement: The Lorentz force on a magnetic monopole in an electric field must be proportional to (E × v), not (v × E).
+trigger_domain:
+  conditions:
+    - "solution contains expression for force on magnetic monopole in E-field as q_m * (v × E)"
+failure_domain:
+  examples: ["F = q_m (v × E) for monopole in electric field", "Cross product order reversed in monopole Lorentz force analogy", "Direction of force not matching E × v vector operation"]
+post_conditions:
+  - "Force vector direction must match E × v cross product direction per electromagnetic duality"
+ops_template:
+  - "Block solutions using (v × E) for monopole force in E-field"
+  - "Require verification of cross product order (E × v) vs (v × E)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-INIT-001
+name: Incorrect initial center height calculation for stacked balls
+statement: The initial vertical position of the upper ball's center must equal the sum of both radii, not the sum of the smaller radius plus the sum of both radii.
+trigger_domain:
+  conditions:
+    - "initial_y2 == R1 + R1 + R2"
+failure_domain:
+  examples: ["Initial y2 = 0.08 m (calculated as R1 + (R1 + R2))", "Initial y2 = 0.08 m (incorrectly using two R1 terms)"]
+post_conditions:
+  - "initial_y2 must equal R1 + R2"
+ops_template:
+  - "Verify initial vertical position of upper ball center equals R1 + R2"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ELEC-MOT-001
+name: Radial Motion Assumption for Tangentially Launched Dipole
+statement: A dipole with non-zero initial tangential velocity cannot be modeled as purely radial motion due to angular momentum non-conservation.
+trigger_domain:
+  conditions:
+    - "initial_velocity_tangential_component > 0"
+    - "model_assumes_radial_motion = True"
+failure_domain:
+  examples: ["Dipole launched with velocity perpendicular to radial direction assumed to move radially inward", "Initial tangential velocity ignored in radial motion model", "Angular momentum conservation omitted despite tangential launch"]
+post_conditions:
+  - "Checker must flag radial motion assumption when tangential velocity component exists"
+ops_template:
+  - "Block radial motion assumption when tangential_velocity_component > 0"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MIRAGE-ERR-001
+name: NoneType Length Check Error
+statement: "A solution must not invoke len() on a None object."
+trigger_domain:
+  conditions:
+    - "len() is called on a variable that evaluates to None"
+failure_domain:
+  examples: ["len(None) in solution code", "Using None as a list in a for-loop condition"]
+post_conditions:
+  - "Verification fails if len() is applied to a None object"
+ops_template:
+  - "Block solution containing len(None) or None-length operations"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RAINBOW-ANG-001
+name: Denominator positivity for rainbow angular distribution
+statement: "The denominator (n cos β - 2 cos α) must be positive for the primary rainbow angular distribution."
+trigger_domain:
+  conditions:
+    - "n * cos(beta) - 2 * cos(alpha) > 0"
+failure_domain:
+  examples: ["n=1.33, alpha=42° (denominator negative)", "n=1.33, alpha=42° (denominator zero at rainbow angle)"]
+post_conditions:
+  - "Denominator (n cos β - 2 cos α) > 0"
+ops_template:
+  - "Verify denominator positivity in angular distribution formula"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-INPUT-001
+name: Uninitialized Refractive Index List
+statement: "The solution must initialize the refractive index data structure with provided values before any length-based operations."
+trigger_domain:
+  conditions:
+    - "refractive_index_list is None or len(refractive_index_list) == 0"
+failure_domain:
+  examples: ["Solution attempts to compute angular width using None refractive index list", "Code uses len() on unassigned refractive_index variable"]
+post_conditions:
+  - "refractive_index_list must contain exactly two elements (n_v, n_r) before processing"
+ops_template:
+  - "Verify refractive_index_list is assigned and non-empty before length checks"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MAG-ANG-001
+name: Pitch Angle Definition Error
+statement: "The equatorial pitch angle α_eq is defined as the angle between the velocity vector and the magnetic field, so the perpendicular velocity component must be v sin(α_eq), not v cos(α_eq)."
+trigger_domain:
+  conditions:
+    - "The problem states 'equatorial pitch angle' and the model uses cos(α_eq) for the perpendicular velocity component at the equator."
+failure_domain:
+  examples: ["Model uses v * cos(α_eq) for v_perp,eq when α_eq is the equatorial pitch angle", "Model redefines α_eq as the angle with the equatorial plane without justification"]
+post_conditions:
+  - "The model's solution contains an invalid expression for the perpendicular velocity component at the equator."
+ops_template:
+  - "Block the use of cos(α_eq) for the perpendicular velocity component when α_eq is the equatorial pitch angle."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERM-ESCAPE-001
+name: Escape time unit inconsistency
+statement: The characteristic escape time must have units of seconds, but the derived expression has units of seconds per meter.
+trigger_domain:
+  conditions:
+    - "escape_time_expression_units == 's/m'"
+failure_domain:
+  examples: ["τ = √(πm/(kT)) * exp(m v_esc²/(2kT))", "Computed τ = 1.56e10 s (units should be s, but formula yields s/m)"]
+post_conditions:
+  - "escape_time_expression_units == 's'"
+ops_template:
+  - "Apply dimensional analysis to verify escape time formula units"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-FLUID-001
+name: Surface tension force factor error
+statement: "The horizontal component of surface tension force on the lower hemisphere must use a factor of 1/2, not 1/4, in droplet deformation analysis."
+trigger_domain:
+  conditions:
+    - "Solution uses factor 1/4 for surface tension force component despite problem specifying lower hemisphere context"
+failure_domain:
+  examples: ["Surface tension force calculated as (σπr)/2 for quarter-sphere", "Incorrect factor 1/4 applied to surface tension force in droplet deformation condition"]
+post_conditions:
+  - "Surface tension force factor must be 1/2 for lower hemisphere"
+ops_template:
+  - "Block factor of 1/4 for surface tension force in droplet deformation context"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MAG-FLUX-001
+name: Magnetic Flux Enclosure Error
+statement: "The magnetic flux through any surface bounded by a loop enclosing a magnetic monopole must equal μ₀qₘ, not μ₀qₘ/2."
+trigger_domain:
+  conditions:
+    - "Solution uses Φ_B = μ₀qₘ / 2 for flux calculation in Dirac quantization"
+failure_domain:
+  examples: ["Uses hemisphere flux Φ_B = μ₀qₘ/2 instead of full flux", "Applies Stokes' theorem with incorrect flux value for monopole"]
+post_conditions:
+  - "Flux Φ_B must equal μ₀qₘ for surfaces enclosing the monopole"
+ops_template:
+  - "Replace Φ_B = μ₀qₘ/2 with Φ_B = μ₀qₘ in flux calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SURF-TEN-001
+name: Surface tension force integration error
+statement: "Surface tension force on a surface must be calculated along the boundary, not by integrating over the surface area."
+trigger_domain:
+  conditions:
+    - "The solution computes the surface tension force using a surface integral (e.g., integrating over θ with sinθ factor or using ring-based summation)."
+failure_domain:
+  examples: 
+    - "Integrating over the surface area to find horizontal component of surface tension force on a quarter-sphere."
+    - "Using sinθ in the integral for surface tension force, indicating surface area integration instead of boundary length."
+post_conditions:
+  - "The solution contains a surface integral for the surface tension force."
+ops_template:
+  - "Replace surface integral with boundary length × surface tension coefficient."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: BOUNCE-PERIOD-001
+name: "Incorrect bounce period formula"
+statement: "The bounce period in a dipole magnetic field must include a square root in the denominator of the factor, not a linear term."
+trigger_domain:
+  conditions:
+    - "The bounce period factor is computed as (L / sin(alpha_eq)) / (1 - sin^3(alpha_eq))"
+failure_domain:
+  examples:
+    - "Factor = L / sin(alpha_eq) / (1 - sin^3(alpha_eq))"
+    - "Missing square root in bounce period denominator"
+post_conditions:
+  - "The ratio of computed bounce period to correct bounce period is 1/sqrt(1 - sin^3(alpha_eq))"
+ops_template:
+  - "Apply the bounce period formula with square root in the denominator"
+  - "Block the use of bounce period formula without square root"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MAG-MON-001
+name: Monopole Angular Momentum Factor Error
+statement: The change in z-component of angular momentum must be expressed as $ \frac{q_e q_m}{2 \pi \varepsilon_0 c^2} $ with exact factor of $ 2\pi $ in denominator.
+trigger_domain:
+  conditions:
+    - "Solution computes $ \Delta L_z $ for magnetic monopole motion past charged particle"
+failure_domain:
+  examples: ["Solution uses $ \frac{q_e q_m}{4 \pi \varepsilon_0 c^2} $", "Solution omits $ 2\pi $ factor in denominator", "Solution uses $ \frac{q_e q_m \mu_0}{2\pi} $ without constant substitution"]
+post_conditions:
+  - "Expression must match $ \frac{q_e q_m}{2 \pi \varepsilon_0 c^2} $ exactly"
+ops_template:
+  - "Block solution if $ \Delta L_z $ expression lacks $ 2\pi $ denominator factor"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERM-ADIA-001
+name: Massless Piston Pressure Constraint
+statement: "For a massless piston, the gas pressure must equal atmospheric pressure in all states, including the final state."
+trigger_domain:
+  conditions:
+    - "piston_mass == 0"
+    - "final_pressure != atmospheric_pressure"
+failure_domain:
+  examples: ["Final gas pressure set to Mg/A with massless piston", "Final pressure not equal to p0"]
+post_conditions:
+  - "gas_pressure_final == atmospheric_pressure"
+ops_template:
+  - "Set final gas pressure to atmospheric pressure for massless piston"
+  - "Block use of cylinder weight to determine final pressure"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-FREQ-001
+name: Frequency Type Misidentification
+statement: The solution must report ordinary frequency f, not angular frequency ω, when the problem specifies 'frequency'.
+trigger_domain:
+  conditions:
+    - "problem_text contains 'frequency' (case-insensitive)"
+    - "solution_expression lacks explicit 1/(2*pi) factor and has units of rad/s or implies ω"
+failure_domain:
+  examples: ["sqrt(2g/(3(R-r)))", "sqrt(g/(R-r))", "sqrt(2g/(3(R-r))) with units rad/s"]
+post_conditions:
+  - "solution must have units of Hz or include factor 1/(2*pi)"
+ops_template:
+  - "Apply frequency conversion: f = ω/(2*pi) for 'frequency' problems"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: META-CTX-003
+name: Atomic Scale Speed Rounding Error
+statement: "For resolving 1.0 × 10⁻¹⁰ m structures, the electron speed must be 7.3 × 10⁶ m/s when using given constants."
+trigger_domain:
+  conditions:
+    - "lambda == 1.0e-10 and computed_speed == 7.4e6"
+failure_domain:
+  examples: ["Speed calculated as 7.4e6 m/s for λ=1.0e-10 m", "Rounded 7.36e6 to 7.4e6 instead of 7.3e6"]
+post_conditions:
+  - "computed_speed must equal 7.3e6"
+ops_template:
+  - "Enforce rounding to 7.3e6 for v = h/(m*lambda) with lambda=1.0e-10"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-ROUND-001
+name: Final Answer Rounding
+statement: The final numerical answer must exactly match the computed value without additional rounding.
+trigger_domain:
+  conditions:
+    - "final_answer != computed_ratio"
+failure_domain:
+  examples: ["Rounded 0.0124 to 0.012", "Rounded computed ratio to 0.012 instead of 0.0124", "Presented 0.012 as final answer"]
+post_conditions:
+  - "final_answer == computed_ratio"
+ops_template:
+  - "Block rounding of final answer beyond computed precision"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: OPTICS-GRATING-001
+name: Missing Denominator in Grating Amplitude
+statement: "The resultant amplitude expression must explicitly include sin(β) in the denominator."
+trigger_domain:
+  conditions:
+    - "amplitude expression is derived as a * sin(N*beta) without sin(beta) in denominator"
+failure_domain:
+  examples: ["a sin(Nβ)", "a sin(Nβ) / 1", "a sin(Nβ) * sin(β)"]
+post_conditions:
+  - "Resultant amplitude expression contains sin(β) as denominator factor"
+ops_template:
+  - "Block derivation if amplitude expression lacks sin(β) denominator"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PREC-ROUND-001
+name: Neutrino Momentum Z-Component Rounding Precision
+statement: "The z-component of neutrino momentum must be reported with exactly one decimal place in GeV/c."
+trigger_domain:
+  conditions:
+    - "final numerical answer for p_z(ν) has zero decimal places or more than one decimal place"
+failure_domain:
+  examples: ["-188", "-188.0"]
+post_conditions:
+  - "answer string contains exactly one digit after the decimal point"
+ops_template:
+  - "Enforce one decimal place precision in numerical answers for momentum components"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: BINARY-VEL-001
+name: Significant Figures in Binary Orbital Distances
+statement: "Orbital distances must be reported with significant figures matching the least precise input parameter (two significant figures for Δλ and orbital period)."
+trigger_domain:
+  conditions:
+    - "Input wavelength shift Δλ has two significant figures"
+    - "Orbital period T has two significant figures"
+failure_domain:
+  examples: ["r₂ = 6.6e9 m (should be 6.5e9 m)", "r₂ = 7.9e9 m (should be 7.8e9 m)", "r₁ = 3.7e9 m (should be 3.8e9 m)"]
+post_conditions:
+  - "r₁ and r₂ have exactly two significant figures"
+ops_template:
+  - "Apply SigFigsCheck with precision=2"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DOPPLER-EMISSION-001
+name: Factor of 2 error in energy correction for emission in +x
+statement: "The energy correction term for the atom after emission in the +x direction must be -vħq, not -2vħq."
+trigger_domain:
+  conditions:
+    - "The problem context specifies emission of a photon in the +x direction following absorption of a photon from the -x direction in Doppler cooling."
+    - "The energy correction term is -2 * v * ħ * q"
+failure_domain:
+  examples: ["Energy = (1/2)mv^2 - 2vħq"]
+post_conditions:
+  - "The energy correction term must be -vħq"
+ops_template:
+  - "Block any calculation yielding a factor of 2 in the energy correction term for emission in the +x direction."
+  - "Verify momentum change for emission step is -ħq (not -2ħq) and align with reference solution."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: TOP-MASS-001
+name: Top quark mass physical bound
+statement: "The calculated top quark mass must not exceed 180 GeV/c² to align with known experimental values."
+trigger_domain:
+  conditions:
+    - "calculated_mass > 180.0"
+failure_domain:
+  examples: ["306 GeV/c²", "250 GeV/c²", "311.2 GeV/c²"]
+post_conditions:
+  - "calculated_mass ≤ 180.0"
+ops_template:
+  - "Block solution with mass > 180 GeV/c²"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DIP-AXIS-001
+name: Missing Coulomb constant in dipole field
+statement: "The electric field magnitude along the dipole axis must include the factor 1/(4πε₀) in the denominator."
+trigger_domain:
+  conditions:
+    - "problem_statement contains 'dipole' and 'axis' and 'electric field' and 'along direction of dipole moment'"
+    - "solution contains a boxed expression for E_p in dipole axis context"
+failure_domain:
+  examples:
+    - "Boxed expression: \\dfrac{2p}{r^3}"
+    - "Boxed expression: \\dfrac{2p}{r^3} without constants"
+    - "Boxed expression: 2p / r^3"
+post_conditions:
+  - "The boxed expression for E_p lacks the factor 1/(4\\pi\\varepsilon_0) in the denominator."
+ops_template:
+  - "Include the factor 1/(4\\pi\\varepsilon_0) in the denominator of the dipole axis electric field expression."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ENERGY-GRV-001
+name: "Missing factor of 1/2 in gravitational potential energy"
+statement: "The gravitational potential energy term must include a factor of 1/2."
+trigger_domain:
+  conditions:
+    - "gravitational_potential_energy_term == '- (G * M_E * M_M) / D_1'"
+failure_domain:
+  examples: 
+    - "E = (1/2) I_E a_{E1}^2 - (G M_E M_M)/D_1"
+    - "E = (1/2) I_E a_{E1}^2 - G M_E M_M / D_1"
+    - "E = (1/2) I_E a_{E1}^2 - (G * M_E * M_M) / D_1"
+post_conditions:
+  - "The gravitational potential energy term is missing the factor of 1/2."
+ops_template:
+  - "Add factor of 1/2 to gravitational potential energy term: change '- (G * M_E * M_M) / D_1' to '- (1/2) * (G * M_E * M_M) / D_1'"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RUTHERFORD-INDUCED-001
+name: Factor of 2 missing in induced dipole potential energy
+statement: "The electric potential energy for an ion-atom interaction must include a factor of 1/2, resulting in a denominator of 32π²ε₀² for the 1/r⁴ term."
+trigger_domain:
+  conditions:
+    - "The solution's expression for U is -α Q² / (16π²ε₀² r⁴)"
+failure_domain:
+  examples: ["-α Q² / (16π²ε₀² r⁴)"]
+post_conditions:
+  - "The expression must have a denominator of 32π²ε₀²"
+ops_template:
+  - "Require the factor of 1/2 in the potential energy expression for induced dipoles"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SIGFIG-001
+name: Insufficient significant figures in final answer
+statement: The final answer must be reported with three significant figures when the problem inputs include values with three significant figures.
+trigger_domain:
+  conditions:
+    - "answer_significant_figures < 3 and (h_significant_figures == 3 or g_significant_figures == 3)"
+failure_domain:
+  examples: ["0.15 m³/s"]
+post_conditions:
+  - "answer_significant_figures == 3"
+ops_template:
+  - "Round the final answer to 3 significant figures."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CHG-EX-001
+name: "Critical impact parameter exponent error"
+statement: "The critical impact parameter must satisfy b₀⁴ ∝ α, not b₀² ∝ α."
+trigger_domain:
+  conditions:
+    - "model's expression for b₀² contains α^{1/2} without explicit b₀⁴ derivation"
+failure_domain:
+  examples: ["b₀² = Q √α / (ε₀ √(2 m) v₀)", "A = π b₀² with b₀² ∝ α^{1/2}"]
+post_conditions:
+  - "b₀⁴ must be proportional to α with exponent 1"
+ops_template:
+  - "Verify b₀⁴ ∝ α using dimensional analysis"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: CONE-ANGLE-001
+name: Incorrect wall slope angle interpretation
+statement: "For a conical wall slanted at angle θ from vertical, the radial slope must be cot(θ), not tan(θ)."
+trigger_domain:
+  conditions:
+    - "problem specifies wall slant angle θ with respect to vertical"
+    - "wall equation uses slope = tan(θ)"
+failure_domain:
+  examples: ["Wall equation uses r = (H - z) tan(60°) for 60° from vertical", "Slope computed as tan(θ) instead of cot(θ)"]
+post_conditions:
+  - "slope = cot(θ) = tan(90° - θ) for θ from vertical"
+ops_template:
+  - "Replace tan(θ) with cot(θ) in wall equation when θ is from vertical"
+  - "Verify slope definition matches angle reference (vertical vs. horizontal)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ELEC-ORBIT-001
+name: Stable Orbit Radiation Misapplication
+statement: "In a stable circular orbit under central forces, the net force is perpendicular to velocity, so no power is required to maintain the orbit; radiated power via Larmor formula is irrelevant to orbital maintenance."
+trigger_domain:
+  conditions:
+    - "Solution applies Larmor formula to compute power for a charged object in uniform circular motion with net central force"
+failure_domain:
+  examples: ["Calculating power as Larmor radiation for a charged satellite in circular orbit", "Using Larmor formula to determine energy supply for a charged particle in planetary orbit"]
+post_conditions:
+  - "Power output must be zero; non-zero Larmor-based power is invalid"
+ops_template:
+  - "Block Larmor formula application in orbital mechanics problems without explicit radiation loss requirement"
+  - "Require force-velocity perpendicularity check for circular motion"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: NEUTRINO-ABSORPTION-001
+name: Incorrect Absorption Area for Neutrino Flux
+statement: "The cross-sectional area for neutrino absorption must use Earth's radius when flux is specified at Earth's surface, not the inner core's radius."
+trigger_domain:
+  conditions:
+    - "flux_density is provided at Earth's surface"
+    - "absorption_region is specified as inner core"
+failure_domain:
+  examples: ["Used inner core radius 1200 km for area calculation", "Calculated area as π*(1200 km)^2 instead of Earth's radius", "Applied inner core radius to neutrino flux area"]
+post_conditions:
+  - "checker outcome: 'incorrect_area'"
+ops_template:
+  - "Require cross-sectional area to use Earth's radius (6371 km) for flux at Earth's surface"
+  - "Block use of inner core radius for area calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PR-SCALE-001
+name: Poynting-Robertson Timescale Factor Error
+statement: The characteristic timescale for Poynting-Robertson drag must have a factor of 1/3, not 2/3, in the expression τ = (ρ r c²)/(3S).
+trigger_domain:
+  conditions:
+    - "derivation involves Poynting-Robertson effect timescale for circular orbits"
+    - "expression contains factor of 2/3 in τ = (factor * ρ r c²)/(3S)"
+failure_domain:
+  examples: ["τ = (2ρr c²)/(3S) derived", "Numerical calculation uses 2/3 factor", "Final answer scaled by 2 due to factor error"]
+post_conditions:
+  - "Symbolic expression must have factor 1/3 in τ = (ρ r c²)/(3S)"
+ops_template:
+  - "Block derivation with factor 2/3 in τ = (factor * ρ r c²)/(3S)"
+  - "Require derivation to show factor 1/3 from energy loss rate balance"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DOMINO-IMPULSE-001
+name: Incorrect impulse height dependence
+statement: The minimum impulse $ p $ must be proportional to $ \sqrt{w^2 + h^2} $, not $ w $, in the expression for $ p_{\text{min}} $.
+trigger_domain:
+  conditions:
+    - "Solution expresses $ p_{\text{min}} \propto \frac{w}{h} $ without $ \sqrt{w^2 + h^2} $ factor inside the square root"
+failure_domain:
+  examples: ["w=1, h=1: model gives $ p_{\text{min}} \propto 1 $, correct is $ \propto \sqrt{2} $", "w=2, h=1: model gives $ p_{\text{min}} \propto 2 $, correct is $ \propto \sqrt{5} $"]
+post_conditions:
+  - "Symbolic expression for $ p_{\text{min}} $ must contain $ \sqrt{w^2 + h^2} $ as a multiplicative factor within the square root"
+ops_template:
+  - "Block solutions where $ p_{\text{min}} $ expression has $ w/h $ without $ \sqrt{w^2 + h^2} $"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PF-ROUNDING-001
+name: "Power Factor Correction: Significant Figures Error"
+statement: "For power factor correction with inductance 0.25 H and standard frequency 60 Hz, capacitance must be reported as 28.1 μF, not 28 μF."
+trigger_domain:
+  conditions:
+    - "inductance == 0.25"
+    - "frequency == 60"
+    - "capacitance == 28 or capacitance == 28.0"
+failure_domain:
+  examples: ["28", "28.0"]
+post_conditions:
+  - "failure: model output capacitance is 28 or 28.0 for the given problem"
+ops_template:
+  - "Round capacitance to three significant figures (28.1 μF)."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: QM-ENERGY-001
+name: "Quantum Energy Expression Must Use Planck Factor"
+statement: "The total energy expression for vibrational modes must explicitly include the Planck factor for quantum energy per mode."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'crystal' and 'vibrational modes'"
+failure_domain:
+  examples: ["E_T = ∫ E(ω) g(ω) dω", "E_T = ∫ E(ω) dω", "E_T = ∫ [placeholder] g(ω) dω"]
+post_conditions:
+  - "energy_expression contains Planck factor (e.g., (ħω)/(e^{ħω/kT} - 1))"
+ops_template:
+  - "Replace placeholder E(ω) with Planck factor expression"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERMO-ERR-001
+name: Incorrect factor in thermoelectric refrigerator maximum temperature difference
+statement: The maximum temperature difference for a thermoelectric refrigerator must be expressed as ΔT_max = (Z T_{1min}^2)/2, not (Z T_{1min}^2)/4.
+trigger_domain:
+  conditions:
+    - "model_output contains 'Z T_{1min}^2 / 4'"
+failure_domain:
+  examples: ["Model outputs ΔT_max = (Z T_{1min}^2)/4", "Model derivation shows factor 4 in final expression"]
+post_conditions:
+  - "checker outcome is 'failure' when factor in ΔT_max expression is 4"
+ops_template:
+  - "Replace factor 4 with factor 2 in ΔT_max expression"
+  - "Verify standard thermoelectric formula reference (ΔT_max = Z T_c^2 / 2)"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: EM-ENERGY-001
+name: Wavelength unit conversion for photon energy
+statement: "Wavelength must be converted from millimeters to meters before applying E=hc/λ."
+trigger_domain:
+  conditions:
+    - "wavelength unit is 'mm' and wavelength value used in energy formula is not scaled by 1e-3"
+failure_domain:
+  examples: ["λ = 1.06 mm used as 1.06 in E=hc/λ", "λ = 2.5 mm used as 2.5e-3 without unit conversion"]
+post_conditions:
+  - "calculated energy is off by a factor of 1000"
+ops_template:
+  - "Convert wavelength from mm to m by multiplying by 1e-3 before energy calculation"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SOLARWIND-MIRROR-ALT
+name: Mirror point altitude must be Earth's surface
+statement: "The mirror point altitude must be set to the Earth's surface (0 km) for the condition of arriving below 200 km altitude."
+trigger_domain:
+  conditions:
+    - "mirror_point_altitude == 200000"
+failure_domain:
+  examples: ["Model sets mirror point altitude to 200 km (200000 m) instead of Earth's surface (0 m)", "Model uses 200 km as mirror point altitude in mirror condition"]
+post_conditions:
+  - "mirror_point_altitude must be 0"
+ops_template:
+  - "Require mirror_point_altitude = 0"
+  - "Block mirror_point_altitude = 200000"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-VEL-001
+name: Superluminal Apparent Velocity: Sine Squared Error
+statement: The apparent velocity expression must not contain sin²θ inside the square root; it should be sinθ.
+trigger_domain:
+  conditions:
+    - contains 'sin^2' within a square root
+failure_domain:
+  examples: ["v'(t) = ... sqrt(t^2 - t_0^2 sin^2 θ) ...", "sin^2 θ in square root term"]
+post_conditions:
+  - Expression contains 'sin^2' inside square root
+ops_template:
+  - Replace 'sin^2 θ' with 'sin θ' in the square root term
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: EFIELD-SIGN-001
+name: Electric field sign error
+statement: The electric field expression must have (Q - q) in the numerator, not (q - Q).
+trigger_domain:
+  conditions:
+    - "the expression for E_I has the numerator (q - Q)"
+failure_domain:
+  examples: ["(q - Q)/(2Sε₀)", "\\frac{q - Q}{2S \\varepsilon_0}", "(q - Q)/(2Sε₀)"]
+post_conditions:
+  - "the numerator of E_I is (q - Q)"
+ops_template:
+  - "block the expression (q - Q) in the numerator of E_I"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: BH-CIRC-001
+name: Missing derivative term in circumference expression
+statement: The circumference expression must explicitly include the derivative term $ F'(r_h) $.
+trigger_domain:
+  conditions:
+    - "solution expression for $ L $ does not contain $ F'(r_h) $"
+failure_domain:
+  examples: ["$ L = P + 2\\pi \\varepsilon $", "$ L = 2\\pi (r_h + \\varepsilon) $"]
+post_conditions:
+  - "solution expression contains symbol $ F'(r_h) $"
+ops_template:
+  - "Require explicit inclusion of $ F'(r_h) $ in circumference expression"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-ANS-001
+name: Numerical Value Requirement
+statement: The final answer must be a numerical value with units, not a symbolic expression involving $p_0$.
+trigger_domain:
+  conditions:
+    - "answer contains 'p_0' or 'p0'"
+failure_domain:
+  examples: ["2.24 p_0", "2.24 * p0", "2.24 p_0 N/m^2"]
+post_conditions:
+  - "answer is a numerical value with units (e.g., 2.257e5 N/m^2)"
+ops_template:
+  - "Substitute $p_0 = 1.01 \\times 10^5 \\, \\text{N/m}^2$ to compute numerical value"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-METAB-001
+name: Metabolic Work Adjustment
+statement: "For activities involving mechanical work (e.g., climbing), heat production rate equals metabolic rate minus mechanical power."
+trigger_domain:
+  conditions:
+    - "problem specifies height change and time duration"
+    - "metabolic rate is provided as total energy consumption rate"
+failure_domain:
+  examples: ["Mountaineer climbs 500 m in 2 hours with metabolic rate 7.0 W/kg", "Climber's heat loss calculation uses metabolic rate directly without subtracting work"]
+post_conditions:
+  - "heat_production = (metabolic_rate * mass) - (mass * g * height / time)"
+ops_template:
+  - "Verify presence of height/time; compute mechanical power as (mass * g * height / time) and subtract from metabolic rate"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: EARTH-ENERGY-001
+name: Solar Flux Geometry Oversight
+statement: "The average solar flux absorbed by Earth's surface must be calculated as (transmission_fraction × solar_constant) / 4, accounting for spherical geometry."
+trigger_domain:
+  conditions:
+    - "problem states solar_constant S and transmission_fraction (e.g., 50%)"
+    - "model uses transmission_fraction × S as absorbed solar flux without dividing by 4"
+failure_domain:
+  examples: ["Model calculates absorbed solar flux as 0.5 × 1370 = 685 W/m² instead of (0.5 × 1370)/4 = 171.25 W/m²", "Model uses 50% of S directly without spherical geometry correction"]
+post_conditions:
+  - "Absorbed solar flux is overestimated by factor of 4, causing greenhouse radiation percentage to be underestimated (e.g., 11% vs. correct 16%)"
+ops_template:
+  - "Apply spherical geometry factor: absorbed_solar = (transmission_fraction × S) / 4"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-REL-SPEED-001
+name: Incorrect Eclipse Path Speed Calculation
+statement: The relative speed of the solar eclipse path on Earth's surface must be calculated as the Moon's orbital speed minus Earth's rotational speed, not the sum.
+trigger_domain:
+  conditions:
+    - "model uses v_rel = v_M + v_E for eclipse path speed"
+failure_domain:
+  examples: ["Model adds Moon's orbital speed and Earth's rotational speed", "Model computes relative speed as v_M + v_E"]
+post_conditions:
+  - "checker outcome: 'relative_speed_calculation' must be 'v_M - v_E'"
+ops_template:
+  - "Block calculation using v_M + v_E"
+  - "Require subtraction of Earth's rotational speed from Moon's orbital speed"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-ERR-001
+name: Critical Radius Rounding Error
+statement: "The critical radius R_C must be 10.0 meters when calculated with given Earth parameters."
+trigger_domain:
+  conditions:
+    - "computed_R_C == 9.9"
+failure_domain:
+  examples: ["Earth's radius 6.4e6 m, mass 6.0e24 kg, speed of light 3.0e8 m/s → R_C=9.9 m"]
+post_conditions:
+  - "computed_R_C == 10.0"
+ops_template:
+  - "Round numerical answer to two significant figures as 10.0"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PULLEY-ROT-001
+name: Fixed-axis rotation: Unnecessary translational KE
+statement: "For a rigid body rotating about a fixed axis, kinetic energy must be calculated solely from rotational motion about the axis; translational kinetic energy of the center of mass must not be included."
+trigger_domain:
+  conditions:
+    - "system has a fixed axis of rotation (e.g., pulley with fixed center)"
+    - "solution includes translational kinetic energy term (1/2 m v²) for the center of mass"
+failure_domain:
+  examples: ["Including 1/2 m v² in KE for pivoted pulley", "Adding translational KE to rotational KE in fixed-axis rotation", "Treating pulley center of mass as translating in equilibrium"]
+post_conditions:
+  - "Solution must express total kinetic energy as 1/2 I ω² only for fixed-axis rotation"
+ops_template:
+  - "Block inclusion of translational KE terms for systems with fixed rotation axes"
+  - "Verify axis of rotation is fixed before allowing translational KE"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: HEAT-VAP-001
+name: Heat of Vaporization Value Check
+statement: "The heat of vaporization must be taken as 2.26 × 10⁶ J/kg as explicitly provided in the problem statement."
+trigger_domain:
+  conditions:
+    - "model_calculation.contains('heat_of_vaporization') and model_heat_of_vaporization != 2.26e6"
+failure_domain:
+  examples: ["Model uses 2.09 × 10⁶ J/kg instead of 2.26 × 10⁶ J/kg", "Model references standard value 2257 kJ/kg without using problem-provided value"]
+post_conditions:
+  - "calculated_energy_per_gram == 2260.0"
+ops_template:
+  - "Block calculation if heat_of_vaporization != 2.26e6"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ELEC-ENERGY-001
+name: "Extraneous factor in velocity expression"
+statement: "The velocity magnitude must not contain an extraneous factor of 2 inside the square root of the permittivity term."
+trigger_domain:
+  conditions:
+    - "velocity_expression contains 'sqrt(2 * pi * epsilon_0 * r / m)'"
+failure_domain:
+  examples: ["E L sqrt(2 pi epsilon_0 r / m)", "E L sqrt(2 pi epsilon_0 r / m)"]
+post_conditions:
+  - "velocity_expression should match E L sqrt(pi epsilon_0 r / m)"
+ops_template:
+  - "Block if velocity_expression contains 'sqrt(2 * pi * epsilon_0 * r / m)'"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: DISK-VEL-001
+name: "Sign error in rotational velocity x-component"
+statement: "The x-component of a point's velocity on a rotating disk must be expressed as v_O - ω R sinθ when θ is measured from the x-axis."
+trigger_domain:
+  conditions:
+    - "model uses v_Ax = v_O + ω R sinθ"
+failure_domain:
+  examples: ["Model uses v_Ax = v_O + ω R sinθ leading to v_O = 2c", "Model assumes rotational velocity x-component sign matches sinθ sign"]
+post_conditions:
+  - "v_O = v_Ax + ω R sinθ must hold"
+ops_template:
+  - "Block v_Ax = v_O + ω R sinθ"
+  - "Require v_Ax = v_O - ω R sinθ"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-MOM-001
+name: Momentum Conservation Sign Error
+statement: "When a bullet is shot from the left, its velocity term in momentum conservation must be negative, not positive."
+trigger_domain:
+  conditions:
+    - "problem_text contains 'from the left'"
+    - "model_solution contains 'momentum conservation' and 'bullet velocity positive'"
+failure_domain:
+  examples:
+    - "Model: 'V = (M * ωA + m * ν) / (M + m)'"
+    - "Model: 'bullet velocity = +ν'"
+    - "Model: 'same direction as block, so positive'"
+post_conditions:
+  - "checker outcome: 'Momentum sign error: bullet velocity should be negative'"
+ops_template:
+  - "Block positive sign for bullet velocity in momentum conservation when problem states 'from the left'"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: MTN-PR-001
+name: "Pressure Value Misreading in Mountain Height Calculation"
+statement: "The maximum mountain height must be calculated using the full numerical value of the given pressure in MPa without reducing it by a factor of 10."
+trigger_domain:
+  conditions:
+    - "calculated_height * 10 > 0.9 * (pressure_MPa * 1e6 / (density * gravity)) and calculated_height * 10 < 1.1 * (pressure_MPa * 1e6 / (density * gravity))"
+failure_domain:
+  examples: ["Height = 1024 m for pressure = 300 MPa", "Height = 102 m for pressure = 30 MPa"]
+post_conditions:
+  - "calculated_height must be within 5% of (pressure_MPa * 1e6) / (density * gravity)"
+ops_template:
+  - "Verify pressure value is used as given (e.g., 300 MPa not 30 MPa)"
+  - "Apply pressure conversion: 1 MPa = 1e6 Pa without value modification"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-SIGFIG-001
+name: Significant Figures Mismatch
+statement: The torsion constant κ must be reported with three significant figures.
+trigger_domain:
+  conditions:
+    - "answer_significant_figures == 2"
+failure_domain:
+  examples: ["3.9e-7", "3.9 × 10⁻⁷", "0.00000039"]
+post_conditions:
+  - "answer_significant_figures == 3"
+ops_template:
+  - "Round to three significant figures"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-STR-001
+name: External pressure formula error
+statement: "For a spherical container under external pressure, the stress must be calculated as σ = P r / t, not σ = P r / (2t)."
+trigger_domain:
+  conditions:
+    - "problem_context contains 'external pressure' or 'submersible' or 'deep-sea'"
+    - "solution uses stress formula σ = P r / (2t)"
+failure_domain:
+  examples: ["Spherical submersible at depth using internal pressure formula", "Thin-walled sphere under external load with σ = Pr/(2t)"]
+post_conditions:
+  - "calculated thickness t < (P r) / (Y * strain_limit)"
+ops_template:
+  - "Block use of σ = P r / (2t) for external pressure scenarios"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-ENERGY-001
+name: "Intercept magnitude consistency"
+statement: "The absolute value of the energy intercept |E| must not exceed the absolute difference between (1/2)v² and GM/r for the largest r data point."
+trigger_domain:
+  conditions:
+    - "slope = GM"
+    - "r_max = max(r_data)"
+    - "E_intercept = intercept from linear regression"
+failure_domain:
+  examples: ["|E| = 7.545e5 > |(1/2)v^2 - GM/r_max| = 7.385e5 for r_max=240.6e6 m"]
+post_conditions:
+  - "|E| <= |(1/2)v^2 - slope/r_max| for the largest r in the data"
+ops_template:
+  - "Verify |E| <= |(1/2)v^2 - slope/r_max| using the largest r data point"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-LATEX-001
+name: Invalid LaTeX Escape
+statement: "The solution must not contain a backslash followed by a space or invalid LaTeX command sequence."
+trigger_domain:
+  conditions:
+    - "The solution contains a backslash character immediately followed by a space character."
+failure_domain:
+  examples: ["Solution contains '\\script scriptstyle' instead of '\\scriptscriptstyle'", "Solution contains '\\invalid command'"]
+post_conditions:
+  - "The solution is rejected for containing an invalid LaTeX escape sequence."
+ops_template:
+  - "Block the solution for containing an invalid LaTeX escape."
+  - "Suggest replacing the invalid escape with a valid LaTeX command."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RUTHERFORD-CONST-001
+name: Rutherford cross-section constant factor error
+statement: The differential scattering cross-section must include a factor of 1/4 in the denominator of the constant term.
+trigger_domain:
+  conditions:
+    - "the constant factor in σ(θ) has denominator E or 2E instead of 4E"
+failure_domain:
+  examples: ["σ(θ) = (kZe²/E)² / sin⁴(θ/2)", "σ(θ) = (kZe²/(2E))² / sin⁴(θ/2)"]
+post_conditions:
+  - "The constant factor must be (kZe²/(4E))²"
+ops_template:
+  - "Block expressions with constant factor (kZe² / E)² or (kZe² / (2E))²"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: COSMIC-RAD-001
+name: Cosmic Radius Numerical Miscalculation
+statement: For a uniform density of $10^{-29}$ g/cm$^3$, the cosmic radius must numerically evaluate to approximately $10^{28}$ meters.
+trigger_domain:
+  conditions:
+    - "density == 1e-29 g/cm^3"
+failure_domain:
+  examples: ["r_g = 1.27e26 m", "r_g = 1.27e24 m"]
+post_conditions:
+  - "r_g >= 1e27 meters"
+ops_template:
+  - "Block numerical calculation if result < 1e27 meters for given density"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: META-STR-001
+name: Unescaped Backslash in Response
+statement: "The model's response must not contain any unescaped backslash characters; all backslashes must be doubled."
+trigger_domain:
+  conditions:
+    - "The response contains a backslash character '\\'"
+failure_domain:
+  examples:
+    - "Response: 'The temperature change is $10^{-4} ^\\circ C$.'"
+    - "Response: 'The coefficient is $\\alpha$.'"
+    - "Response: 'The value is $10^{-4} \\text{C}$.'"
+post_conditions:
+  - "The response contains no single backslash; all backslashes are doubled."
+ops_template:
+  - "Replace every single backslash with two backslashes in the model's response."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: ROT-ACC-001
+name: Angular acceleration sign for decreasing motion
+statement: "For a problem stating angular velocity decreases and asking for angular acceleration, the answer must be positive (magnitude)."
+trigger_domain:
+  conditions:
+    - "problem_text contains 'decreasing' or 'decelerating' or 'slows down' or 'uniformly decreases'"
+    - "question_part contains 'angular acceleration' and not contains 'magnitude' and not contains 'deceleration'"
+failure_domain:
+  examples: ["'uniformly decreases' and 'angular acceleration' with negative model answer"]
+post_conditions:
+  - "model_answer for angular acceleration is negative"
+ops_template:
+  - "Replace negative sign with positive in angular acceleration for decreasing motion"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: SGR-ROUND-001
+name: "Rounding to three sig fig when reference expects four"
+statement: "The model rounded the calculated speed to three significant figures, but the reference answer requires four significant figures."
+trigger_domain:
+  conditions:
+    - "model_answer has exactly 3 significant figures"
+    - "reference_answer has exactly 4 significant figures"
+failure_domain:
+  examples: ["Model answer: 525, Reference: 525.5", "Model answer: 123, Reference: 123.4", "Model answer: 0.00123, Reference: 0.001234"]
+post_conditions:
+  - "checker outcome: failure"
+ops_template:
+  - "Round to four significant figures"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-CONTACT-001
+name: Incorrect Equilibrium Separation
+statement: The minimum contact area requires disk separations to be less than the radius for static equilibrium, not equal to the radius.
+trigger_domain:
+  conditions:
+    - "disk_separation == radius"
+failure_domain:
+  examples: ["Middle disk center at distance r from bottom disk", "Top disk center at distance r from middle disk"]
+post_conditions:
+  - "a = 4π/3 - √3 ≈ 2.5 (incorrect, should be ≈1.7)"
+ops_template:
+  - "Enforce disk_separation < radius for all adjacent disk pairs"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: PHYS-CHRG-001
+name: Incorrect Mass Sum in Charge Distribution
+statement: "The sum of Earth and Moon masses must be correctly computed as $ M + m $ when charge distribution is proportional to mass."
+trigger_domain:
+  conditions:
+    - "solution uses formula $ Q = (M + m) \sqrt{G/k} $ for part (2)"
+failure_domain:
+  examples: ["Earth mass 5.98e24 kg + Moon mass 7.34e22 kg = 6.75e24 kg", "Earth mass 5.98e24 kg + Moon mass 7.34e22 kg = 6.05e24 kg (incorrectly rounded)"]
+post_conditions:
+  - "M + m = 5.98e24 + 7.34e22 = 6.0534e24"
+ops_template:
+  - "Verify $ M + m = 5.98 \\times 10^{24} + 7.34 \\times 10^{22} = 6.0534 \\times 10^{24} $"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERM-CP-001
+name: "Rounded intermediate Cp"
+statement: "For constant pressure heat calculation, round Cp = Cv + R to the same number of decimal places as the given Cv before using it in the heat formula."
+trigger_domain:
+  conditions:
+    - "The problem requires constant pressure heat calculation and provides Cv with a specified decimal precision."
+    - "The model uses a Cp value in the heat calculation that has a different number of decimal places than Cv."
+failure_domain:
+  examples:
+    - "Cv = 20.9, model uses Cp = 29.214"
+    - "Cv = 20.9, model uses Cp with 3 decimal places instead of 1"
+post_conditions:
+  - "The number of decimal places in the Cp value used in the heat calculation equals the number of decimal places in the given Cv."
+ops_template:
+  - "Round Cp = Cv + R to the same number of decimal places as Cv before using it in the heat calculation."
+  - "Do not use the unrounded sum (Cv + R) in the heat calculation."
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: RUTHERFORD-FALL-001
+name: Fall time scaling exponent error
+statement: "The fall time scaling factor must be N^6 when all linear dimensions and charges scale by N with conserved mass density."
+trigger_domain:
+  conditions:
+    - "Problem context specifies Rutherford model, fall time calculation, scaling of linear dimensions by N, scaling of charge by N, and conserved mass density"
+failure_domain:
+  examples: ["N=2, fall time factor 32 (N^5) instead of 64 (N^6)", "N=3, fall time factor 243 (N^5) instead of 729 (N^6)"]
+post_conditions:
+  - "Fall time scaling exponent equals 6"
+ops_template:
+  - "Block solutions with fall time scaling exponent ≠ 6"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: REL-SIM-001
+name: Missing time difference in simultaneity question
+statement: "For the simultaneity question, the model must report the time difference between events in the moving frame, not just state non-simultaneity."
+trigger_domain:
+  conditions:
+    - "problem.question_3 == 'Observed in the K\' frame, do the front and rear ends of the spaceship pass A and B respectively at the same time?'"
+    - "model.answer_3 == 'No'"
+failure_domain:
+  examples: ["Model answer for (3): 'No'", "Model answer for (3): 'Not simultaneous'", "Model answer for (3): 'The events are not simultaneous.'"]
+post_conditions:
+  - "model.answer_3 must contain a time difference expression (e.g., '-√3/(2c) s')"
+ops_template:
+  - "Include the time difference calculation in the final answer for the simultaneity question"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: STAR-ANG-001
+name: "Star orbital radius uses half angular displacement"
+statement: "The star's orbital radius R must be computed as R = L * (Δθ / 2) to account for the two-body center-of-mass motion, not R = L * Δθ."
+trigger_domain:
+  conditions:
+    - "Model computes star's orbital radius as R = L * Δθ in a two-body system with a planet"
+failure_domain:
+  examples: ["Model uses R = L * Δθ for star's orbital radius", "Model fails to divide angular displacement by 2"]
+post_conditions:
+  - "Computed planet mass is twice the correct value"
+ops_template:
+  - "Use R = L * (Δθ / 2) for star's orbital radius in two-body systems"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"
+
+
+rule_id: THERMO-ENERGY-001
+name: Exact energy value required
+statement: The energy value must be reported as the exact result of the mass defect calculation without rounding.
+trigger_domain:
+  conditions:
+    - "answer != (m1 + m2 - m3 - m4) * c^2"
+failure_domain:
+  examples: ["Answer rounded to 2.80e-12 instead of exact 2.799e-12", "Rounded energy value to three significant figures when exact calculation yields 2.799e-12"]
+post_conditions:
+  - "answer == (m1 + m2 - m3 - m4) * c^2"
+ops_template:
+  - "Require exact numerical value; prevent rounding"
+verification:
+  tests:
+    - type: "symbolic_consistency"
+    - type: "numeric_back_substitution"

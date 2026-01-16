@@ -47,7 +47,11 @@ class RuleRuntime:
                 pass
 
     def llm_available(self) -> bool:
-        return callable(self.llm_json) and self.llm_calls_used < self.max_llm_calls
+        if not callable(self.llm_json):
+            return False
+        if self.max_llm_calls <= 0:
+            return True
+        return self.llm_calls_used < self.max_llm_calls
 
 
 class RulePlugin(Protocol):

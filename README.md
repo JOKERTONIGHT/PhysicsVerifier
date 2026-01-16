@@ -1,171 +1,96 @@
 # PhysicsVerifier
 
-一个通用的“物理竞赛题自动评测”工具集，支持：
-- 统一读取模型推理结果（JSON 数组）并进行评分（粗粒度答案匹配 + 可选细粒度 Judge）
-- 多次运行结果统计（均值、方差、题目维度统计与汇总表）
-- 新增 变量/常量混淆 检查器（基于符号图 + 规则，支持可选 LLM 辅助）
+一个基于 LLM 的物理问题解答规则检查器。
 
-主要文件：
-- `eval_physics.py`：命令行评测入口
-- `universal_physics_evaluator.py`：评测器实现（数据加载、并行评分、统计/导出）
-- `variable_constant_verifier.py`：变量/常量检查器
-- `rule_based_verifier.py`：通用规则检查器（LLM 驱动，结构化规则 Prompt）
+本工具的核心思想是采用一个两阶段的流程来验证一份解答（例如，学生或AI模型的作答）是否符合一系列预定义的物理和逻辑规则：
+
+1.  **规则翻译 (离线)**: 使用 `translate_rules.py` 脚本，将用 Python 定义的规则插件（位于 `rules/` 目录）通过 LLM 翻译成一种清晰、结构化的“符号化规则定义” (Symbolic Rule Definition, SRD)。这些 SRD 文本存储在 `rule_translations.json` 文件中，作为检查的“规则手册”。
+
+2.  **规则检查 (在线)**: 主程序 `rule_based_verifier.py` 在运行时加载 `rule_translations.json`。对于每一个待检查的样本，它会：
+    a.  从解答文本中提取符号、公式等结构化信息，构建一个临时的符号图。
+    b.  将样本的结构化信息摘要和 SRD 文本组合成一个 Prompt。
+    c.  请求 LLM 根据 SRD 规则来检查样本，并以结构化的 JSON 格式返回发现的违规项。
+
+这个架构将“规则定义”和“规则执行”解耦，使得规则本身变得透明、可审计，同时将复杂的逻辑判断任务完全交给强大的 LLM，极大地简化了本地代码的复杂性。
+
+## 主要文件
+
+- `rule_based_verifier.py`: **核心检查器和命令行入口**。用于加载样本、执行规则检查并生成报告。
+- `translate_rules.py`: **规则翻译器**。运行此脚本以（重新）生成 `rule_translations.json`。
+- `rule_translations.json`: 由翻译器生成的**符号化规则定义手册**。
+- `rules/`: **规则插件目录**。你可以在此添加或修改规则。
 
 ## 快速开始
 
-1) 安装依赖（建议 Python 3.10+）：
+### 1. 安装依赖
+
+建议使用 Python 3.10+。
 
 ```bash
+# 创建并激活虚拟环境
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U python-dotenv pandas numpy openpyxl sympy rich
-# HuggingFace datasets（VLMEvalKit 的部分模块会间接依赖）
-pip install -U datasets
-# 安装 VLMEvalKit（包名为 vlmeval，来自 GitHub 仓库）
-pip install "git+https://github.com/open-compass/VLMEvalKit.git"
-# 若使用 uv：
-# uv pip install -U python-dotenv pandas numpy openpyxl sympy rich datasets
-# uv pip install "git+https://github.com/open-compass/VLMEvalKit.git"
+
+# 安装核心依赖
+pip install -U python-dotenv pandas numpy openpyxl sympy rich openai
 ```
 
-如需使用 Judge（细粒度）或变量/常量检查的 LLM 辅助，请准备对应 API Key，并写入 `.env`：
+如果需要使用 LLM 功能（规则翻译或检查），请在项目根目录创建一个 `.env` 文件并填入你的 API Key：
 
 ```
 OPENAI_API_KEY=sk-xxxx
 ```
 
-如果无法访问 GitHub，可尝试：
+### 2. 准备输入数据
 
-- 使用压缩包直链安装：
-	- `pip install https://codeload.github.com/open-compass/VLMEvalKit/zip/refs/heads/main`
-- 或从旧仓库子目录安装（备选）：
-	- `pip install "git+https://github.com/OpenGVLab/Ask-Anything.git#subdirectory=VLMEvalKit"`
-- 实在网络受限：手动下载/拷贝仓库后 `pip install -e VLMEvalKit`
+检查器 `rule_based_verifier.py` 需要一个 JSON 文件作为输入，该文件是一个包含多个样本对象的数组。每个对象应至少包含以下字段：
 
-2) 准备推理结果（输入）
+- `id`: 样本的唯一标识符。
+- `prediction`: 需要被检查的完整解答文本。
+- `question` (可选): 问题的描述文本。
+- `answer` (可选): 标准答案。
 
-- 目录结构：`results_reasoning/<Dataset>/<Model>/*.json`
-- 文件为 JSON 数组，每个元素代表一道题。最小字段：
-	- `prediction`：模型作答全文（可包含推导与 \boxed{} 最终答案）
-	- `answer`：标准答案（字符串或字符串数组，允许写成 JSON 数组字符串）
-	- 可选：`points/point`（对应每个答案的分值，单答案可为数值）、`marking`（细粒度评分细则，支持多套）
+`data/evaluation_input.json` 是一个符合此格式的示例文件。你可以参考 `scripts/convert_combined_to_eval_format.py` 脚本来转换你自己的数据。
 
-示例：
+### 3. 翻译规则
 
-```json
-[
-	{
-		"id": "APhO-2025-Q1",
-		"question": "…",
-		"prediction": "推导… 最终 \boxed{2.50 m/s}。",
-		"answer": ["2.50 m/s"],
-		"points": [7]
-	}
-]
-```
-
-3) 运行评测
-
-评测单个数据集：
+在第一次运行或修改了 `rules/` 目录下的规则后，你需要生成规则手册：
 
 ```bash
-# 在仓库根目录（PhysicsVerifier/）运行
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929
-
-# 或使用 uv，从任何工作目录运行（脚本会自动将相对路径锚定到脚本目录）
-uv run python3 /home/jinjianhan/PhysicsVerifier/eval_physics.py --dataset PanPhO_2024/Physics-235B-0929
+python3 translate_rules.py
 ```
 
-评测所有可用数据集（会自动发现 `results_reasoning/<Dataset>/<Model>` 且尚未有输出目录的组合）：
+此命令会调用 LLM 将 `rules/` 下的每个规则翻译成 SRD，并覆盖写入 `rule_translations.json`。
+
+### 4. 运行检查
+
+使用 `rule_based_verifier.py` 对输入文件进行检查：
 
 ```bash
-python3 eval_physics.py
-# 或
-uv run python3 /home/jinjianhan/PhysicsVerifier/eval_physics.py
+# 使用默认配置运行检查
+python3 rule_based_verifier.py --input data/evaluation_input.json --output evaluation_results/my_report.json
+
+# 禁用 LLM 缓存
+python3 rule_based_verifier.py --input data/evaluation_input.json --no-cache
+
+# 指定只检查部分规则
+python3 rule_based_verifier.py --input data/evaluation_input.json --rules var_const_consistency formula_correctness
+
+# 完全禁用 LLM，只进行基础的符号提取（此时无法进行规则检查）
+python3 rule_based_verifier.py --input data/evaluation_input.json --no-llm
 ```
 
-启用细粒度 Judge（如 gpt-4o）：
+检查报告将保存在 `--output` 参数指定的路径下。报告中会包含每个样本的诊断信息和评分。
 
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
-	--judge-model gpt-4o --api-key YOUR_KEY
-```
+## 扩展规则
 
-多次运行统计：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 --multi-runs
-```
-
-输出默认在 `evaluation_results/<Dataset>/<Model>/` 下，包含：
-- `*_score.json` 汇总
-- `*_detailed_results.json` 明细
-- `*_detailed.xlsx` 表格
-- 多次运行时：`multi_run_statistics.json`、题目统计/运行汇总 xlsx
-
-## 变量/常量混淆检查器
-
-启用检查器：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 --varconst-check
-```
-
-可选 LLM 辅助：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
-	--varconst-check --varconst-llm-model gpt-4o --varconst-max-llm-calls 5 --api-key YOUR_KEY
-```
-
-报告输出在 `evaluation_results/varconst_reports/`，包含：
-- `summary`：样本数、总分/均分
-- `results[*].diagnostics`：逐题诊断（规则名、严重度、证据）
-- `symbol_nodes`：符号图（每个符号的 kind、来源、公式等）
-
-## 规则检查器（LLM 驱动）
-
-该检查器将“规则”结构化后交由 LLM 评估，避免本地复杂规则/图推理；内置一个样例规则：`var_const_consistency`（变量/常量使用一致性）。
-
-启用并运行默认规则（变量/常量一致性）：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 --rules-check
-```
-
-使用指定 LLM 模型与调用上限：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
-	--rules-check --rules-llm-model gpt-4o --rules-max-llm-calls 5 --api-key YOUR_KEY
-```
-
-指定规则列表（逗号分隔）：
-
-```bash
-python3 eval_physics.py --dataset PanPhO_2024/Physics-235B-0929 \
-	--rules-check --rules var_const_consistency
-```
-
-输出在 `evaluation_results/rules_reports/`，生成两份报告：
-- `*_rules(<rule-list>)_light_*.json`：仅包含 summary 与每题 diagnostics、score；
-- `*_rules(<rule-list>)_full_*.json`：包含完整符号元信息（symbol_nodes）。
-
-扩展规则：在 `rule_based_verifier.py` 的 `RULES_REGISTRY` 中新增一个规则构造函数（输入 text/symbols/formulas 等，输出结构化 payload），即可通过 `--rules` 指定运行。
-
-## 输入字段对齐规则（关键）
-
-- `answer` 和 `points`（或 `point`）一一对应，长度不一致时会截断到最短长度。
-- `marking` 支持：
-	- 单套：`["……", "……"]`
-	- 多套：`[["……"], ["……"]]`，系统会择优取分最高的一套
-- 无 judge 或无 marking 时，仅进行答案匹配（粗粒度）。
+要添加新规则，你可以在 `rules/` 目录下创建一个新的 Python 文件，并实现一个继承自 `rules.base.RulePlugin` 的类。你只需要提供规则的自然语言描述 (`description`) 和一些元信息。之后，运行 `scripts/translate_rules.py`，LLM 会自动为你的新规则生成 SRD，使其在检查流程中生效。
 
 ## 故障排查
 
-- 运行时报路径/字段错误：检查 `--dataset` 是否为 `Dataset/Model` 形式；确认 JSON 中包含 `prediction` 与 `answer`。
-- 细粒度评分无效：确认已设置 API Key，且 `--judge-model` 可正常调用（网络/配额）。
-- 多次运行未被识别：确保同一目录下有 2 个及以上 `*.json` 推理结果文件。
+- **LLM 调用失败**: 确认 `.env` 文件中的 API Key 是否正确且有效，并检查网络连接。
+- **找不到输入文件**: 确认 `--input` 参数提供的路径是否正确。
+- **规则检查无效**: 确认你已经运行了 `scripts/translate_rules.py` 来生成 `rule_translations.json` 文件。
 
 ## 许可证
 
