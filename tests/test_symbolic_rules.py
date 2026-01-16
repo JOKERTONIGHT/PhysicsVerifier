@@ -6,8 +6,14 @@ from pathlib import Path
 # Add project root to path (parent of tests dir)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from rule_based_verifier import RuleBasedVerifier, SymbolGraph, RuleContext
-from rules.symbolic_new import KeplersThirdLawSymbolic, LatexSyntaxSymbolic, TimeDilationLengthContractionSymbolic
+from core.rule_based_verifier import RuleBasedVerifier, SymbolGraph, RuleContext
+from rules.symbolic_checks import (
+    KeplersThirdLawSymbolic,
+    LatexSyntaxSymbolic,
+    TimeDilationLengthContractionSymbolic,
+    GeneratedSymbolicCheckExecutor,
+    GeneratedSymbolicCheckSpec,
+)
 
 def run_tests():
     # Load data (relative to project root if running from root, or relative to script?)
@@ -79,6 +85,56 @@ def run_tests():
                 print(f"  - {d['message']} (Evidence: {d['evidence']})")
         else:
             print(f"[{rule_kepler.id}] Passed (No incorrect linear dependence found)")
+
+        # Regression: agentic power_law spec for Kepler should NOT fail when T ~ r^(3/2)
+        exec_ = GeneratedSymbolicCheckExecutor()
+        kepler_spec = GeneratedSymbolicCheckSpec(
+            spec_id="test_kepler_power_law_dep_power",
+            title="Kepler T^2 ~ r^3 regression",
+            description="Ensure dependent_power handling matches Kepler's 3rd law.",
+            primitive="power_law",
+            params={
+                "dependent_candidates": ["T"],
+                "independent_candidates": ["r"],
+                "dependent_power": 2,
+                "expected_exponent": 3,
+                "tolerance": 0.2,
+            },
+            source_rule_id="keplers_third_law_check_01",
+            source_message_substring="regression",
+        )
+        diags = exec_.run(ctx, [kepler_spec])
+        if diags:
+            print("[agentic_kepler_power_law] Unexpected FAIL:")
+            for d in diags:
+                print(f"  - {d['message']}")
+        else:
+            print("[agentic_kepler_power_law] Passed")
+
+        # Regression: equation_equivalence should accept standard Kepler form present in the sample.
+        kepler_eq_spec = GeneratedSymbolicCheckSpec(
+            spec_id="test_kepler_equiv",
+            title="Kepler equation equivalence regression",
+            description="Ensure equation_equivalence matches canonical Kepler forms.",
+            primitive="equation_equivalence",
+            params={
+                "canonical_latex": [
+                    "T = 2\\pi \\sqrt{\\frac{r^3}{G M_E}}",
+                    "T^2 = \\frac{4\\pi^2}{G M_E} r^3",
+                ],
+                "required_symbols": ["T", "r"],
+                "allow_scalar_multiple": False,
+            },
+            source_rule_id="keplers_third_law_check_01",
+            source_message_substring="regression",
+        )
+        diags = exec_.run(ctx, [kepler_eq_spec])
+        if diags:
+            print("[agentic_kepler_equiv] Unexpected FAIL:")
+            for d in diags:
+                print(f"  - {d['message']}")
+        else:
+            print("[agentic_kepler_equiv] Passed")
 
     # Test 2: Time Dilation check on Sample 29185
     sid = "29185"

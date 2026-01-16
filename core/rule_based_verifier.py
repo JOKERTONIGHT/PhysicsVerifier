@@ -1,18 +1,13 @@
-"""
-重构后的物理规则检查器 (LLM-Native)
+"""PhysicsVerifier: LLM 驱动的规则检查核心引擎。
 
-核心逻辑：
-1.  **规则翻译 (离线)**: 使用 `tests/translate_rules.py` 脚本，将所有自然语言规则
-    （如 `var_const_consistency`）翻译成一种清晰、结构化的“符号化规则定义” (SRD)
-    文本，并存储在 `rule_translations.json` 文件中。
-2.  **规则检查 (在线)**: `RuleBasedVerifier` 在运行时加载 `rule_translations.json`。
-    对于每一个待检查的样本，它会：
-    a. 构建符号图 (`SymbolGraph`)，提取符号、公式等结构化信息。
-    b. 将样本的结构化信息和 SRD 文本组合成一个 Prompt。
-    c. 请求 LLM 根据 SRD 规则来检查样本，并返回发现的违规项（Diagnostics）。
+本仓库当前的主流程是“自顶向下（Top-Down）规则检查”，由 `top_down_verifier.py`
+根据 `rules_catalog_top_down.json` 动态注入每个 topic 的规则定义，然后调用本模块
+`RuleBasedVerifier` 对样本进行逐条规则检查。
 
-这个架构将“规则定义”和“规则执行”完全分离，使得规则本身变得透明、可审计，
-同时将复杂的逻辑判断任务完全交给强大的 LLM，简化了本地代码。
+RuleBasedVerifier 的职责：
+- 从作答中抽取符号/公式并构建 `SymbolGraph`（可选）
+- 将结构化摘要 + 规则文本（SRD风格）组合成 prompt
+- 调用 LLM 输出结构化 diagnostics
 """
 
 from __future__ import annotations
@@ -106,7 +101,7 @@ try:
         pass
     from rules.base import RulePlugin, RuleContext, RuleRuntime
 except Exception:
-    from PhysicsVerifier.rules.base import RulePlugin, RuleContext, RuleRuntime
+    from rules.base import RulePlugin, RuleContext, RuleRuntime
 
 _BUILTIN_RULES_MAP = {
     "graph_consistency": "rules.graph_consistency:GraphConsistencyRule",
@@ -138,10 +133,6 @@ def _load_rule_class(spec: str):
         mod = importlib.import_module(module_name)
         return getattr(mod, class_name)
     except ImportError:
-        if not module_name.startswith("PhysicsVerifier."):
-            alt_module = f"PhysicsVerifier.{module_name}"
-            mod = importlib.import_module(alt_module)
-            return getattr(mod, class_name)
         raise
 
 

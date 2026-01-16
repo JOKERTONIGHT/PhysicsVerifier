@@ -1,5 +1,4 @@
-"""
-PhysicsVerifier.rules
+"""rules
 
 可插拔规则插件系统：
 - base: 定义 RulePlugin 接口、RuleContext 数据结构、RuleRuntime 运行时工具。
@@ -11,4 +10,6 @@ PhysicsVerifier.rules
 """
 
 from .base import RulePlugin, RuleContext, RuleRuntime  # noqa: F401
-from . import symbolic_new  # Register symbolic rules
+
+# NOTE: Symbolic checks are centralized in rules/symbolic_checks.py.
+# rules/symbolic_new.py remains as a compatibility shim.

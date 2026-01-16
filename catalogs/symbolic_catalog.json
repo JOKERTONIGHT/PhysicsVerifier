@@ -1,0 +1,290 @@
+{
+  "domains": [
+    {
+      "name": "Mechanics",
+      "topics": [
+        {
+          "name": "Gravitation and Kepler's Laws",
+          "checks": [
+            {
+              "spec_id": "grav_force_eq_equiv_01",
+              "title": "Universal gravitation equation equivalence",
+              "description": "Verify presence/correctness of F = G m1 m2 / r^2 (up to algebraic rearrangement; constants must match).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "F = \\frac{G m_1 m_2}{r^2}",
+                  "F = G \\frac{m_1 m_2}{r^2}",
+                  "F r^2 = G m_1 m_2",
+                  "F = \\frac{G M_E M_S}{r^2}",
+                  "F = \\frac{G M_E m}{r^2}"
+                ],
+                "required_symbols": [
+                  "F",
+                  "G",
+                  "r"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [],
+              "match_keywords": [
+                "universal law of gravitation",
+                "gravitational force",
+                "inverse square",
+                "F = G",
+                "r^2"
+              ]
+            },
+            {
+              "spec_id": "orbital_speed_eq_equiv_01",
+              "title": "Orbital speed equation equivalence",
+              "description": "Verify that orbital speed v matches v = sqrt(GM/r) (or v^2 = GM/r) when the diagnostic discusses orbital speed.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "v = \\sqrt{\\frac{G M}{r}}",
+                  "v^2 = \\frac{G M}{r}",
+                  "v = \\sqrt{\\frac{G M_E}{r}}",
+                  "v^2 = \\frac{G M_E}{r}",
+                  "v = \\sqrt{\\frac{G M_E}{R_E}}",
+                  "v^2 = \\frac{G M_E}{R_E}"
+                ],
+                "required_symbols": [
+                  "v",
+                  "G",
+                  "r"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "gravitation_eq_check_01"
+              ],
+              "match_keywords": [
+                "orbital speed",
+                "speed",
+                "missing the square root"
+              ]
+            },
+            {
+              "spec_id": "kepler_check_01",
+              "title": "Check Power Law Relationship for Kepler's Third Law",
+              "description": "Verify if T^2 is proportional to r^3 using symbolic analysis.",
+              "primitive": "power_law",
+              "params": {
+                "dependent_candidates": [
+                  "T"
+                ],
+                "independent_candidates": [
+                  "r"
+                ],
+                "dependent_power": 2,
+                "expected_exponent": 3,
+                "tolerance": 0.1
+              },
+              "match_rule_ids": [
+                "keplers_third_law_check_01"
+              ],
+              "match_keywords": [
+                "orbital period",
+                "Kepler's Third Law",
+                "T^2"
+              ]
+            },
+            {
+              "spec_id": "kepler_eq_equiv_01",
+              "title": "Kepler's 3rd law equation equivalence",
+              "description": "Verify that the submitted orbit-period equation is equivalent to Kepler's 3rd law with correct constants (no missing 4π²).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "T^2 = \\frac{4\\pi^2}{G M} r^3",
+                  "T = 2\\pi \\sqrt{\\frac{r^3}{G M}}",
+                  "T^2 = \\frac{4\\pi^2}{G M_E} r^3",
+                  "T = 2\\pi \\sqrt{\\frac{r^3}{G M_E}}"
+                ],
+                "required_symbols": [
+                  "T",
+                  "r"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "keplers_third_law_check_01"
+              ],
+              "match_keywords": [
+                "Kepler's Third Law",
+                "T^2",
+                "r^3"
+              ]
+            },
+            {
+              "spec_id": "pl_001",
+              "title": "Power Law Check for Δh and r",
+              "description": "Check whether Δh is proportional to r^p in the given formula.",
+              "primitive": "power_law",
+              "params": {
+                "dependent_candidates": [
+                  "\\Delta h"
+                ],
+                "independent_candidates": [
+                  "r"
+                ],
+                "expected_exponent": 3,
+                "tolerance": 0.1
+              },
+              "match_rule_ids": [
+                "dimensional_consistency_check_01"
+              ],
+              "match_keywords": [
+                "Δh",
+                "Delta h",
+                "missing a factor"
+              ]
+            },
+            {
+              "spec_id": "grav_potential_energy_eq_equiv_01",
+              "title": "Gravitational potential energy equation equivalence",
+              "description": "Verify U = -G m1 m2 / r (correct sign, correct 1/r dependence; no spurious 1/2).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "U = -\\frac{G m_1 m_2}{r}",
+                  "U = -G \\frac{m_1 m_2}{r}",
+                  "U r = -G m_1 m_2",
+                  "U = -\\frac{G M_E M_S}{r}",
+                  "U = -\\frac{G M_E m}{r}"
+                ],
+                "required_symbols": [
+                  "G",
+                  "r"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "gravitational_potential_energy_check_01"
+              ],
+              "match_keywords": [
+                "potential energy",
+                "U = -G",
+                "1/2",
+                "gravitational potential"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Modern Physics",
+      "topics": [
+        {
+          "name": "Special Relativity (Time Dilation, Length Contraction)",
+          "checks": [
+            {
+              "spec_id": "sr_time_dilation_eq_equiv_01",
+              "title": "Time dilation equation equivalence",
+              "description": "Verify presence/correctness of the standard time dilation form (allowing algebraic rearrangement, but not arbitrary scaling).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "t' = \\frac{t}{\\sqrt{1 - \\frac{v^2}{c^2}}}",
+                  "t = \\frac{t_0}{\\sqrt{1 - \\frac{v^2}{c^2}}}",
+                  "t = \\gamma t_0",
+                  "\\gamma = \\frac{1}{\\sqrt{1 - \\frac{v^2}{c^2}}}"
+                ],
+                "required_symbols": [
+                  "v",
+                  "c"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "time_dilation_equation_check_01"
+              ],
+              "match_keywords": [
+                "time dilation",
+                "t'",
+                "lorentz"
+              ]
+            },
+            {
+              "spec_id": "sr_length_contraction_eq_equiv_01",
+              "title": "Length contraction equation equivalence",
+              "description": "Verify presence/correctness of the standard length contraction form L' = L sqrt(1 - v^2/c^2).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "L' = L \\sqrt{1 - \\frac{v^2}{c^2}}",
+                  "L = \\frac{L_0}{\\gamma}",
+                  "L = L_0 \\sqrt{1 - \\frac{v^2}{c^2}}"
+                ],
+                "required_symbols": [
+                  "v",
+                  "c"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "length_contraction_equation_check_02"
+              ],
+              "match_keywords": [
+                "length contraction",
+                "L'",
+                "sqrt(1 - v^2/c^2)"
+              ]
+            },
+            {
+              "spec_id": "sr_lorentz_factor_eq_equiv_01",
+              "title": "Lorentz factor definition equivalence",
+              "description": "Verify that the Lorentz factor gamma is defined as 1/sqrt(1-v^2/c^2) when it appears.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "\\gamma = \\frac{1}{\\sqrt{1 - \\frac{v^2}{c^2}}}",
+                  "\\gamma^2 = \\frac{1}{1 - \\frac{v^2}{c^2}}"
+                ],
+                "required_symbols": [
+                  "v",
+                  "c"
+                ],
+                "allow_scalar_multiple": false
+              },
+              "match_rule_ids": [
+                "lorentz_factor_dimensional_check_04"
+              ],
+              "match_keywords": [
+                "gamma",
+                "lorentz factor",
+                "dimensionless"
+              ]
+            },
+            {
+              "spec_id": "causality_check_09_equivalence",
+              "title": "Check for equation equivalence with known relativistic formulas",
+              "description": "Verify whether the reported formula is algebraically equivalent to any known relativistic equation (up to scalar multiple). This will help determine if the formula is physically valid or if it introduces unphysical behavior.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "L_{\\text{app}} = 2 L \\sqrt{1 - \\frac{v^2}{c^2}} \\left(1 - \\frac{2 D^2}{L^2}\\right)"
+                ],
+                "required_symbols": [
+                  "L",
+                  "v",
+                  "c",
+                  "D"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "causality_check_09"
+              ],
+              "match_keywords": [
+                "apparent length"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
