@@ -1,7 +1,15 @@
+import sys
 import argparse
 import json
 from pathlib import Path
 from typing import Any, Dict, List
+
+
+# Ensure project root is on sys.path so `import core.*` works when this file is executed
+# as a script from arbitrary working directories.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core.top_down_verifier import TopDownVerifier
 
@@ -34,6 +42,7 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(d, dict):
             continue
         if d.get("symbolic_cross_checks") or d.get("symbolic_reconciliation"):
+            recon = d.get("symbolic_reconciliation") or {}
             checked.append(
                 {
                     "severity": d.get("severity"),
@@ -43,16 +52,43 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
                     "evidence": d.get("evidence"),
                     "symbolic_cross_checks": d.get("symbolic_cross_checks") or [],
                     "symbolic_reconciliation": d.get("symbolic_reconciliation"),
+                    "symbolic_status": recon.get("status"),
                 }
             )
 
     agentic = sample_result.get("agentic") if isinstance(sample_result.get("agentic"), dict) else {}
 
+    symbolic_checks = []
+    for sd in sample_result.get("symbolic_post_diagnostics", []) or []:
+        if not isinstance(sd, dict):
+            continue
+        symbolic_checks.append(
+            {
+                "spec_id": sd.get("spec_id"),
+                "primitive": sd.get("primitive"),
+                "title": sd.get("title"),
+                "result": sd.get("symbolic_result"),
+                "rule": sd.get("rule"),
+                "symbol": sd.get("symbol"),
+                "message": sd.get("message"),
+                "evidence": sd.get("evidence"),
+                "details": sd.get("details"),
+            }
+        )
+
+    summary = {
+        "total": len(symbolic_checks),
+        "pass": len([c for c in symbolic_checks if c.get("result") == "pass"]),
+        "fail": len([c for c in symbolic_checks if c.get("result") == "fail"]),
+        "inconclusive": len([c for c in symbolic_checks if c.get("result") == "inconclusive"]),
+    }
+
     return {
         "id": sample_result.get("id"),
         "topic": sample_result.get("topic"),
         "checked_diagnostics": checked,
-        "symbolic_post_diagnostics": sample_result.get("symbolic_post_diagnostics", []) or [],
+        "symbolic_summary": summary,
+        "symbolic_checks": symbolic_checks,
         "suppressed_diagnostics": (agentic.get("suppressed_diagnostics") or []),
     }
 
@@ -94,7 +130,7 @@ def main() -> None:
     symbolic_audit = [
         a
         for a in symbolic_audit_all
-        if (a.get("checked_diagnostics") or a.get("symbolic_post_diagnostics") or a.get("suppressed_diagnostics"))
+        if (a.get("checked_diagnostics") or a.get("symbolic_checks") or a.get("suppressed_diagnostics"))
     ]
 
     out_path = Path(args.output)

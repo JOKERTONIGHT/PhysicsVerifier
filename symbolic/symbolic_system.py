@@ -8,9 +8,27 @@ class FormulaParser:
     Parses LaTeX strings into SymPy expressions.
     Handles basic cleaning and robustness.
     """
+    _RELATION_REPLACEMENTS = {
+        r"\\approx": "=",
+        r"\\sim": "=",
+        r"\\propto": "=",
+        "≈": "=",
+        "∼": "=",
+        "∝": "=",
+        "~": "=",
+    }
+
+    @staticmethod
+    def _normalize_relations(text: str) -> str:
+        out = text
+        for k, v in FormulaParser._RELATION_REPLACEMENTS.items():
+            out = out.replace(k, v)
+        return out
+
     @staticmethod
     def parse(latex_str: str) -> Optional[sympy.Expr]:
         cleaned = latex_str.strip()
+        cleaned = FormulaParser._normalize_relations(cleaned)
         # Remove common non-math markers if any (though graph extraction should have handled most)
         # Basic cleaning: remove \mathrm{}, \text{} wrappers if they wrap single vars, 
         # but parse_latex handles some of this.

@@ -12,4 +12,3 @@
 from .base import RulePlugin, RuleContext, RuleRuntime  # noqa: F401
 
 # NOTE: Symbolic checks are centralized in rules/symbolic_checks.py.
-# rules/symbolic_new.py remains as a compatibility shim.

@@ -26,7 +26,9 @@
                 ],
                 "allow_scalar_multiple": false
               },
-              "match_rule_ids": [],
+              "match_rule_ids": [
+                "gravitation_eq_check_01"
+              ],
               "match_keywords": [
                 "universal law of gravitation",
                 "gravitational force",
@@ -75,6 +77,10 @@
                   "T"
                 ],
                 "independent_candidates": [
+                  "r"
+                ],
+                "required_symbols": [
+                  "T",
                   "r"
                 ],
                 "dependent_power": 2,
@@ -129,6 +135,10 @@
                 "independent_candidates": [
                   "r"
                 ],
+                "required_symbols": [
+                  "\\Delta h",
+                  "r"
+                ],
                 "expected_exponent": 3,
                 "tolerance": 0.1
               },
@@ -168,6 +178,180 @@
                 "U = -G",
                 "1/2",
                 "gravitational potential"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Friction and Contact Forces",
+          "checks": [
+            {
+              "spec_id": "kinetic_friction_check",
+              "title": "Check for equivalence with standard kinetic friction formula",
+              "description": "Verify if the reported equation is algebraically equivalent to the standard kinetic friction formula f_k = μ_k * N.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "f_k = \\mu_k N"
+                ],
+                "required_symbols": [
+                  "f_k",
+                  "\\mu_k",
+                  "N"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "kinetic_friction_formula_check_02"
+              ],
+              "match_keywords": [
+                "Kinetic friction formula is incorrectly applied as F_x = - ("
+              ]
+            },
+            {
+              "spec_id": "dimensional_consistency_check_07",
+              "title": "Check dimensional consistency of friction and contact force equations",
+              "description": "Friction force (f) and normal force (N) must have dimensions of force [M·L/T²], and coefficients of friction (μ_s, μ_k) are dimensionless. Ensure that units in all friction-related equations are consistent and result in proper force units. Verify that coefficients of friction are dimensionless.",
+              "primitive": "power_law",
+              "params": {
+                "dependent_candidates": [
+                  "F_x"
+                ],
+                "independent_candidates": [
+                  "N",
+                  "v"
+                ],
+                "required_symbols": [
+                  "N",
+                  "v",
+                  "\\mu"
+                ],
+                "expected_exponent": 1,
+                "tolerance": 0.1
+              },
+              "match_rule_ids": [
+                "dimensional_consistency_check_07"
+              ],
+              "match_keywords": [
+                "Friction force components have incorrect dimensions"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Projectile Motion",
+          "checks": [
+            {
+              "spec_id": "mech_projectile_max_height_eq_equiv_01",
+              "title": "Check equation equivalence for maximum height",
+              "description": "Verify if the derived equation matches the canonical formula for maximum height.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "H = \\frac{v_0^2 \\sin^2(\\theta)}{2g}"
+                ],
+                "required_symbols": [
+                  "v_0",
+                  "sin",
+                  "theta",
+                  "g"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "proj_motion_vertex_06"
+              ],
+              "match_keywords": [
+                "Incorrect formula for maximum height calculation"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Kinematics in 1D/2D/3D",
+          "checks": [
+            {
+              "spec_id": "kin_eq_check_001",
+              "title": "Verify equation equivalence with standard kinematic forms",
+              "description": "Check if the derived equations match standard kinematic equations (e.g., v = u + at, s = ut + 0.5at^2) up to scalar multiples.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "v = u + at",
+                  "s = ut + \\frac{1}{2}at^2"
+                ],
+                "required_symbols": [
+                  "a_x",
+                  "F_x",
+                  "m"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "kin_eq_verify_001"
+              ],
+              "match_keywords": [
+                "The student applies the kinematic equation a_x = F_x/m and a"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Oscillations and Simple Harmonic Motion",
+          "checks": [
+            {
+              "spec_id": "check_phase_constant_missing",
+              "title": "Check for Missing Phase Constant in Position Equation",
+              "description": "Verify if the given position equation is algebraically equivalent to the canonical form x(t) = A cos(ωt + φ) up to a scalar multiple.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "x(t) = A \\cos(\\omega t + \\phi)"
+                ],
+                "required_symbols": [
+                  "A",
+                  "omega",
+                  "t",
+                  "phi"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "shm_spring_mass_position_velocity_03"
+              ],
+              "match_keywords": [
+                "The position equation is missing the phase constant, which i"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Fluid Statics (Buoyancy, Pressure in Fluids)",
+          "checks": [
+            {
+              "spec_id": "fluid_statics_incompressibility_check_05",
+              "title": "Verify Assumption of Incompressibility",
+              "description": "The equations governing fluid statics assume incompressible fluid dynamics, meaning the fluid density does not change with pressure or depth under normal static conditions.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "F_{\\text{centrifugal}} = \\rho \\omega^2 r"
+                ],
+                "required_symbols": [
+                  "\\rho",
+                  "\\omega",
+                  "r"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "fluid_statics_incompressibility_check_05"
+              ],
+              "match_keywords": [
+                "Assumed incompressibility of air without justification, whil"
               ]
             }
           ]
@@ -280,6 +464,433 @@
               ],
               "match_keywords": [
                 "apparent length"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Nuclear Physics (Binding Energy, Radioactivity)",
+          "checks": [
+            {
+              "spec_id": "binding_energy_equivalence_check",
+              "title": "Check equation equivalence for binding energy formula",
+              "description": "Verify if the reported equation is algebraically equivalent to the standard binding energy formula E = Δm * c^2.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "E = \\Delta m c^2"
+                ],
+                "required_symbols": [
+                  "E",
+                  "\\Delta m",
+                  "c"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "binding_energy_calc_01"
+              ],
+              "match_keywords": [
+                "Incorrect binding energy formula: The equation should be E ="
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Electromagnetism",
+      "topics": [
+        {
+          "name": "Self-Inductance and Mutual Inductance",
+          "checks": [
+            {
+              "spec_id": "check_dimensional_consistency",
+              "title": "Check Dimensional Consistency of Inductance Formula",
+              "description": "Verify that the formula for U_1(t) maintains dimensional consistency with respect to time, current, and induced voltage.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "U_1(t) = R_1 i_1(t) + L \\frac{di_1}{dt}"
+                ],
+                "required_symbols": [
+                  "R_1",
+                  "i_1(t)",
+                  "L",
+                  "t"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "inductance_dimensional_consistency_04"
+              ],
+              "match_keywords": [
+                "The formula for U1(t) includes both resistive and inductive "
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Current, Resistance, and Ohm's Law",
+          "checks": [
+            {
+              "spec_id": "ohms_law_check_01",
+              "title": "Verify Ohm's Law Application",
+              "description": "Check if V = I * R in the solution and ensure the material is specified as ohmic. If the resistance varies with current or temperature, Ohm's Law cannot be applied directly.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "V = I R"
+                ],
+                "required_symbols": [
+                  "V",
+                  "I",
+                  "R"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "ohms_law_check_01"
+              ],
+              "match_keywords": [
+                "Ohm's Law is applied to a superconducting material, which by"
+              ]
+            },
+            {
+              "spec_id": "eq_equiv_01",
+              "title": "Equation Equivalence Check",
+              "description": "Check whether the reported formula is algebraically equivalent to the canonical power dissipation equation.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "P_{\\text{loss}} = I^2 r"
+                ],
+                "required_symbols": [
+                  "P_{\\text{loss}}",
+                  "I",
+                  "r"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "power_equation_check_04"
+              ],
+              "match_keywords": [
+                "Incorrect power loss formula: The factor of 2 is not justifi"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Electromagnetic Induction and Faraday's Law",
+          "checks": [
+            {
+              "spec_id": "em_induction_emf_eq_equiv_01",
+              "title": "Check equation equivalence for induced EMF",
+              "description": "Verify if the reported formula for induced EMF is algebraically equivalent to the correct formula.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "\\mathcal{E} = \\mathbf{v} \\times \\mathbf{B}"
+                ],
+                "required_symbols": [
+                  "v",
+                  "B"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "induced_emf_motion_04"
+              ],
+              "match_keywords": [
+                "Incorrect formula for induced EMF in moving conductors"
+              ]
+            },
+            {
+              "spec_id": "dim_consistency_check_01",
+              "title": "Check dimensional consistency of EMF equation",
+              "description": "Verify that the equation for EMF has consistent dimensions, ensuring that the left-hand side and right-hand side have the same units.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "\\mathcal{E} = v B l"
+                ],
+                "required_symbols": [
+                  "\\mathcal{E}",
+                  "v",
+                  "B",
+                  "l"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "dimensional_consistency_emf_05"
+              ],
+              "match_keywords": [
+                "EMF equation has inconsistent dimensions"
+              ]
+            },
+            {
+              "spec_id": "faraday_check_01",
+              "title": "Check for equivalence with Faraday's Law",
+              "description": "Verify whether the student's equation is algebraically equivalent to Faraday's Law in integral form.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "\\oint \\mathbf{E} \\cdot d\\mathbf{l} = -\\frac{d\\Phi_B}{dt}"
+                ],
+                "required_symbols": [
+                  "E",
+                  "B",
+                  "dl",
+                  "Phi_B",
+                  "dt"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "faraday_law_integral_form_01"
+              ],
+              "match_keywords": [
+                "The student incorrectly assumes that the induced EMF is give"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Electric Potential and Potential Energy",
+          "checks": [
+            {
+              "spec_id": "coord_check_01",
+              "title": "Electric Field Formula Symmetry Check",
+              "description": "Check whether the electric field formula respects the symmetry of the problem (e.g., Cartesian for a cube, spherical for a sphere).",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "E(x) = \\frac{\\rho x}{3 \\epsilon_0}"
+                ],
+                "required_symbols": [
+                  "x",
+                  "rho",
+                  "epsilon_0"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "electro_fields_coordinate_system_check_04"
+              ],
+              "match_keywords": [
+                "The electric field expression uses a formula that is inconsi"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Magnetic Fields and Lorentz Force",
+          "checks": [
+            {
+              "spec_id": "unit_check_02",
+              "title": "Check Dimensional Consistency for Magnetic Field Units",
+              "description": "Verify that B is derived or expressed in consistent units, and that related physical quantities (force, velocity, charge, etc.) align dimensionally.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "B = \\frac{F}{q v B}"
+                ],
+                "required_symbols": [
+                  "B",
+                  "m",
+                  "ω",
+                  "q"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "magnetic_field_unit_check_02"
+              ],
+              "match_keywords": [
+                "The magnetic field B(θ) is expressed as mω/q, which has unit"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Thermodynamics & Statistical Physics",
+      "topics": [
+        {
+          "name": "Thermodynamic Processes (Isothermal, Adiabatic, etc.)",
+          "checks": [
+            {
+              "spec_id": "verify_ideal_gas_law",
+              "title": "Verify Ideal Gas Law (PV = nRT) for Isothermal Process",
+              "description": "Check whether the ideal gas law PV = nRT holds for both initial and final states during an isothermal process, using Kelvin temperature.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "PV = nRT"
+                ],
+                "required_symbols": [
+                  "P",
+                  "V",
+                  "n",
+                  "R",
+                  "T"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "thermo_isothermal_process_01"
+              ],
+              "match_keywords": [
+                "The student uses the equation p1V1 = p2V2 for an isothermal "
+              ]
+            },
+            {
+              "spec_id": "thermo_buoyancy_weight_eq_equiv_01",
+              "title": "Equation Equivalence Check for Buoyant Force and Weight",
+              "description": "Verify if the equation involving buoyant force and weight is algebraically equivalent to a known correct form.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "\\rho g V = mg"
+                ],
+                "required_symbols": [
+                  "\\rho",
+                  "V",
+                  "m",
+                  "g"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "thermo_constraint_iv_05"
+              ],
+              "match_keywords": [
+                "Contradiction in buoyant force and weight equation: The equa"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Blackbody Radiation and Stefan-Boltzmann Law",
+          "checks": [
+            {
+              "spec_id": "unit_check_01",
+              "title": "Verify Dimensional Consistency of P_in",
+              "description": "Confirm that the derived formula for P_in has units of Watts by checking the dimensional consistency of the expression.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "P = \\sigma A e T^4"
+                ],
+                "required_symbols": [
+                  "P",
+                  "A",
+                  "T"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "bb_rad_unit_cons_check_02"
+              ],
+              "match_keywords": [
+                "The final expression for P_in does not have units of Watts. "
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Heat Transfer (Conduction, Convection, Radiation)",
+          "checks": [
+            {
+              "spec_id": "stefan_boltzmann_power_check",
+              "title": "Check Fourth Power of Temperature in Stefan-Boltzmann Law",
+              "description": "Verify that the Stefan-Boltzmann Law formula uses the fourth power of the temperature, not an incorrect form such as $ T_{P}^{\\prime \\prime \\prime 4} $.",
+              "primitive": "power_law",
+              "params": {
+                "dependent_candidates": [
+                  "S_{\\text{out}}"
+                ],
+                "independent_candidates": [
+                  "T_P"
+                ],
+                "required_symbols": [
+                  "T_{P}"
+                ],
+                "expected_exponent": 4,
+                "tolerance": 0.1
+              },
+              "match_rule_ids": [
+                "heat_radiation_stefan_boltzmann_03"
+              ],
+              "match_keywords": [
+                "Incorrect use of the Stefan-Boltzmann Law formula: The stude"
+              ]
+            },
+            {
+              "spec_id": "srdf02_check",
+              "title": "Check for Quartic Temperature Difference in Heat Dissipation",
+              "description": "Verify if the equation involves a quartic temperature difference (T^4 - T_thermal^4), which is indicative of radiation rather than convection as required by Newton's Law of Cooling.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "q = h \\cdot A \\cdot (T_{\\text{surface}} - T_{\\text{fluid}})"
+                ],
+                "required_symbols": [
+                  "T",
+                  "T_{\\text{热势}}"
+                ],
+                "allow_scalar_multiple": true,
+                "allow_additive_constant": false
+              },
+              "match_rule_ids": [
+                "heat_convection_newton_law_02"
+              ],
+              "match_keywords": [
+                "The student uses a radiation-based formula for heat dissipat"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Optics",
+      "topics": [
+        {
+          "name": "Diffraction (Single Slit, Double Slit, Gratings)",
+          "checks": [
+            {
+              "spec_id": "diffraction_equation_check_01",
+              "title": "Verify equation equivalence for diffraction",
+              "description": "Check whether the student's equation is algebraically equivalent to the single-slit diffraction equation or the diffraction grating equation.",
+              "primitive": "equation_equivalence",
+              "params": {
+                "canonical_latex": [
+                  "a \\sin \\theta = m \\lambda",
+                  "d \\sin \\beta_m = m \\lambda"
+                ],
+                "required_symbols": [
+                  "a",
+                  "d",
+                  "m",
+                  "lambda",
+                  "theta",
+                  "beta_m"
+                ],
+                "allow_scalar_multiple": true
+              },
+              "match_rule_ids": [
+                "diffraction_equation_check_01"
+              ],
+              "match_keywords": [
+                "The student used the equation for a diffraction grating inst"
               ]
             }
           ]

@@ -341,12 +341,23 @@ JSON Output:
                 },
             }
             ,
+            "multi_power_law": {
+                "description": "Check whether dependent^k matches a multi-variable power law product over several independent variables.",
+                "params_schema": {
+                    "dependent": "str",
+                    "independents": "list[str]",
+                    "expected_exponents": "dict[str, number] or list[number] aligned with independents",
+                    "dependent_power": "number (default 1)",
+                    "tolerance": "number (default 0.1)",
+                },
+            },
             "equation_equivalence": {
                 "description": "Check whether any extracted equation is algebraically equivalent to a canonical equation (up to scalar multiple).",
                 "params_schema": {
                     "canonical_latex": "list[str] (canonical equations in LaTeX)",
                     "required_symbols": "list[str] (optional; candidate equations must contain all)",
                     "allow_scalar_multiple": "bool (default true)",
+                    "allow_additive_constant": "bool (default false). Accepts equivalence up to an additive constant.",
                 },
             },
         }

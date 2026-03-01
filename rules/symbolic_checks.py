@@ -7,180 +7,35 @@ from typing import Any, Dict, List, Optional
 
 import sympy
 
-from rules.base import RulePlugin, RuleContext, RuleRuntime
+from rules.base import RuleContext
 from symbolic.symbolic_system import EnrichedSymbolGraph, FormulaParser
 from symbolic.symbolic_catalog import SymbolicCheckSpec
 
-
-# ------------------------- Manual symbolic checks (existing) -------------------------
-
-
-class KeplersThirdLawSymbolic(RulePlugin):
-    id = "keplers_third_law_symbolic"
-    title = "Symbolic Check for Kepler's Third Law"
-    description = "Checks physically if T^2 is proportional to r^3 using symbolic graph analysis."
-
-    def run(self, ctx: RuleContext, rt: RuleRuntime) -> List[Dict[str, Any]]:
-        diagnostics: List[Dict[str, Any]] = []
-
-        sem_graph = getattr(ctx, "semantic_graph", None)
-        if sem_graph is None:
-            sem_graph = EnrichedSymbolGraph(ctx.graph)
-            ctx.semantic_graph = sem_graph
-
-        period_syms = [s for s in ctx.graph.symbols if s in ["T", "P", "T_orbit"]]
-        radius_syms = [s for s in ctx.graph.symbols if s in ["r", "R", "a", "d"]]
-
-        if not period_syms or not radius_syms:
-            return []
-
-        for p_sym in period_syms:
-            for r_sym in radius_syms:
-                findings = sem_graph.get_relationship(p_sym, r_sym)
-                for finding in findings:
-                    exponent = finding.get("exponent")
-                    equation = finding.get("equation")
-                    fid = finding.get("fid")
-
-                    if exponent is None:
-                        continue
-
-                    if abs(exponent - 1.5) < 0.1:
-                        continue
-                    if abs(exponent - 1.0) < 0.1:
-                        diagnostics.append(
-                            {
-                                "severity": "error",
-                                "rule": self.id,
-                                "symbol": fid,
-                                "message": (
-                                    "Violation of Kepler's 3rd Law: Found linear relationship "
-                                    f"(T ~ r^1.0) instead of T ~ r^1.5 in {equation}"
-                                ),
-                                "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
-                            }
-                        )
-                    elif abs(exponent - 0.5) < 0.1:
-                        diagnostics.append(
-                            {
-                                "severity": "error",
-                                "rule": self.id,
-                                "symbol": fid,
-                                "message": (
-                                    "Violation of Kepler's 3rd Law: Found sqrt relationship "
-                                    f"(T ~ r^0.5) instead of T ~ r^1.5 in {equation}"
-                                ),
-                                "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
-                            }
-                        )
-
-        return diagnostics
+def _get_semantic_graph(ctx: RuleContext) -> EnrichedSymbolGraph:
+    sem_graph = getattr(ctx, "semantic_graph", None)
+    if sem_graph is None:
+        sem_graph = EnrichedSymbolGraph(ctx.graph)
+        ctx.semantic_graph = sem_graph
+    return sem_graph
 
 
-class LatexSyntaxSymbolic(RulePlugin):
-    id = "latex_syntax_symbolic"
-    title = "Latex Syntax Checker"
-    description = "Checks for unbalanced braces in LaTeX fragments."
-
-    def run(self, ctx: RuleContext, rt: RuleRuntime) -> List[Dict[str, Any]]:
-        diagnostics: List[Dict[str, Any]] = []
-        for fid, formula in ctx.graph.formulas.items():
-            raw = formula.raw
-            open_braces = raw.count("{")
-            close_braces = raw.count("}")
-            if open_braces != close_braces:
-                diagnostics.append(
-                    {
-                        "severity": "error",
-                        "rule": self.id,
-                        "symbol": fid,
-                        "message": f"Unbalanced LaTeX braces: {open_braces} '{{' vs {close_braces} '}}'",
-                        "evidence": raw,
-                    }
-                )
-        return diagnostics
-
-
-class TimeDilationLengthContractionSymbolic(RulePlugin):
-    id = "time_dilation_length_contraction_symbolic"
-    title = "Symbolic Check for Special Relativity Formulas"
-    description = "Checks correct application of gamma factor in Time Dilation vs Length Contraction."
-
-    def run(self, ctx: RuleContext, rt: RuleRuntime) -> List[Dict[str, Any]]:
-        diagnostics: List[Dict[str, Any]] = []
-
-        sem_graph = getattr(ctx, "semantic_graph", None)
-        if sem_graph is None:
-            sem_graph = EnrichedSymbolGraph(ctx.graph)
-            ctx.semantic_graph = sem_graph
-
-        proper_length = ["L_0", "l_0", "L0", "d_0", "x_0", "L_{0}", "l_{0}", "d_{0}", "x_{0}"]
-        rel_length = ["L", "l", "L'", "d", "x"]
-        proper_time = ["t_0", "tau", r"\tau", "T_0", "t_{0}", "T_{0}"]
-        rel_time = ["t", "T", "t'"]
-
-        v_sym = sympy.Symbol("v")
-        c_sym = sympy.Symbol("c")
-
-        for fid, expr in sem_graph.parsed_formulas.items():
-            fsyms = {s.name for s in expr.free_symbols}
-
-            p_time = next((s for s in proper_time if s in fsyms), None)
-            r_time = next((s for s in rel_time if s in fsyms), None)
-
-            if p_time and r_time:
-                findings = sem_graph.get_relationship(r_time, p_time)
-                for finding in findings:
-                    rhs = finding.get("rhs")
-                    if rhs is None:
-                        continue
-                    if v_sym in rhs.free_symbols and c_sym in rhs.free_symbols:
-                        try:
-                            val = rhs.subs({sympy.Symbol(p_time): 1.0, v_sym: 0.5, c_sym: 1.0}).evalf()
-                            if float(val) < 0.99:
-                                diagnostics.append(
-                                    {
-                                        "severity": "error",
-                                        "rule": self.id,
-                                        "symbol": fid,
-                                        "message": (
-                                            "Incorrect Time Dilation: relativistic time < proper time "
-                                            f"(factor {float(val):.2f}); expected factor > 1."
-                                        ),
-                                        "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
-                                    }
-                                )
-                        except Exception:
-                            pass
-
-            p_len = next((s for s in proper_length if s in fsyms), None)
-            r_len = next((s for s in rel_length if s in fsyms), None)
-            if p_len and r_len:
-                findings = sem_graph.get_relationship(r_len, p_len)
-                for finding in findings:
-                    rhs = finding.get("rhs")
-                    if rhs is None:
-                        continue
-                    if v_sym in rhs.free_symbols and c_sym in rhs.free_symbols:
-                        try:
-                            val = rhs.subs({sympy.Symbol(p_len): 1.0, v_sym: 0.5, c_sym: 1.0}).evalf()
-                            if float(val) > 1.01:
-                                diagnostics.append(
-                                    {
-                                        "severity": "error",
-                                        "rule": self.id,
-                                        "symbol": fid,
-                                        "message": (
-                                            "Incorrect Length Contraction: relativistic length > proper length "
-                                            f"(factor {float(val):.2f}); expected factor < 1."
-                                        ),
-                                        "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
-                                    }
-                                )
-                        except Exception:
-                            pass
-
-        return diagnostics
+def _estimate_power(expr: sympy.Expr, var: sympy.Symbol) -> Optional[float]:
+    """Estimate exponent p in expr ~ var^p using a ratio test, or return None."""
+    try:
+        free_syms = expr.free_symbols
+        subs_dict = {s: 1 for s in free_syms if s != var}
+        simplified = sympy.simplify(expr.subs(subs_dict))
+        x = sympy.Symbol("_x_dummy")
+        expr_x = simplified.replace(var, x)
+        k = sympy.Number(2)
+        ratio = sympy.simplify(expr_x.subs(x, k * x) / expr_x)
+        if ratio.is_number:
+            p = sympy.log(ratio, k)
+            if p.is_number and getattr(p, "is_real", False):
+                return float(p)
+    except Exception:
+        return None
+    return None
 
 
 # ------------------------- Agentic-generated symbolic checks (safe spec + executor) -------------------------
@@ -233,15 +88,12 @@ class GeneratedSymbolicCheckRegistry:
 class GeneratedSymbolicCheckExecutor:
     """Execute GeneratedSymbolicCheckSpec using built-in primitives (no arbitrary code)."""
 
-    SUPPORTED_PRIMITIVES = {"power_law", "equation_equivalence"}
+    SUPPORTED_PRIMITIVES = {"power_law", "multi_power_law", "equation_equivalence"}
 
     def run(self, ctx: RuleContext, specs: List[GeneratedSymbolicCheckSpec]) -> List[Dict[str, Any]]:
         diags: List[Dict[str, Any]] = []
 
-        sem_graph = getattr(ctx, "semantic_graph", None)
-        if sem_graph is None:
-            sem_graph = EnrichedSymbolGraph(ctx.graph)
-            ctx.semantic_graph = sem_graph
+        sem_graph = _get_semantic_graph(ctx)
 
         for spec in specs:
             if spec.primitive not in self.SUPPORTED_PRIMITIVES:
@@ -249,6 +101,8 @@ class GeneratedSymbolicCheckExecutor:
 
             if spec.primitive == "power_law":
                 diags.extend(self._run_power_law(ctx, sem_graph, spec))
+            elif spec.primitive == "multi_power_law":
+                diags.extend(self._run_multi_power_law(ctx, sem_graph, spec))
             elif spec.primitive == "equation_equivalence":
                 diags.extend(self._run_equation_equivalence(ctx, sem_graph, spec))
 
@@ -276,42 +130,38 @@ class GeneratedSymbolicCheckExecutor:
         if dependent_power == 0:
             dependent_power = 1.0
 
-        out: List[Dict[str, Any]] = []
+        best: Optional[Dict[str, Any]] = None
         any_relationship_found = False
         for dep in dependent_candidates:
             for indep in independent_candidates:
                 findings = sem_graph.get_relationship(dep, indep)
                 for finding in findings:
-                    any_relationship_found = True
                     exponent = finding.get("exponent")
                     fid = finding.get("fid")
                     if exponent is None or fid is None:
                         continue
+                    any_relationship_found = True
                     derived = float(exponent) * float(dependent_power)
-                    if abs(derived - expected_exponent) <= tolerance:
-                        continue
-                    out.append(
-                        {
-                            "severity": "warning",
-                            "rule": f"agentic_symbolic::{spec.spec_id}",
-                            "spec_id": spec.spec_id,
-                            "symbolic_result": "fail",
-                            "symbol": fid,
-                            "message": (
-                                f"Symbolic cross-check failed for '{spec.title}': expected {dep}^{dependent_power:g} ~ {indep}^{expected_exponent} "
-                                f"(±{tolerance}), found {dep} ~ {indep}^{float(exponent):.2f} (=> {dep}^{dependent_power:g} ~ {indep}^{derived:.2f})."
-                            ),
-                            "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
-                        }
-                    )
+                    diff = abs(derived - expected_exponent)
+                    candidate = {
+                        "dep": dep,
+                        "indep": indep,
+                        "fid": fid,
+                        "exponent": float(exponent),
+                        "derived": derived,
+                        "diff": diff,
+                    }
+                    if best is None or candidate["diff"] < best["diff"]:
+                        best = candidate
 
-        # If we couldn't find any equation that relates the candidates, we can't refute/confirm the original diagnostic.
-        if not any_relationship_found:
+        if not any_relationship_found or best is None:
             return [
                 {
                     "severity": "info",
                     "rule": f"agentic_symbolic::{spec.spec_id}",
                     "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
                     "symbolic_result": "inconclusive",
                     "symbol": None,
                     "message": (
@@ -321,7 +171,204 @@ class GeneratedSymbolicCheckExecutor:
                     "evidence": None,
                 }
             ]
-        return out
+
+        fid = best["fid"]
+        evidence = ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None
+        if best["diff"] <= tolerance:
+            return [
+                {
+                    "severity": "info",
+                    "rule": f"agentic_symbolic::{spec.spec_id}",
+                    "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
+                    "symbolic_result": "pass",
+                    "symbol": fid,
+                    "message": (
+                        f"Symbolic cross-check passed for '{spec.title}': matched {best['dep']} ~ {best['indep']}^{best['exponent']:.2f} "
+                        f"(=> {best['dep']}^{dependent_power:g} ~ {best['indep']}^{best['derived']:.2f})."
+                    ),
+                    "evidence": evidence,
+                    "details": {
+                        "dependent": best["dep"],
+                        "independent": best["indep"],
+                        "expected_exponent": expected_exponent,
+                        "derived_exponent": best["derived"],
+                        "tolerance": tolerance,
+                    },
+                }
+            ]
+
+        return [
+            {
+                "severity": "warning",
+                "rule": f"agentic_symbolic::{spec.spec_id}",
+                "spec_id": spec.spec_id,
+                "primitive": spec.primitive,
+                "title": spec.title,
+                "symbolic_result": "fail",
+                "symbol": fid,
+                "message": (
+                    f"Symbolic cross-check failed for '{spec.title}': expected {best['dep']}^{dependent_power:g} ~ {best['indep']}^{expected_exponent} "
+                    f"(±{tolerance}), found {best['dep']} ~ {best['indep']}^{best['exponent']:.2f} (=> {best['dep']}^{dependent_power:g} ~ {best['indep']}^{best['derived']:.2f})."
+                ),
+                "evidence": evidence,
+                "details": {
+                    "dependent": best["dep"],
+                    "independent": best["indep"],
+                    "expected_exponent": expected_exponent,
+                    "derived_exponent": best["derived"],
+                    "tolerance": tolerance,
+                },
+            }
+        ]
+
+    def _run_multi_power_law(
+        self, ctx: RuleContext, sem_graph: EnrichedSymbolGraph, spec: GeneratedSymbolicCheckSpec
+    ) -> List[Dict[str, Any]]:
+        params = spec.params or {}
+        dependent = params.get("dependent")
+        independents = params.get("independents") or []
+        expected_exponents = params.get("expected_exponents") or {}
+        dependent_power = params.get("dependent_power", 1)
+        tolerance = float(params.get("tolerance", 0.1))
+
+        if not dependent or not independents:
+            return []
+
+        try:
+            dependent_power = float(dependent_power)
+        except Exception:
+            dependent_power = 1.0
+        if dependent_power == 0:
+            dependent_power = 1.0
+
+        expected_map: Dict[str, float] = {}
+        if isinstance(expected_exponents, dict):
+            for k, v in expected_exponents.items():
+                try:
+                    expected_map[str(k)] = float(v)
+                except Exception:
+                    continue
+        elif isinstance(expected_exponents, list):
+            for idx, v in enumerate(expected_exponents):
+                if idx < len(independents):
+                    try:
+                        expected_map[str(independents[idx])] = float(v)
+                    except Exception:
+                        continue
+
+        if not expected_map:
+            return []
+
+        best: Optional[Dict[str, Any]] = None
+        any_candidate = False
+        for fid, expr in sem_graph.parsed_formulas.items():
+            syms = {s.name for s in expr.free_symbols}
+            if dependent not in syms:
+                continue
+            if not set(independents).issubset(syms):
+                continue
+
+            any_candidate = True
+            try:
+                dep_sym = sympy.Symbol(dependent)
+                solutions = sympy.solve(expr, dep_sym)
+                if not solutions:
+                    continue
+                rhs = solutions[0]
+            except Exception:
+                continue
+
+            exponents: Dict[str, float] = {}
+            complete = True
+            for indep in independents:
+                p = _estimate_power(rhs, sympy.Symbol(indep))
+                if p is None:
+                    complete = False
+                    break
+                exponents[indep] = float(p) * float(dependent_power)
+
+            if not complete:
+                continue
+
+            diffs = []
+            for indep, expected in expected_map.items():
+                found = exponents.get(indep)
+                if found is None:
+                    diffs.append(float("inf"))
+                else:
+                    diffs.append(abs(found - expected))
+            score = max(diffs) if diffs else float("inf")
+
+            candidate = {
+                "fid": fid,
+                "exponents": exponents,
+                "score": score,
+            }
+            if best is None or candidate["score"] < best["score"]:
+                best = candidate
+
+        if not any_candidate or best is None:
+            return [
+                {
+                    "severity": "info",
+                    "rule": f"agentic_symbolic::{spec.spec_id}",
+                    "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
+                    "symbolic_result": "inconclusive",
+                    "symbol": None,
+                    "message": (
+                        f"Symbolic cross-check inconclusive for '{spec.title}': no equation contains dependent={dependent} "
+                        f"and independents={independents}."
+                    ),
+                    "evidence": None,
+                }
+            ]
+
+        fid = best["fid"]
+        evidence = ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None
+        if best["score"] <= tolerance:
+            return [
+                {
+                    "severity": "info",
+                    "rule": f"agentic_symbolic::{spec.spec_id}",
+                    "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
+                    "symbolic_result": "pass",
+                    "symbol": fid,
+                    "message": f"Symbolic cross-check passed for '{spec.title}': multi-variable power law matched.",
+                    "evidence": evidence,
+                    "details": {
+                        "dependent": dependent,
+                        "expected_exponents": expected_map,
+                        "derived_exponents": best["exponents"],
+                        "tolerance": tolerance,
+                    },
+                }
+            ]
+
+        return [
+            {
+                "severity": "warning",
+                "rule": f"agentic_symbolic::{spec.spec_id}",
+                "spec_id": spec.spec_id,
+                "primitive": spec.primitive,
+                "title": spec.title,
+                "symbolic_result": "fail",
+                "symbol": fid,
+                "message": f"Symbolic cross-check failed for '{spec.title}': multi-variable power law mismatch.",
+                "evidence": evidence,
+                "details": {
+                    "dependent": dependent,
+                    "expected_exponents": expected_map,
+                    "derived_exponents": best["exponents"],
+                    "tolerance": tolerance,
+                },
+            }
+        ]
 
     def _run_equation_equivalence(
         self, ctx: RuleContext, sem_graph: EnrichedSymbolGraph, spec: GeneratedSymbolicCheckSpec
@@ -332,6 +379,7 @@ class GeneratedSymbolicCheckExecutor:
         canonical_latex_list = params.get("canonical_latex") or []
         required_symbols = params.get("required_symbols") or []
         allow_scalar_multiple = bool(params.get("allow_scalar_multiple", True))
+        allow_additive_constant = bool(params.get("allow_additive_constant", False))
 
         if not canonical_latex_list:
             return []
@@ -351,6 +399,8 @@ class GeneratedSymbolicCheckExecutor:
                     "severity": "info",
                     "rule": f"agentic_symbolic::{spec.spec_id}",
                     "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
                     "symbolic_result": "inconclusive",
                     "symbol": None,
                     "message": f"Symbolic cross-check inconclusive for '{spec.title}': canonical equations could not be parsed.",
@@ -376,6 +426,8 @@ class GeneratedSymbolicCheckExecutor:
                     "severity": "info",
                     "rule": f"agentic_symbolic::{spec.spec_id}",
                     "spec_id": spec.spec_id,
+                    "primitive": spec.primitive,
+                    "title": spec.title,
                     "symbolic_result": "inconclusive",
                     "symbol": None,
                     "message": (
@@ -391,6 +443,10 @@ class GeneratedSymbolicCheckExecutor:
                 b_s = sympy.simplify(b)
                 if sympy.simplify(a_s - b_s) == 0 or sympy.simplify(a_s + b_s) == 0:
                     return True
+                if allow_additive_constant:
+                    delta = sympy.simplify(a_s - b_s)
+                    if len(delta.free_symbols) == 0:
+                        return True
                 if not allow_scalar_multiple:
                     return False
                 if b_s == 0:
@@ -404,7 +460,19 @@ class GeneratedSymbolicCheckExecutor:
         for fid, cand in candidates:
             for canon in canon_exprs:
                 if equivalent(cand, canon):
-                    return []
+                    return [
+                        {
+                            "severity": "info",
+                            "rule": f"agentic_symbolic::{spec.spec_id}",
+                            "spec_id": spec.spec_id,
+                            "primitive": spec.primitive,
+                            "title": spec.title,
+                            "symbolic_result": "pass",
+                            "symbol": fid,
+                            "message": f"Symbolic cross-check passed for '{spec.title}': equation equivalence matched.",
+                            "evidence": ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else None,
+                        }
+                    ]
 
         # We found relevant equations but none matches the canonical ones.
         fid0, expr0 = candidates[0]
@@ -413,6 +481,8 @@ class GeneratedSymbolicCheckExecutor:
                 "severity": "warning",
                 "rule": f"agentic_symbolic::{spec.spec_id}",
                 "spec_id": spec.spec_id,
+                "primitive": spec.primitive,
+                "title": spec.title,
                 "symbolic_result": "fail",
                 "symbol": fid0,
                 "message": f"Symbolic cross-check failed for '{spec.title}': no extracted equation is equivalent to the canonical form.",

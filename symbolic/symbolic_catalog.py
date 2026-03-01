@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import re
+
 
 @dataclass
 class SymbolicCheckSpec:
@@ -83,18 +85,68 @@ class SymbolicCatalog:
             checks.append(payload)
         self.save(data)
 
-    def find_applicable(self, domain: str, topic: str, diagnostic: Dict[str, Any]) -> List[SymbolicCheckSpec]:
-        """Find matching checks in (domain, topic) first, then fall back to other topics/domains."""
+    def find_applicable(
+        self,
+        domain: str,
+        topic: str,
+        diagnostic: Dict[str, Any],
+        *,
+        allow_fallback: bool = False,
+        require_symbols_gate: bool = True,
+    ) -> List[SymbolicCheckSpec]:
+        """Find matching checks in (domain, topic).
+
+        By default this is conservative:
+        - It does NOT fall back across topics/domains unless allow_fallback=True.
+        - It can (optionally) gate candidates by required_symbols in spec.params, to avoid obvious cross-topic misuse.
+        """
         data = self.load()
         rule_id = (diagnostic or {}).get("rule")
-        msg = str((diagnostic or {}).get("message") or "").lower()
+
+        # Build a small text window to match against.
+        # We intentionally keep this local to the diagnostic (not the whole sample) to reduce accidental matches.
+        evidence = (diagnostic or {}).get("evidence")
+        quote = ""
+        if isinstance(evidence, dict):
+            quote = str(evidence.get("quote") or "")
+        msg_raw = str((diagnostic or {}).get("message") or "")
+        sym_raw = str((diagnostic or {}).get("symbol") or "")
+        haystack = "\n".join([msg_raw, quote, sym_raw]).strip()
+        haystack_lower = haystack.lower()
+
+        def _has_required_symbols(c: Dict[str, Any]) -> bool:
+            if not require_symbols_gate:
+                return True
+            params = c.get("params") if isinstance(c.get("params"), dict) else {}
+            req = params.get("required_symbols") or []
+            if not req:
+                return True
+
+            for rs in req:
+                rs = str(rs)
+                if not rs:
+                    continue
+
+                # Single-letter symbols (v, c, r, T, ...) should match as tokens to avoid accidental hits (e.g. 'for').
+                if len(rs) == 1 and rs.isalpha():
+                    pat = re.compile(rf"(^|[^A-Za-z0-9_]){re.escape(rs)}([^A-Za-z0-9_]|$)", re.I)
+                    if not pat.search(haystack):
+                        return False
+                    continue
+
+                # For multi-char or LaTeX-like symbols, use substring (case-insensitive) check.
+                if rs.lower() not in haystack_lower:
+                    return False
+            return True
 
         def score_check(c: Dict[str, Any]) -> int:
+            if not _has_required_symbols(c):
+                return 0
             score = 0
             if rule_id and rule_id in (c.get("match_rule_ids") or []):
                 score += 10
             for kw in (c.get("match_keywords") or []):
-                if kw and str(kw).lower() in msg:
+                if kw and str(kw).lower() in haystack_lower:
                     score += 2
             return score
 
@@ -135,4 +187,6 @@ class SymbolicCatalog:
         specs = select(preferred)
         if specs:
             return specs
-        return select(others)
+        if allow_fallback:
+            return select(others)
+        return []
