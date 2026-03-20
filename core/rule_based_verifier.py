@@ -317,10 +317,22 @@ class RuleBasedVerifier:
         lines = (text or "").splitlines()
         symbols, symbol_set = [], set()
         formulas = []
+        relation_re = re.compile(
+            r"([A-Za-z0-9_\\{}()^+\-*/'., ]{0,100}"
+            r"(?:=|<=|>=|<|>|≈|~|∝|≤|≥|\\leq|\\geq|\\le|\\ge)"
+            r"[A-Za-z0-9_\\{}()^+\-*/'., ]{1,120})"
+        )
         for line in lines:
             line = line.strip()
-            if re.search(r'(=|≈|~|∝)', line):
-                formulas.append(line)
+            if re.search(r'(=|≈|~|∝|<=|>=|<|>|≤|≥|\\leq|\\geq|\\le|\\ge)', line):
+                extracted_any = False
+                for m in relation_re.finditer(line):
+                    candidate = m.group(1).strip(" .,;:")
+                    if candidate:
+                        formulas.append(candidate)
+                        extracted_any = True
+                if not extracted_any:
+                    formulas.append(line)
             for m in self._symbol_regex.finditer(line):
                 sym = m.group(1)
                 if self._looks_like_symbol(sym) and sym not in symbol_set:

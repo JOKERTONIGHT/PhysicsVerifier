@@ -83,12 +83,45 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
         "inconclusive": len([c for c in symbolic_checks if c.get("result") == "inconclusive"]),
     }
 
+    experience_checks = []
+    for ed in sample_result.get("experience_post_diagnostics", []) or []:
+        if not isinstance(ed, dict):
+            continue
+        experience_checks.append(
+            {
+                "rule": ed.get("rule"),
+                "message": ed.get("message"),
+                "evidence": ed.get("evidence"),
+                "symbolic_cross_checks": ed.get("experience_symbolic_cross_checks") or [],
+                "symbolic_reconciliation": ed.get("experience_symbolic_reconciliation"),
+            }
+        )
+
+    experience_symbolic_checks = []
+    for sd in sample_result.get("experience_symbolic_post_diagnostics", []) or []:
+        if not isinstance(sd, dict):
+            continue
+        experience_symbolic_checks.append(
+            {
+                "spec_id": sd.get("spec_id"),
+                "primitive": sd.get("primitive"),
+                "title": sd.get("title"),
+                "result": sd.get("symbolic_result"),
+                "rule": sd.get("rule"),
+                "symbol": sd.get("symbol"),
+                "message": sd.get("message"),
+                "evidence": sd.get("evidence"),
+            }
+        )
+
     return {
         "id": sample_result.get("id"),
         "topic": sample_result.get("topic"),
         "checked_diagnostics": checked,
         "symbolic_summary": summary,
         "symbolic_checks": symbolic_checks,
+        "experience_checks": experience_checks,
+        "experience_symbolic_checks": experience_symbolic_checks,
         "suppressed_diagnostics": (agentic.get("suppressed_diagnostics") or []),
     }
 
@@ -107,6 +140,13 @@ def main() -> None:
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
     parser.add_argument("--no-agentic", action="store_true")
     parser.add_argument("--agentic-max", type=int, default=2)
+    parser.add_argument("--experience", action="store_true", help="Enable experience-rule + symbolic hint pipeline.")
+    parser.add_argument(
+        "--experience-rules",
+        type=str,
+        default="results/semantic_experience_distilled_300.json",
+        help="Path to distilled experience rules JSON.",
+    )
 
     args = parser.parse_args()
 
@@ -118,6 +158,8 @@ def main() -> None:
         llm_model=args.model,
         enable_agentic_postcheck=not args.no_agentic,
         agentic_max_checks_per_sample=args.agentic_max,
+        enable_experience_pipeline=args.experience,
+        experience_rules_path=args.experience_rules,
     )
 
     raw_results = verifier.run_batch(samples)

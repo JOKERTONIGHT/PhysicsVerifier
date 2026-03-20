@@ -1,4 +1,6 @@
 import json
+import datetime
+import re
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from rules.symbolic_checks import (
     catalog_spec_to_generated,
 )
 from symbolic.symbolic_catalog import SymbolicCatalog, SymbolicCheckSpec
+from symbolic.experience_bank import SymbolicExperienceBank
+from symbolic.spec_synthesis import RuleSymbolicSpecSynthesizer
 
 class TopDownVerifier:
     def __init__(
@@ -20,6 +24,8 @@ class TopDownVerifier:
         results_dir: str = "results",
         enable_agentic_postcheck: bool = True,
         agentic_max_checks_per_sample: int = 2,
+        enable_experience_pipeline: bool = True,
+        experience_rules_path: str = "results/semantic_experience_distilled_300.json",
     ):
         self.rules_catalog_path = rules_catalog_path
         self.llm_model = llm_model
@@ -43,12 +49,145 @@ class TopDownVerifier:
         
         self.enable_agentic_postcheck = bool(enable_agentic_postcheck)
         self.agentic_max_checks_per_sample = int(agentic_max_checks_per_sample)
+        self.enable_experience_pipeline = bool(enable_experience_pipeline)
+        self.experience_rules_path = str(experience_rules_path)
         # Backward compatible registry (results/*) is kept for audit logs, but the source of truth is catalogs/symbolic_catalog.json
         self.symbolic_registry = GeneratedSymbolicCheckRegistry(path=str(self.results_dir / "agentic_symbolic_checks.json"))
         self.symbolic_catalog = SymbolicCatalog(path="catalogs/symbolic_catalog.json")
         self.symbolic_executor = GeneratedSymbolicCheckExecutor()
+        self.symbolic_experience_bank = SymbolicExperienceBank(path=str(self.results_dir / "rule_experience_bank.json"))
+        self.spec_synthesizer = RuleSymbolicSpecSynthesizer()
+        self.experience_rules_index = self._load_experience_rules(self.experience_rules_path)
 
         self.error_experiences = []
+
+    def _normalize_topic_key(self, domain: str, topic: str) -> str:
+        d = str(domain or "Unknown").strip().lower()
+        t_raw = str(topic or "Unknown").strip()
+        # Distilled experience topic may look like "Domain / Topic"; keep the last segment for robust matching.
+        t = t_raw.split("/")[-1].strip().lower() if "/" in t_raw else t_raw.lower()
+        return f"{d}::{t}"
+
+    def _load_experience_rules(self, path: str) -> Dict[str, List[Dict[str, Any]]]:
+        idx: Dict[str, List[Dict[str, Any]]] = {}
+        p = Path(path)
+        if not p.exists():
+            return idx
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return idx
+        rules = data.get("rules") if isinstance(data, dict) else []
+        if not isinstance(rules, list):
+            return idx
+
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            key = self._normalize_topic_key(rule.get("domain"), rule.get("topic"))
+            idx.setdefault(key, []).append(rule)
+        return idx
+
+    def _get_experience_rules_for_topic(self, topic: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not topic:
+            return []
+        key = self._normalize_topic_key(topic.get("domain"), topic.get("name"))
+        return list(self.experience_rules_index.get(key, []))
+
+    def _extract_keywords(self, text: str, max_kw: int = 8) -> List[str]:
+        tokens = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]+", str(text or ""))
+        out: List[str] = []
+        for tok in tokens:
+            tok = tok.strip()
+            if len(tok) < 2:
+                continue
+            if tok.lower() in {"check", "logic", "rule", "error", "with", "from", "this"}:
+                continue
+            if tok not in out:
+                out.append(tok)
+            if len(out) >= max_kw:
+                break
+        return out
+
+    def _experience_rule_triggered(self, rule: Dict[str, Any], text_all: str) -> Dict[str, Any]:
+        hay = str(text_all or "").lower()
+        trigger_text = " ".join([
+            str(rule.get("title") or ""),
+            str(rule.get("trigger") or ""),
+            str(rule.get("check_logic") or ""),
+        ])
+        keywords = self._extract_keywords(trigger_text, max_kw=10)
+        hits = [kw for kw in keywords if kw.lower() in hay]
+        # Conservative trigger: at least two keyword hits, or one long keyword.
+        if len(hits) >= 2:
+            return {"triggered": True, "hits": hits}
+        if len(hits) == 1 and len(hits[0]) >= 6:
+            return {"triggered": True, "hits": hits}
+        return {"triggered": False, "hits": hits}
+
+    def _build_experience_symbolic_spec(self, rule: Dict[str, Any]) -> Optional[GeneratedSymbolicCheckSpec]:
+        hint = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+        primitive = str(hint.get("primitive") or "none").strip()
+        if primitive in {"", "none"}:
+            return None
+
+        canonical = str(hint.get("canonical") or "").strip()
+        required_symbols = [str(s) for s in (hint.get("required_symbols") or []) if str(s).strip()]
+
+        params: Dict[str, Any] = {}
+        if primitive in {"equation_equivalence", "inequality_consistency"}:
+            if not canonical or len(required_symbols) < 2:
+                return None
+            params = {
+                "canonical_latex": [canonical],
+                "required_symbols": required_symbols,
+                "allow_scalar_multiple": False,
+                "allow_additive_constant": False,
+            }
+        elif primitive == "formula_pattern":
+            if len(required_symbols) < 2:
+                return None
+            relation = "=" if "=" in canonical else None
+            params = {
+                "patterns": [{"all_tokens": required_symbols, "relation": relation}],
+                "required_symbols": required_symbols,
+            }
+        else:
+            # Unsupported primitive in experience_hint for this pipeline version.
+            return None
+
+        rule_id = str(rule.get("rule_id") or "exp_unknown")
+        return GeneratedSymbolicCheckSpec(
+            spec_id=f"exp_sym_{rule_id}",
+            title=f"Experience symbolic check: {rule.get('title')}",
+            description=str(rule.get("check_logic") or ""),
+            primitive=primitive,
+            params=params,
+            source_rule_id=rule_id,
+            source_message_substring=str(rule.get("title") or ""),
+        )
+
+    def _build_rule_context(self, sample: Dict[str, Any]) -> RuleContext:
+        text_all = "\n".join([
+            sample.get("question", ""),
+            sample.get("context", ""),
+            sample.get("prediction", ""),
+            sample.get("answer", ""),
+        ])
+        parsed = self.rule_verifier._extract_symbols_and_formulas(text_all)
+        graph = self.rule_verifier._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
+        return RuleContext(
+            sample_id=str(sample.get("id")),
+            dataset_key=None,
+            text_all=text_all,
+            lines=parsed["lines"],
+            symbols=parsed["symbols"],
+            formulas_raw=parsed["formulas"],
+            graph=graph,
+            snippets={},
+            sym_stats={},
+            precondition_cues=[],
+        )
 
     def _load_catalog(self) -> Dict:
         with open(self.rules_catalog_path, 'r', encoding='utf-8') as f:
@@ -116,10 +255,16 @@ JSON Output:
         symbolic_post_diagnostics: List[Dict[str, Any]] = []
         generated_specs: List[Dict[str, Any]] = []
         suppressed_diagnostics: List[Dict[str, Any]] = []
+        experience_candidates: Dict[int, List[SymbolicCheckSpec]] = {}
+        topic_synthesized_specs: Dict[str, List[SymbolicCheckSpec]] = {}
+        experience_post_diagnostics: List[Dict[str, Any]] = []
+        experience_symbolic_post_diagnostics: List[Dict[str, Any]] = []
+        experience_actions: List[Dict[str, Any]] = []
         
         if topic:
             print(f"Classified into: {topic['domain']} - {topic['name']}")
             rules = topic.get("rules", [])
+            topic_synthesized_specs = self.spec_synthesizer.synthesize_topic(topic.get("domain", "Unknown"), topic)
             
             if rules:
                 # 2. Prepare Rule Verifier
@@ -147,32 +292,15 @@ JSON Output:
         else:
             print("Could not classify topic or no topic found.")
 
+        ctx: Optional[RuleContext] = None
+        if (self.enable_agentic_postcheck and diagnostics) or (self.enable_experience_pipeline and topic):
+            ctx = self._build_rule_context(sample)
+
         # 4. Agentic post-check: for each diagnostic, decide whether to build a symbolic cross-check spec.
-        if self.enable_agentic_postcheck and diagnostics and self.rule_verifier._llm_available():
-            text_all = "\n".join([
-                sample.get("question", ""),
-                sample.get("context", ""),
-                sample.get("prediction", ""),
-            ])
-            parsed = self.rule_verifier._extract_symbols_and_formulas(text_all)
-            graph = self.rule_verifier._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
-            ctx = RuleContext(
-                sample_id=str(sample.get("id")),
-                dataset_key=None,
-                text_all=text_all,
-                lines=parsed["lines"],
-                symbols=parsed["symbols"],
-                formulas_raw=parsed["formulas"],
-                graph=graph,
-                snippets={},
-                sym_stats={},
-                precondition_cues=[],
-            )
+        if self.enable_agentic_postcheck and diagnostics and ctx is not None:
 
             checks_used = 0
             for d in diagnostics:
-                if checks_used >= self.agentic_max_checks_per_sample:
-                    break
                 if not isinstance(d, dict):
                     continue
                 rid = d.get("rule")
@@ -183,19 +311,41 @@ JSON Output:
                 domain_name = topic.get("domain") if topic else "Unknown"
                 topic_name = topic.get("name") if topic else "Unknown"
                 existing = self.symbolic_catalog.find_applicable(domain=domain_name, topic=topic_name, diagnostic=d)
-                if existing:
-                    # Convert to executor specs and run immediately.
-                    specs = [catalog_spec_to_generated(s) for s in existing]
-                    spec_ids = [s.spec_id for s in specs]
+                promoted = self.symbolic_experience_bank.get_promoted_specs(domain=domain_name, topic=topic_name, rule_id=rid)
+                synthesized = list(topic_synthesized_specs.get(rid, []))
+
+                resolved_specs = self._merge_specs(
+                    [catalog_spec_to_generated(s) for s in existing],
+                    [catalog_spec_to_generated(s) for s in promoted],
+                    [catalog_spec_to_generated(s) for s in synthesized],
+                )
+
+                if synthesized:
+                    experience_candidates[id(d)] = synthesized
+
+                if resolved_specs:
+                    spec_ids = [s.spec_id for s in resolved_specs]
                     d.setdefault("symbolic_cross_checks", []).extend(spec_ids)
-                    symbolic_post_diagnostics.extend(self.symbolic_executor.run(ctx, specs))
-                    agentic_actions.append({
-                        "need": False,
-                        "reason": "used_existing_symbolic_check",
-                        "spec": [s.__dict__ for s in existing],
-                        "diagnostic_rule": rid,
-                    })
-                    checks_used += 1
+                    run_result = self.symbolic_executor.run(ctx, resolved_specs)
+                    symbolic_post_diagnostics.extend(run_result)
+                    agentic_actions.append(
+                        {
+                            "need": False,
+                            "reason": "used_resolved_symbolic_checks",
+                            "diagnostic_rule": rid,
+                            "spec_ids": spec_ids,
+                            "sources": {
+                                "catalog": [s.spec_id for s in existing],
+                                "experience_bank": [s.spec_id for s in promoted],
+                                "derived_from_rule": [s.spec_id for s in synthesized],
+                            },
+                        }
+                    )
+
+                    if any(r.get("symbolic_result") in {"pass", "fail"} for r in run_result if isinstance(r, dict)):
+                        continue
+
+                if checks_used >= self.agentic_max_checks_per_sample or not self.rule_verifier._llm_available():
                     continue
 
                 srd = None
@@ -229,13 +379,12 @@ JSON Output:
                 except Exception:
                     continue
 
-                # Persist into domain/topic structured catalog
-                dom = topic.get("domain") if topic else "Unknown"
-                tname = topic.get("name") if topic else "Unknown"
-                self.symbolic_catalog.upsert_check(
-                    domain=str(dom),
-                    topic=str(tname),
-                    spec=SymbolicCheckSpec(
+                self.symbolic_registry.upsert(spec)
+                generated_specs.append(spec.__dict__)
+                d.setdefault("symbolic_cross_checks", []).append(spec.spec_id)
+                checks_used += 1
+                experience_candidates.setdefault(id(d), []).append(
+                    SymbolicCheckSpec(
                         spec_id=spec.spec_id,
                         title=spec.title,
                         description=spec.description,
@@ -243,18 +392,15 @@ JSON Output:
                         params=spec.params,
                         match_rule_ids=[rid],
                         match_keywords=[str(d.get("message") or "")[:60]],
-                    ),
+                    )
                 )
-
-                self.symbolic_registry.upsert(spec)
-                generated_specs.append(spec.__dict__)
-                d.setdefault("symbolic_cross_checks", []).append(spec.spec_id)
-                checks_used += 1
 
             # Execute newly generated specs (avoid re-running the entire registry every time)
             if generated_specs:
                 specs_to_run = [GeneratedSymbolicCheckSpec(**s) for s in generated_specs]
                 symbolic_post_diagnostics.extend(self.symbolic_executor.run(ctx, specs_to_run))
+
+            symbolic_post_diagnostics = self._dedupe_symbolic_post_diagnostics(symbolic_post_diagnostics)
 
             # 5. Reconcile: if symbolic check refutes an original diagnostic, suppress/modify it.
             spec_failed: set[str] = set()
@@ -279,6 +425,13 @@ JSON Output:
                 spec_ids = d.get("symbolic_cross_checks")
                 if not spec_ids:
                     reconciled.append(d)
+                    self._record_symbolic_experience(
+                        sample=sample,
+                        topic=topic,
+                        diagnostic=d,
+                        outcome="no_symbolic_match",
+                        proposed_specs=experience_candidates.get(id(d), []),
+                    )
                     continue
                 spec_ids = [str(s) for s in spec_ids]
                 any_fail = any(s in spec_failed for s in spec_ids)
@@ -291,9 +444,23 @@ JSON Output:
                 if any_fail:
                     d["symbolic_reconciliation"] = {"status": "supported", "spec_ids": spec_ids}
                     reconciled.append(d)
+                    self._record_symbolic_experience(
+                        sample=sample,
+                        topic=topic,
+                        diagnostic=d,
+                        outcome="supported",
+                        proposed_specs=experience_candidates.get(id(d), []),
+                    )
                 elif any_inconclusive:
                     d["symbolic_reconciliation"] = {"status": "inconclusive", "spec_ids": spec_ids}
                     reconciled.append(d)
+                    self._record_symbolic_experience(
+                        sample=sample,
+                        topic=topic,
+                        diagnostic=d,
+                        outcome="inconclusive",
+                        proposed_specs=experience_candidates.get(id(d), []),
+                    )
                 else:
                     suppressed_diagnostics.append(
                         {
@@ -302,8 +469,79 @@ JSON Output:
                             "original_diagnostic": d,
                         }
                     )
+                    self._record_symbolic_experience(
+                        sample=sample,
+                        topic=topic,
+                        diagnostic=d,
+                        outcome="suppressed",
+                        proposed_specs=experience_candidates.get(id(d), []),
+                    )
 
             diagnostics = reconciled
+
+        # 6. Experience-rule pipeline: add bottom-up experience diagnostics and corresponding symbolic checks.
+        if self.enable_experience_pipeline and topic and ctx is not None:
+            exp_rules = self._get_experience_rules_for_topic(topic)
+            if exp_rules:
+                text_all = "\n".join([
+                    sample.get("question", ""),
+                    sample.get("context", ""),
+                    sample.get("prediction", ""),
+                    sample.get("answer", ""),
+                ])
+                # Keep per-sample overhead bounded.
+                for rule in exp_rules[:40]:
+                    trig = self._experience_rule_triggered(rule, text_all)
+                    if not trig.get("triggered"):
+                        continue
+
+                    rule_id = str(rule.get("rule_id") or "exp_unknown")
+                    diag = {
+                        "severity": "warning",
+                        "rule": f"experience::{rule_id}",
+                        "symbol": None,
+                        "message": f"Experience rule matched: {rule.get('title')}",
+                        "evidence": ",".join(trig.get("hits") or [])[:200],
+                        "experience_rule": {
+                            "title": rule.get("title"),
+                            "trigger": rule.get("trigger"),
+                            "check_logic": rule.get("check_logic"),
+                            "error_type": rule.get("error_type"),
+                        },
+                    }
+
+                    spec = self._build_experience_symbolic_spec(rule)
+                    if spec is not None:
+                        diag["experience_symbolic_cross_checks"] = [spec.spec_id]
+                        run_result = self.symbolic_executor.run(ctx, [spec])
+                        experience_symbolic_post_diagnostics.extend(run_result)
+
+                        result_flag = None
+                        for rr in run_result:
+                            if isinstance(rr, dict) and rr.get("spec_id") == spec.spec_id:
+                                result_flag = rr.get("symbolic_result")
+                                break
+
+                        if result_flag == "fail":
+                            # Experience symbolic check disagrees with the triggered experience rule -> suppress.
+                            experience_actions.append(
+                                {
+                                    "rule_id": rule_id,
+                                    "action": "suppressed_by_symbolic",
+                                    "spec_id": spec.spec_id,
+                                }
+                            )
+                            continue
+                        if result_flag in {"pass", "inconclusive"}:
+                            diag["experience_symbolic_reconciliation"] = {
+                                "status": "supported" if result_flag == "pass" else "inconclusive",
+                                "spec_ids": [spec.spec_id],
+                            }
+
+                    experience_post_diagnostics.append(diag)
+
+                # Merge experience diagnostics into final diagnostics.
+                diagnostics.extend(experience_post_diagnostics)
             
         return {
             "id": sample.get("id"),
@@ -311,14 +549,75 @@ JSON Output:
             "verifier": verifier_used,
             "diagnostics": diagnostics,
             "symbolic_post_diagnostics": symbolic_post_diagnostics,
+            "experience_post_diagnostics": experience_post_diagnostics,
+            "experience_symbolic_post_diagnostics": experience_symbolic_post_diagnostics,
             "agentic": {
                 "enabled": self.enable_agentic_postcheck,
                 "actions": agentic_actions,
                 "generated_specs": generated_specs,
                 "suppressed_diagnostics": suppressed_diagnostics,
             },
+            "experience_pipeline": {
+                "enabled": self.enable_experience_pipeline,
+                "actions": experience_actions,
+                "rules_path": self.experience_rules_path,
+            },
             "score": -1.0 * len(diagnostics) # Simple scoring
         }
+
+    def _merge_specs(self, *groups: List[GeneratedSymbolicCheckSpec]) -> List[GeneratedSymbolicCheckSpec]:
+        merged: List[GeneratedSymbolicCheckSpec] = []
+        seen = set()
+        for group in groups:
+            for spec in group or []:
+                spec_id = getattr(spec, "spec_id", None)
+                if not spec_id or spec_id in seen:
+                    continue
+                merged.append(spec)
+                seen.add(spec_id)
+        return merged
+
+    def _dedupe_symbolic_post_diagnostics(self, diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        unique: List[Dict[str, Any]] = []
+        seen = set()
+        for item in diagnostics or []:
+            if not isinstance(item, dict):
+                continue
+            key = (
+                item.get("spec_id"),
+                item.get("symbolic_result"),
+                item.get("symbol"),
+                item.get("message"),
+                item.get("evidence"),
+            )
+            if key in seen:
+                continue
+            unique.append(item)
+            seen.add(key)
+        return unique
+
+    def _record_symbolic_experience(
+        self,
+        *,
+        sample: Dict[str, Any],
+        topic: Optional[Dict[str, Any]],
+        diagnostic: Dict[str, Any],
+        outcome: str,
+        proposed_specs: List[SymbolicCheckSpec],
+    ) -> None:
+        if not topic or not isinstance(diagnostic, dict):
+            return
+        spec_ids = [str(s) for s in (diagnostic.get("symbolic_cross_checks") or []) if s]
+        self.symbolic_experience_bank.record_event(
+            domain=str(topic.get("domain") or "Unknown"),
+            topic=str(topic.get("name") or "Unknown"),
+            rule_id=str(diagnostic.get("rule") or "<unknown>"),
+            diagnostic=diagnostic,
+            outcome=outcome,
+            had_symbolic_match=bool(spec_ids),
+            spec_ids=spec_ids,
+            proposed_specs=proposed_specs,
+        )
 
     def _agentic_decide_symbolic_check(self, srd: str, diagnostic: Dict[str, Any]) -> Dict[str, Any]:
         """Ask LLM whether a symbolic cross-check should be constructed, and return a safe spec if needed."""
@@ -360,6 +659,20 @@ JSON Output:
                     "allow_additive_constant": "bool (default false). Accepts equivalence up to an additive constant.",
                 },
             },
+            "inequality_consistency": {
+                "description": "Check whether an extracted inequality is equivalent to a canonical safety or validity constraint.",
+                "params_schema": {
+                    "canonical_latex": "list[str] (canonical inequalities in LaTeX or plain text)",
+                    "required_symbols": "list[str] (candidate inequalities must contain all)",
+                },
+            },
+            "formula_pattern": {
+                "description": "Conservative text-pattern matcher for formulas that are hard to parse symbolically, such as vector/integral forms.",
+                "params_schema": {
+                    "patterns": "list[object] with all_tokens and optional relation",
+                    "required_symbols": "list[str]",
+                },
+            },
         }
 
         user_prompt = (
@@ -373,7 +686,7 @@ JSON Output:
             "     \"spec_id\": string (unique, short),\n"
             "     \"title\": string,\n"
             "     \"description\": string,\n"
-            "     \"primitive\": one of ['power_law', 'equation_equivalence'],\n"
+            "     \"primitive\": one of ['power_law', 'multi_power_law', 'equation_equivalence', 'inequality_consistency', 'formula_pattern'],\n"
             "     \"params\": object\n"
             "  } | null\n"
             "}\n"

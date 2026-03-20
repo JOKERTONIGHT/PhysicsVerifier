@@ -142,12 +142,17 @@ class SymbolicCatalog:
         def score_check(c: Dict[str, Any]) -> int:
             if not _has_required_symbols(c):
                 return 0
+            match_rule_ids = [str(x) for x in (c.get("match_rule_ids") or []) if x]
+            if rule_id and match_rule_ids and str(rule_id) not in match_rule_ids:
+                return 0
             score = 0
-            if rule_id and rule_id in (c.get("match_rule_ids") or []):
+            if rule_id and str(rule_id) in match_rule_ids:
                 score += 10
             for kw in (c.get("match_keywords") or []):
                 if kw and str(kw).lower() in haystack_lower:
                     score += 2
+            if not match_rule_ids and score < 4:
+                return 0
             return score
 
         def iter_checks(preferred_only: bool) -> List[Dict[str, Any]]:
