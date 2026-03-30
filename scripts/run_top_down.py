@@ -147,6 +147,13 @@ def main() -> None:
         default="results/semantic_experience_distilled_300.json",
         help="Path to distilled experience rules JSON.",
     )
+    parser.add_argument(
+        "--unified-catalog",
+        type=str,
+        default=None,
+        help="Path to the unified rules catalog JSON. When set and the file exists, "
+             "this takes priority over --catalog and --experience-rules.",
+    )
 
     args = parser.parse_args()
 
@@ -160,6 +167,7 @@ def main() -> None:
         agentic_max_checks_per_sample=args.agentic_max,
         enable_experience_pipeline=args.experience,
         experience_rules_path=args.experience_rules,
+        unified_rules_path=args.unified_catalog,
     )
 
     raw_results = verifier.run_batch(samples)

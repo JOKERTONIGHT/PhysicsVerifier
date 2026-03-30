@@ -26,13 +26,21 @@ class TopDownVerifier:
         agentic_max_checks_per_sample: int = 2,
         enable_experience_pipeline: bool = True,
         experience_rules_path: str = "results/semantic_experience_distilled_300.json",
+        unified_rules_path: Optional[str] = None,
     ):
-        self.rules_catalog_path = rules_catalog_path
         self.llm_model = llm_model
         self.log_dir = Path(log_dir)
         self.results_dir = Path(results_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Unified catalog takes priority when available
+        self._unified_mode = False
+        if unified_rules_path and Path(unified_rules_path).exists():
+            self.rules_catalog_path = unified_rules_path
+            self._unified_mode = True
+        else:
+            self.rules_catalog_path = rules_catalog_path
 
         self.catalog = self._load_catalog()
         self.topics = self._flatten_topics()
@@ -49,7 +57,9 @@ class TopDownVerifier:
         
         self.enable_agentic_postcheck = bool(enable_agentic_postcheck)
         self.agentic_max_checks_per_sample = int(agentic_max_checks_per_sample)
-        self.enable_experience_pipeline = bool(enable_experience_pipeline)
+        # In unified mode, experience rules are already part of the catalog;
+        # the separate experience pipeline is only needed when NOT using unified catalog.
+        self.enable_experience_pipeline = bool(enable_experience_pipeline) and not self._unified_mode
         self.experience_rules_path = str(experience_rules_path)
         # Backward compatible registry (results/*) is kept for audit logs, but the source of truth is catalogs/symbolic_catalog.json
         self.symbolic_registry = GeneratedSymbolicCheckRegistry(path=str(self.results_dir / "agentic_symbolic_checks.json"))
@@ -57,7 +67,7 @@ class TopDownVerifier:
         self.symbolic_executor = GeneratedSymbolicCheckExecutor()
         self.symbolic_experience_bank = SymbolicExperienceBank(path=str(self.results_dir / "rule_experience_bank.json"))
         self.spec_synthesizer = RuleSymbolicSpecSynthesizer()
-        self.experience_rules_index = self._load_experience_rules(self.experience_rules_path)
+        self.experience_rules_index = self._load_experience_rules(self.experience_rules_path) if self.enable_experience_pipeline else {}
 
         self.error_experiences = []
 
@@ -203,6 +213,29 @@ class TopDownVerifier:
                 topics.append(t)
         return topics
 
+    # ---- Unified-mode SRD helpers ----
+
+    @staticmethod
+    def _build_srd_for_rule(r: Dict[str, Any]) -> str:
+        """Construct an SRD prompt string from a rule dict, adapting to its source type."""
+        source = r.get("source", "knowledge")
+        if source == "experience_tagged":
+            # Tagged experience rules have very detailed descriptions that serve as full SRDs
+            return r.get("description", "")
+        elif source == "experience":
+            # Distilled experience: use trigger + check_logic
+            parts = []
+            if r.get("title"):
+                parts.append(f"Title: {r['title']}")
+            if r.get("trigger"):
+                parts.append(f"Trigger: {r['trigger']}")
+            if r.get("check_logic"):
+                parts.append(f"Check Logic: {r['check_logic']}")
+            return "\n".join(parts)
+        else:
+            # Knowledge rules: classic Title + Description + Check Logic
+            return f"Title: {r.get('title')}\nDescription: {r.get('description')}\nCheck Logic: {r.get('check_logic')}"
+
     def classify_topic(self, question: str) -> Optional[Dict]:
         # Use LLM to classify the question into one of the topics
         topic_list_str = "\n".join([f"- {t['domain']}: {t['name']}" for t in self.topics])
@@ -269,7 +302,7 @@ JSON Output:
             if rules:
                 # 2. Prepare Rule Verifier
                 # Convert catalog rules to the format expected by RuleBasedVerifier
-                # We use 'check_logic' as the SRD/description for the LLM
+                # We use source-aware SRD construction
                 current_translations = {}
                 rule_ids = []
                 for r in rules:
@@ -277,7 +310,7 @@ JSON Output:
                     if not rid: continue
                     rule_ids.append(rid)
                     current_translations[rid] = {
-                        "srd": f"Title: {r.get('title')}\nDescription: {r.get('description')}\nCheck Logic: {r.get('check_logic')}"
+                        "srd": self._build_srd_for_rule(r)
                     }
                 
                 self.rule_verifier.rules_to_check = rule_ids
@@ -288,7 +321,7 @@ JSON Output:
                 result = self.rule_verifier.analyze(sample)
                 diagnostics = result.get("diagnostics", [])
                 used_rules = rule_ids
-                verifier_used = "top_down_rule_based"
+                verifier_used = "top_down_rule_based" if not self._unified_mode else "unified_rule_based"
         else:
             print("Could not classify topic or no topic found.")
 
@@ -297,6 +330,14 @@ JSON Output:
             ctx = self._build_rule_context(sample)
 
         # 4. Agentic post-check: for each diagnostic, decide whether to build a symbolic cross-check spec.
+        # Build a lookup from rule id -> rule dict for symbolic_hint access (unified mode)
+        _rule_by_id: Dict[str, Dict[str, Any]] = {}
+        if topic:
+            for _r in (topic.get("rules") or []):
+                _rid = _r.get("id")
+                if _rid:
+                    _rule_by_id[_rid] = _r
+
         if self.enable_agentic_postcheck and diagnostics and ctx is not None:
 
             checks_used = 0
@@ -314,10 +355,25 @@ JSON Output:
                 promoted = self.symbolic_experience_bank.get_promoted_specs(domain=domain_name, topic=topic_name, rule_id=rid)
                 synthesized = list(topic_synthesized_specs.get(rid, []))
 
+                # In unified mode, experience rules may carry symbolic_hint –
+                # convert it into a GeneratedSymbolicCheckSpec and include it.
+                inline_hint_specs: List[GeneratedSymbolicCheckSpec] = []
+                rule_obj = _rule_by_id.get(rid)
+                if rule_obj and rule_obj.get("symbolic_hint"):
+                    hint_spec = self._build_experience_symbolic_spec_from_hint(
+                        rule_id=rid,
+                        title=rule_obj.get("title", ""),
+                        check_logic=rule_obj.get("check_logic", ""),
+                        symbolic_hint=rule_obj["symbolic_hint"],
+                    )
+                    if hint_spec is not None:
+                        inline_hint_specs.append(hint_spec)
+
                 resolved_specs = self._merge_specs(
                     [catalog_spec_to_generated(s) for s in existing],
                     [catalog_spec_to_generated(s) for s in promoted],
                     [catalog_spec_to_generated(s) for s in synthesized],
+                    inline_hint_specs,
                 )
 
                 if synthesized:
@@ -338,6 +394,7 @@ JSON Output:
                                 "catalog": [s.spec_id for s in existing],
                                 "experience_bank": [s.spec_id for s in promoted],
                                 "derived_from_rule": [s.spec_id for s in synthesized],
+                                "inline_hint": [s.spec_id for s in inline_hint_specs],
                             },
                         }
                     )
@@ -547,6 +604,7 @@ JSON Output:
             "id": sample.get("id"),
             "topic": topic.get("name") if topic else None,
             "verifier": verifier_used,
+            "unified_mode": self._unified_mode,
             "diagnostics": diagnostics,
             "symbolic_post_diagnostics": symbolic_post_diagnostics,
             "experience_post_diagnostics": experience_post_diagnostics,
@@ -576,6 +634,62 @@ JSON Output:
                 merged.append(spec)
                 seen.add(spec_id)
         return merged
+
+    @staticmethod
+    def _build_experience_symbolic_spec_from_hint(
+        *,
+        rule_id: str,
+        title: str,
+        check_logic: str,
+        symbolic_hint: Dict[str, Any],
+    ) -> Optional[GeneratedSymbolicCheckSpec]:
+        """Convert an inline symbolic_hint from a unified rule into a GeneratedSymbolicCheckSpec."""
+        primitive = str(symbolic_hint.get("primitive") or "none").strip()
+        if primitive in {"", "none"}:
+            return None
+
+        canonical = str(symbolic_hint.get("canonical") or "").strip()
+        required_symbols = [str(s) for s in (symbolic_hint.get("required_symbols") or []) if str(s).strip()]
+
+        params: Dict[str, Any] = {}
+        if primitive in {"equation_equivalence", "inequality_consistency"}:
+            if not canonical or len(required_symbols) < 2:
+                return None
+            params = {
+                "canonical_latex": [canonical],
+                "required_symbols": required_symbols,
+                "allow_scalar_multiple": False,
+                "allow_additive_constant": False,
+            }
+        elif primitive == "formula_pattern":
+            if len(required_symbols) < 2:
+                return None
+            relation = "=" if "=" in canonical else None
+            params = {
+                "patterns": [{"all_tokens": required_symbols, "relation": relation}],
+                "required_symbols": required_symbols,
+            }
+        elif primitive == "power_law":
+            if len(required_symbols) < 2:
+                return None
+            params = {
+                "dependent_candidates": required_symbols[:1],
+                "independent_candidates": required_symbols[1:],
+                "expected_exponent": 1,
+                "tolerance": 0.1,
+            }
+        else:
+            return None
+
+        return GeneratedSymbolicCheckSpec(
+            spec_id=f"unified_hint_{rule_id}",
+            title=f"Symbolic hint: {title}",
+            description=check_logic,
+            primitive=primitive,
+            params=params,
+            source_rule_id=rule_id,
+            source_message_substring=title[:200] if title else "",
+        )
 
     def _dedupe_symbolic_post_diagnostics(self, diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         unique: List[Dict[str, Any]] = []
