@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import re
+from symbolic.match_utils import symbol_match_report
 
 
 @dataclass
@@ -28,18 +28,50 @@ class SymbolicCatalog:
 
     def __init__(self, path: str = "catalogs/symbolic_catalog.json"):
         self.path = Path(path)
+        self._cache_data: Optional[Dict[str, Any]] = None
+        self._cache_mtime: Optional[float] = None
+        self._topic_index: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
 
     def load(self) -> Dict[str, Any]:
         if not self.path.exists():
-            return {"domains": []}
+            self._cache_data = {"domains": []}
+            self._cache_mtime = None
+            self._topic_index = {}
+            return self._cache_data
+
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
+            mtime = self.path.stat().st_mtime
+            if self._cache_data is not None and self._cache_mtime == mtime:
+                return self._cache_data
+
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {"domains": []}
         except Exception:
-            return {"domains": []}
+            data = {"domains": []}
+            mtime = None
+
+        self._cache_data = data
+        self._cache_mtime = mtime
+        self._rebuild_topic_index(data)
+        return data
 
     def save(self, data: Dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._cache_data = data
+        self._cache_mtime = self.path.stat().st_mtime
+        self._rebuild_topic_index(data)
+
+    def _rebuild_topic_index(self, data: Dict[str, Any]) -> None:
+        index: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for domain in data.get("domains", []) or []:
+            domain_name = str(domain.get("name") or "")
+            for topic in domain.get("topics", []) or []:
+                topic_name = str(topic.get("name") or "")
+                checks = list(topic.get("checks", []) or [])
+                index[(domain_name, topic_name)] = checks
+        self._topic_index = index
 
     def _get_or_create_domain(self, data: Dict[str, Any], domain_name: str) -> Dict[str, Any]:
         domains = data.setdefault("domains", [])
@@ -121,23 +153,9 @@ class SymbolicCatalog:
             req = params.get("required_symbols") or []
             if not req:
                 return True
-
-            for rs in req:
-                rs = str(rs)
-                if not rs:
-                    continue
-
-                # Single-letter symbols (v, c, r, T, ...) should match as tokens to avoid accidental hits (e.g. 'for').
-                if len(rs) == 1 and rs.isalpha():
-                    pat = re.compile(rf"(^|[^A-Za-z0-9_]){re.escape(rs)}([^A-Za-z0-9_]|$)", re.I)
-                    if not pat.search(haystack):
-                        return False
-                    continue
-
-                # For multi-char or LaTeX-like symbols, use substring (case-insensitive) check.
-                if rs.lower() not in haystack_lower:
-                    return False
-            return True
+            min_ratio = float(params.get("required_symbol_min_ratio", 0.5))
+            report = symbol_match_report(haystack, [str(x) for x in req], min_ratio=min_ratio)
+            return bool(report.get("ok"))
 
         def score_check(c: Dict[str, Any]) -> int:
             if not _has_required_symbols(c):
@@ -156,12 +174,12 @@ class SymbolicCatalog:
             return score
 
         def iter_checks(preferred_only: bool) -> List[Dict[str, Any]]:
+            if preferred_only:
+                return list(self._topic_index.get((domain, topic), []))
+
             out: List[Dict[str, Any]] = []
-            for d in data.get("domains", []) or []:
-                for t in d.get("topics", []) or []:
-                    if preferred_only and (d.get("name") != domain or t.get("name") != topic):
-                        continue
-                    out.extend(t.get("checks", []) or [])
+            for checks in self._topic_index.values():
+                out.extend(checks)
             return out
 
         preferred = iter_checks(preferred_only=True)

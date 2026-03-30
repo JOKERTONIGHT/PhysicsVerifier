@@ -12,6 +12,7 @@ from sympy.core.relational import Equality, GreaterThan, LessThan, Relational, S
 from rules.base import RuleContext
 from symbolic.symbolic_system import EnrichedSymbolGraph, FormulaParser
 from symbolic.symbolic_catalog import SymbolicCheckSpec
+from symbolic.match_utils import symbol_match_report
 
 
 _TEXT_STOPWORDS = {
@@ -98,13 +99,19 @@ def _relation_signature(expr: Relational) -> Optional[tuple[bool, sympy.Expr]]:
     return None
 
 
-def _text_contains_required_symbols(text: Any, required_symbols: List[str]) -> bool:
-    haystack = _normalize_formula_text(text)
-    for symbol in required_symbols:
-        needle = _normalize_formula_text(symbol)
-        if needle and needle not in haystack:
-            return False
-    return True
+def _required_symbol_soft_match(
+    text: Any,
+    required_symbols: List[str],
+    *,
+    min_ratio: float = 0.5,
+) -> bool:
+    report = symbol_match_report(text, [str(s) for s in (required_symbols or [])], min_ratio=min_ratio)
+    return bool(report.get("ok"))
+
+
+def _text_contains_required_symbols(text: Any, required_symbols: List[str], *, min_ratio: float = 1.0) -> bool:
+    report = symbol_match_report(text, [str(s) for s in (required_symbols or [])], min_ratio=min_ratio)
+    return bool(report.get("ok"))
 
 
 def _match_formula_patterns_in_graph(
@@ -115,11 +122,12 @@ def _match_formula_patterns_in_graph(
     required_symbols: List[str],
 ) -> List[Dict[str, Any]]:
     candidate_ids: List[str] = []
+    required_min_ratio = float((spec.params or {}).get("required_symbol_min_ratio", 0.5))
     for fid, node in ctx.graph.formulas.items():
         raw = getattr(node, "raw", None)
         if raw is None:
             continue
-        if required_symbols and not _text_contains_required_symbols(raw, required_symbols):
+        if required_symbols and not _required_symbol_soft_match(raw, required_symbols, min_ratio=required_min_ratio):
             continue
         candidate_ids.append(fid)
         tokens = _extract_formula_tokens(raw)
@@ -170,7 +178,10 @@ def _match_formula_patterns_in_graph(
             "title": spec.title,
             "symbolic_result": "inconclusive",
             "symbol": None,
-            "message": f"Symbolic cross-check inconclusive for '{spec.title}': no parsed formula contains the required symbols {required_symbols}.",
+            "message": (
+                f"Symbolic cross-check inconclusive for '{spec.title}': "
+                f"no parsed formula reaches required symbol overlap ratio >= {required_min_ratio:.2f}."
+            ),
             "evidence": None,
         }
     ]
@@ -526,21 +537,35 @@ class GeneratedSymbolicCheckExecutor:
         params = spec.params or {}
         canonical_latex_list = params.get("canonical_latex") or []
         required_symbols = params.get("required_symbols") or []
+        required_symbol_min_ratio = float(params.get("required_symbol_min_ratio", 0.5))
         allow_scalar_multiple = bool(params.get("allow_scalar_multiple", True))
         allow_additive_constant = bool(params.get("allow_additive_constant", False))
 
         if not canonical_latex_list:
             return []
 
+        def _to_residual(expr: sympy.Expr) -> Optional[sympy.Expr]:
+            try:
+                if isinstance(expr, sympy.Eq):
+                    lhs = expr.lhs
+                    rhs = expr.rhs
+                    if isinstance(lhs, Relational) or isinstance(rhs, Relational):
+                        return None
+                    return sympy.simplify(lhs - rhs)
+                if isinstance(expr, Relational):
+                    return None
+                return sympy.simplify(expr)
+            except Exception:
+                return None
+
         canon_exprs: List[sympy.Expr] = []
         for latex in canonical_latex_list:
             parsed = FormulaParser.parse(str(latex))
             if parsed is None:
                 continue
-            if isinstance(parsed, sympy.Eq):
-                canon_exprs.append(sympy.simplify(parsed.lhs - parsed.rhs))
-            else:
-                canon_exprs.append(sympy.simplify(parsed))
+            residual = _to_residual(parsed)
+            if residual is not None:
+                canon_exprs.append(residual)
         if not canon_exprs:
             fallback_patterns = []
             for latex in canonical_latex_list:
@@ -565,17 +590,16 @@ class GeneratedSymbolicCheckExecutor:
                 required_symbols=[str(s) for s in required_symbols if s],
             )
 
-        # Candidate equations must contain all required symbols if provided.
+        # Candidate equations are filtered by required-symbol overlap (soft gate) if provided.
         candidates: List[tuple[str, sympy.Expr]] = []
-        req = {str(s) for s in required_symbols if s}
+        req = [str(s) for s in required_symbols if s]
         for fid, expr in sem_graph.parsed_formulas.items():
-            syms = {s.name for s in expr.free_symbols}
-            if req and not req.issubset(syms):
+            raw = ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else ""
+            if req and not _text_contains_required_symbols(raw, req, min_ratio=required_symbol_min_ratio):
                 continue
-            if isinstance(expr, sympy.Eq):
-                candidates.append((fid, sympy.simplify(expr.lhs - expr.rhs)))
-            else:
-                candidates.append((fid, sympy.simplify(expr)))
+            residual = _to_residual(expr)
+            if residual is not None:
+                candidates.append((fid, residual))
 
         if not candidates:
             return [
@@ -588,7 +612,8 @@ class GeneratedSymbolicCheckExecutor:
                     "symbolic_result": "inconclusive",
                     "symbol": None,
                     "message": (
-                        f"Symbolic cross-check inconclusive for '{spec.title}': no parsed equation contains required symbols {sorted(req)}."
+                        f"Symbolic cross-check inconclusive for '{spec.title}': "
+                        f"no parsed equation reaches required symbol overlap ratio >= {required_symbol_min_ratio:.2f}."
                     ),
                     "evidence": None,
                 }
@@ -653,6 +678,7 @@ class GeneratedSymbolicCheckExecutor:
         params = spec.params or {}
         canonical_latex_list = params.get("canonical_latex") or []
         required_symbols = [str(s) for s in (params.get("required_symbols") or []) if s]
+        required_symbol_min_ratio = float(params.get("required_symbol_min_ratio", 0.5))
 
         canonical_relations: List[Relational] = []
         for latex in canonical_latex_list:
@@ -680,7 +706,7 @@ class GeneratedSymbolicCheckExecutor:
             if not isinstance(expr, Relational):
                 continue
             raw = ctx.graph.formulas[fid].raw if fid in ctx.graph.formulas else ""
-            if required_symbols and not _text_contains_required_symbols(raw, required_symbols):
+            if required_symbols and not _text_contains_required_symbols(raw, required_symbols, min_ratio=required_symbol_min_ratio):
                 continue
             candidates.append((fid, expr))
 
@@ -691,7 +717,7 @@ class GeneratedSymbolicCheckExecutor:
                 if raw is None:
                     continue
                 norm_raw = _normalize_relation_text(raw)
-                if required_symbols and not _text_contains_required_symbols(raw, required_symbols):
+                if required_symbols and not _text_contains_required_symbols(raw, required_symbols, min_ratio=required_symbol_min_ratio):
                     continue
                 if not any(rel in norm_raw for rel in ["<=", ">=", "<", ">"]):
                     continue
@@ -720,7 +746,10 @@ class GeneratedSymbolicCheckExecutor:
                     "title": spec.title,
                     "symbolic_result": "inconclusive",
                     "symbol": None,
-                    "message": f"Symbolic cross-check inconclusive for '{spec.title}': no inequality with required symbols {required_symbols} was found.",
+                    "message": (
+                        f"Symbolic cross-check inconclusive for '{spec.title}': "
+                        f"no inequality reaches required symbol overlap ratio >= {required_symbol_min_ratio:.2f}."
+                    ),
                     "evidence": None,
                 }
             ]
