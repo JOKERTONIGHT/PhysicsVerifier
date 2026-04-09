@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from rules.symbolic_checks import GeneratedSymbolicCheckExecutor, GeneratedSymbolicCheckSpec
+from symbolic.experience_code_engine import ExperienceCodeEngine
 from symbolic.match_utils import symbol_match_report
-from symbolic.symbolic_catalog import SymbolicCatalog
-
-from tests.test_symbolic_pipeline import build_context
 
 
 class SymbolicRulesRegressionTests(unittest.TestCase):
@@ -18,71 +16,115 @@ class SymbolicRulesRegressionTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["missing"], [])
 
-    def test_equation_equivalence_soft_required_symbol_gate(self) -> None:
-        ctx = build_context("Given relation: I_avg = I_peak/pi.")
-        executor = GeneratedSymbolicCheckExecutor()
-        spec = GeneratedSymbolicCheckSpec(
-            spec_id="avg_current_soft_gate",
-            title="Average current relation",
-            description="",
-            primitive="equation_equivalence",
-            params={
-                "canonical_latex": ["I_{avg}=I_{peak}/\\pi"],
-                "required_symbols": ["I_avg", "I_peak", "I_rms"],
-                "required_symbol_min_ratio": 0.66,
-                "allow_scalar_multiple": False,
-            },
-        )
-
-        result = executor.run(ctx, [spec])
-        self.assertEqual(len(result), 1)
-        self.assertIn(result[0]["symbolic_result"], {"pass", "fail"})
-
-    def test_catalog_find_applicable_uses_topic_index(self) -> None:
+    def test_experience_code_engine_load_and_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            catalog_path = Path(tmpdir) / "symbolic_catalog.json"
+            tmp = Path(tmpdir)
+            module_name = "tmp_checks_mod_a"
+            mod_path = tmp / f"{module_name}.py"
+            mod_path.write_text(
+                """
+def check_rule(sample):
+    pred = str(sample.get('prediction') or '')
+    if 'bad' in pred:
+        return {'result': 'fail', 'message': 'found bad', 'evidence': pred[:50]}
+    return {'result': 'pass', 'message': 'ok', 'evidence': pred[:50]}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            manifest_path = tmp / "manifest.json"
             payload = {
-                "domains": [
+                "checks": [
                     {
-                        "name": "Electromagnetism",
-                        "topics": [
-                            {
-                                "name": "Circuit",
-                                "checks": [
-                                    {
-                                        "spec_id": "circuit_rule",
-                                        "title": "Circuit average current",
-                                        "description": "",
-                                        "primitive": "equation_equivalence",
-                                        "params": {
-                                            "canonical_latex": ["I_{avg}=I_{peak}/\\pi"],
-                                            "required_symbols": ["I_avg", "I_peak", "I_rms"],
-                                            "required_symbol_min_ratio": 0.66,
-                                        },
-                                        "match_rule_ids": ["avg_current_rule"],
-                                        "match_keywords": ["average current"],
-                                    }
-                                ],
-                            }
-                        ],
+                        "rule_id": "exp_test_001",
+                        "domain": "Mechanics",
+                        "topic": "Kinematics",
+                        "function_name": "check_rule",
                     }
                 ]
             }
-            catalog_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            catalog = SymbolicCatalog(path=str(catalog_path))
+            manifest_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-            matches = catalog.find_applicable(
-                domain="Electromagnetism",
-                topic="Circuit",
-                diagnostic={
-                    "rule": "avg_current_rule",
-                    "message": "average current relation I_avg = I_peak/pi is missing",
-                    "evidence": {"quote": "I_avg = I_peak / pi"},
-                },
+            sys.path.insert(0, str(tmp))
+            try:
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+                engine = ExperienceCodeEngine(
+                    manifest_path=str(manifest_path),
+                    module_name=module_name,
+                )
+                self.assertTrue(engine.available)
+                self.assertTrue(engine.has_rule("exp_test_001"))
+
+                fail_out = engine.run_rule("exp_test_001", {"prediction": "this is bad"})
+                self.assertIsNotNone(fail_out)
+                self.assertEqual(fail_out["result"], "fail")
+
+                pass_out = engine.run_rule("exp_test_001", {"prediction": "looks good"})
+                self.assertIsNotNone(pass_out)
+                self.assertEqual(pass_out["result"], "pass")
+            finally:
+                if sys.path and sys.path[0] == str(tmp):
+                    sys.path.pop(0)
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+
+    def test_experience_code_engine_topic_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            module_name = "tmp_checks_mod_b"
+            mod_path = tmp / f"{module_name}.py"
+            mod_path.write_text(
+                """
+def fn_a(sample):
+    return {'result': 'pass', 'message': 'ok', 'evidence': ''}
+
+def fn_b(sample):
+    return {'result': 'inconclusive', 'message': 'n/a', 'evidence': ''}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = tmp / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "checks": [
+                            {
+                                "rule_id": "exp_a",
+                                "domain": "Mechanics",
+                                "topic": "Kinematics",
+                                "function_name": "fn_a",
+                            },
+                            {
+                                "rule_id": "exp_b",
+                                "domain": "Mechanics",
+                                "topic": "Kinematics",
+                                "function_name": "fn_b",
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
             )
 
-            self.assertEqual(len(matches), 1)
-            self.assertEqual(matches[0].spec_id, "circuit_rule")
+            sys.path.insert(0, str(tmp))
+            try:
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+                engine = ExperienceCodeEngine(
+                    manifest_path=str(manifest_path),
+                    module_name=module_name,
+                )
+                ids = sorted(engine.list_topic_rule_ids("Mechanics", "Kinematics"))
+                self.assertEqual(ids, ["exp_a", "exp_b"])
+            finally:
+                if sys.path and sys.path[0] == str(tmp):
+                    sys.path.pop(0)
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
 
 
 if __name__ == "__main__":

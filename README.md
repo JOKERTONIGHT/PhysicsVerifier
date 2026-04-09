@@ -1,10 +1,85 @@
 # PhysicsVerifier
 
+## 重要更新（2026-03-31）
+
+当前主流程已切换为**经验代码唯一路径**：
+
+- 已在运行链路中彻底移除 `primitive+spec` 符号检查分支；
+- 不再进行 agentic symbolic spec 生成与 fallback；
+- 仅保留 `rule_id -> experience code` 的确定性符号校验（由 `symbolic/experience_code_engine.py` 执行）；
+- 对缺失代码绑定的规则采用严格抑制，避免旧路径回退。
+
+> 说明：下方历史章节中关于 `symbolic/spec_synthesis.py`、`symbolic_catalog`、`primitive` 的描述为迁移过程记录，非当前默认执行路径。后续会进一步清理冗余条目。
+
 PhysicsVerifier 是一个面向物理解题诊断的混合框架，核心目标是把：
 - 自顶向下规则检查（Top-Down SRD）
 - 自底向上符号核查（Bottom-Up Symbolic）
 
 做成可迭代、可审计、可经验沉淀的统一流程。
+
+## 分阶段测试流程（2026-03-31 新增）
+
+为支持“从头重建规则库 + 规则规模曲线评测”，已补齐以下工具链（默认先做 100 条小测评）：
+
+- `scripts/prepare_error_expansion_samples.py`
+  - 从 `data/combined_language_only.json` 抽取 1000 条错题扩充源（evaluation 格式）。
+  - 已修复大对象边界下的流式解析卡顿风险，新增 `--chunk-size` 与 `--progress-every` 便于性能调优和进度观察。
+- `scripts/prepare_rubric_eval_subset.py`
+  - 从 `data/physics_rubric_data_1000.json` 采样 100 条小测评集，并生成严格口径 meta。
+- `scripts/prepare_scale_checkpoints.py`
+  - 按每 200 条扩充样本生成检查点（200/400/600/800/1000）。
+- `scripts/generate_scale_runbook.py`
+  - 自动输出完整命令清单：`docs/SCALE_EXPERIMENT_RUNBOOK.md` 和 `scripts/run_scale_checkpoints.sh`。
+- `scripts/compute_strict_eval_metrics.py`
+  - 基于 rubric 严格口径计算 precision/recall/F1 和 inconclusive 比例等指标。
+- `scripts/aggregate_scale_curve.py`
+  - 聚合各检查点指标为曲线数据（CSV/JSON）。
+- `scripts/plot_scale_curve.py`
+  - 将 `curve_metrics.csv` 渲染为可视化曲线图（PNG）。
+
+准备命令（仅生成数据与runbook，不执行测评）：
+
+```bash
+./.venv/bin/python scripts/prepare_error_expansion_samples.py \
+  --input data/combined_language_only.json \
+  --output data/evaluation_sample_1000_expansion.json \
+  --target-size 1000 \
+  --seed 20260331 \
+  --chunk-size 8388608 \
+  --progress-every 200000
+
+./.venv/bin/python scripts/prepare_rubric_eval_subset.py \
+  --input data/physics_rubric_data_1000.json \
+  --output-eval data/evaluation_rubric_100.json \
+  --output-meta data/rubric_eval_100_meta.json \
+  --size 100 \
+  --seed 20260331
+
+./.venv/bin/python scripts/prepare_scale_checkpoints.py \
+  --input data/evaluation_sample_1000_expansion.json \
+  --output-dir data/checkpoints \
+  --step 200 \
+  --max-size 1000 \
+  --manifest results/scale_curve/checkpoint_manifest.json
+
+./.venv/bin/python scripts/generate_scale_runbook.py \
+  --manifest results/scale_curve/checkpoint_manifest.json \
+  --output-md docs/SCALE_EXPERIMENT_RUNBOOK.md \
+  --output-sh scripts/run_scale_checkpoints.sh \
+  --model qwen3-30b-a3b
+
+# 5) （在各检查点评测完成后）聚合并绘图
+./.venv/bin/python scripts/aggregate_scale_curve.py \
+  --metrics-glob 'results/scale_curve/ckpt_*/strict_metrics.json' \
+  --output-csv results/scale_curve/curve_metrics.csv \
+  --output-json results/scale_curve/curve_metrics.json
+
+./.venv/bin/python scripts/plot_scale_curve.py \
+  --input-csv results/scale_curve/curve_metrics.csv \
+  --output results/scale_curve/scale_curve.png
+```
+
+> 说明：主流程保持经验代码唯一路径，runbook 中每个检查点均按该路径执行，不包含 primitive/spec fallback。
 
 ## 当前状态（已完成优化）
 
@@ -61,16 +136,15 @@ PhysicsVerifier 是一个面向物理解题诊断的混合框架，核心目标�
 │   └── rule_based_verifier.py
 ├── rules/
 │   ├── llm_rules.py
-│   └── symbolic_checks.py
+│   └── base.py
 ├── symbolic/
 │   ├── symbolic_system.py
-│   ├── symbolic_catalog.py
+│   ├── experience_code_engine.py
+│   ├── generated_experience_checks.py
 │   ├── match_utils.py
-│   ├── spec_synthesis.py
-│   └── experience_bank.py
+│   └── __init__.py
 ├── scripts/
 │   ├── run_top_down.py
-│   ├── analyze_symbolic_catalog.py
 │   └── analyze_symbolic_audit.py
 ├── tests/
 │   ├── test_symbolic_pipeline.py

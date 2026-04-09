@@ -114,6 +114,20 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
+    experience_code_checks = []
+    for cd in sample_result.get("experience_code_post_diagnostics", []) or []:
+        if not isinstance(cd, dict):
+            continue
+        experience_code_checks.append(
+            {
+                "rule": cd.get("rule"),
+                "rule_id": cd.get("rule_id"),
+                "result": cd.get("result"),
+                "message": cd.get("message"),
+                "evidence": cd.get("evidence"),
+            }
+        )
+
     return {
         "id": sample_result.get("id"),
         "topic": sample_result.get("topic"),
@@ -122,6 +136,7 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
         "symbolic_checks": symbolic_checks,
         "experience_checks": experience_checks,
         "experience_symbolic_checks": experience_symbolic_checks,
+        "experience_code_checks": experience_code_checks,
         "suppressed_diagnostics": (agentic.get("suppressed_diagnostics") or []),
     }
 
@@ -154,6 +169,18 @@ def main() -> None:
         help="Path to the unified rules catalog JSON. When set and the file exists, "
              "this takes priority over --catalog and --experience-rules.",
     )
+    parser.add_argument(
+        "--experience-code-manifest",
+        type=str,
+        default="results/experience_symbolic_program_manifest_300.json",
+        help="Manifest for generated experience code checks.",
+    )
+    parser.add_argument(
+        "--experience-code-module",
+        type=str,
+        default="symbolic.generated_experience_checks",
+        help="Python module path for generated experience code checks.",
+    )
 
     args = parser.parse_args()
 
@@ -168,6 +195,8 @@ def main() -> None:
         enable_experience_pipeline=args.experience,
         experience_rules_path=args.experience_rules,
         unified_rules_path=args.unified_catalog,
+        experience_code_manifest_path=args.experience_code_manifest,
+        experience_code_module=args.experience_code_module,
     )
 
     raw_results = verifier.run_batch(samples)
@@ -180,7 +209,12 @@ def main() -> None:
     symbolic_audit = [
         a
         for a in symbolic_audit_all
-        if (a.get("checked_diagnostics") or a.get("symbolic_checks") or a.get("suppressed_diagnostics"))
+        if (
+            a.get("checked_diagnostics")
+            or a.get("symbolic_checks")
+            or a.get("experience_code_checks")
+            or a.get("suppressed_diagnostics")
+        )
     ]
 
     out_path = Path(args.output)
