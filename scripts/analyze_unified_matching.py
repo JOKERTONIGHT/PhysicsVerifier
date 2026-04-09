@@ -17,6 +17,7 @@ from core.unified_retrieval import (
     norm_text,
     rule_topic_context,
     rule_sort_key,
+    select_topic_matches_with_rule_fallback,
     select_rules_with_topic_priority,
     score_rule_candidate,
     score_topic_candidate,
@@ -68,7 +69,7 @@ def retrieve_topics(
         for candidate in topic_candidates
     ]
     scored.sort(key=topic_sort_key)
-    selected = scored[:top_k]
+    selected = select_topic_matches_with_rule_fallback(scored, top_k=top_k)
     trace = [
         {
             "domain": item["domain"],
@@ -159,6 +160,10 @@ def analyze_matching(
     low_margin_samples = 0
     low_margin_cross_topic_samples = 0
     strong_top1_cross_topic_samples = 0
+    strong_topic_samples = 0
+    strong_topic_clean_samples = 0
+    clean_rule_match_samples = 0
+    no_rule_samples = 0
     manual_override_rule_samples = 0
     generic_signal_rule_samples = 0
 
@@ -166,8 +171,8 @@ def analyze_matching(
         topic_matches, topic_trace = retrieve_topics(topic_candidates, signal_df, sample, top_k=top_topics)
         rule_matches, rule_trace = retrieve_rules(topic_matches, sample, top_n=top_rules)
         positive_rule_trace_count = sum(1 for item in rule_trace if float(item.get("score") or 0.0) > 0)
-        topic_top1_score = float(topic_matches[0]["score"]) if topic_matches else 0.0
-        topic_top2_score = float(topic_matches[1]["score"]) if len(topic_matches) > 1 else 0.0
+        topic_top1_score = float(topic_trace[0]["score"]) if topic_trace else 0.0
+        topic_top2_score = float(topic_trace[1]["score"]) if len(topic_trace) > 1 else 0.0
         topic_margin = round(topic_top1_score - topic_top2_score, 4)
         rule_topics = {
             (str(item.get("domain") or ""), str(item.get("topic") or ""))
@@ -184,6 +189,8 @@ def analyze_matching(
         )
         strong_top1_cross_topic = bool(topic_margin >= 3.0 and rules_outside_top1_topic)
         low_margin_topic = bool(topic_margin <= 0.5)
+        strong_topic = bool(topic_margin >= 3.0)
+        clean_rule_match = not rules_outside_top1_topic
 
         record = {
             "id": sample.get("id"),
@@ -211,6 +218,8 @@ def analyze_matching(
             "rules_outside_top1_topic": rules_outside_top1_topic,
             "strong_top1_cross_topic": strong_top1_cross_topic,
             "low_margin_topic": low_margin_topic,
+            "strong_topic": strong_topic,
+            "clean_rule_match": clean_rule_match,
             "question_snippet": _snippet(sample.get("question")),
             "prediction_snippet": _snippet(sample.get("prediction")),
         }
@@ -222,14 +231,22 @@ def analyze_matching(
             saturated_rule_samples += 1
         if rules_outside_top1_topic:
             outside_top1_topic_samples += 1
+        if clean_rule_match:
+            clean_rule_match_samples += 1
         if meta_rule_count > 0:
             meta_rule_samples += 1
         if low_margin_topic:
             low_margin_samples += 1
         if low_margin_topic and rules_outside_top1_topic:
             low_margin_cross_topic_samples += 1
+        if strong_topic:
+            strong_topic_samples += 1
+        if strong_topic and clean_rule_match:
+            strong_topic_clean_samples += 1
         if strong_top1_cross_topic:
             strong_top1_cross_topic_samples += 1
+        if not rule_matches:
+            no_rule_samples += 1
         if manual_override_rule_count > 0:
             manual_override_rule_samples += 1
         if generic_signal_rule_count > 0:
@@ -253,6 +270,8 @@ def analyze_matching(
                     "rules_outside_top1_topic": rules_outside_top1_topic,
                     "strong_top1_cross_topic": strong_top1_cross_topic,
                     "low_margin_topic": low_margin_topic,
+                    "strong_topic": strong_topic,
+                    "clean_rule_match": clean_rule_match,
                     "topic_match": "",
                     "rule_match": "",
                     "retrieval_notes": "",
@@ -277,12 +296,20 @@ def analyze_matching(
         "rule_topk_saturation_ratio": round(saturated_rule_samples / len(samples), 4) if samples else 0.0,
         "rules_outside_top1_topic_count": outside_top1_topic_samples,
         "rules_outside_top1_topic_ratio": round(outside_top1_topic_samples / len(samples), 4) if samples else 0.0,
+        "clean_rule_match_count": clean_rule_match_samples,
+        "clean_rule_match_ratio": round(clean_rule_match_samples / len(samples), 4) if samples else 0.0,
+        "no_rule_count": no_rule_samples,
+        "no_rule_ratio": round(no_rule_samples / len(samples), 4) if samples else 0.0,
         "samples_with_meta_rules_count": meta_rule_samples,
         "samples_with_meta_rules_ratio": round(meta_rule_samples / len(samples), 4) if samples else 0.0,
         "low_margin_topic_count": low_margin_samples,
         "low_margin_topic_ratio": round(low_margin_samples / len(samples), 4) if samples else 0.0,
         "low_margin_cross_topic_count": low_margin_cross_topic_samples,
         "low_margin_cross_topic_ratio": round(low_margin_cross_topic_samples / len(samples), 4) if samples else 0.0,
+        "strong_topic_count": strong_topic_samples,
+        "strong_topic_ratio": round(strong_topic_samples / len(samples), 4) if samples else 0.0,
+        "strong_topic_clean_count": strong_topic_clean_samples,
+        "strong_topic_clean_ratio": round(strong_topic_clean_samples / len(samples), 4) if samples else 0.0,
         "strong_top1_cross_topic_count": strong_top1_cross_topic_samples,
         "strong_top1_cross_topic_ratio": round(strong_top1_cross_topic_samples / len(samples), 4) if samples else 0.0,
         "samples_with_manual_override_rules_count": manual_override_rule_samples,
@@ -341,9 +368,13 @@ def main() -> None:
         f"- average top1-top2 topic margin: {analysis['summary']['average_topic_score_margin']}",
         f"- rule top-k saturation ratio: {analysis['summary']['rule_topk_saturation_ratio']}",
         f"- rules outside top1 topic ratio: {analysis['summary']['rules_outside_top1_topic_ratio']}",
+        f"- clean rule match ratio: {analysis['summary']['clean_rule_match_ratio']}",
+        f"- no rule ratio: {analysis['summary']['no_rule_ratio']}",
         f"- samples with meta rules ratio: {analysis['summary']['samples_with_meta_rules_ratio']}",
         f"- low-margin topic ratio: {analysis['summary']['low_margin_topic_ratio']}",
         f"- low-margin cross-topic ratio: {analysis['summary']['low_margin_cross_topic_ratio']}",
+        f"- strong-topic ratio: {analysis['summary']['strong_topic_ratio']}",
+        f"- strong-topic clean ratio: {analysis['summary']['strong_topic_clean_ratio']}",
         f"- strong-top1 cross-topic ratio: {analysis['summary']['strong_top1_cross_topic_ratio']}",
         f"- samples with manual override rules ratio: {analysis['summary']['samples_with_manual_override_rules_ratio']}",
         f"- samples with generic-signal rules ratio: {analysis['summary']['samples_with_generic_signal_rules_ratio']}",

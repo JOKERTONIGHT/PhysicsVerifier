@@ -91,7 +91,7 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
 
 
 class UnifiedRulesV2UnitTests(unittest.TestCase):
-    def test_manual_override_relabels_generic_trig_rule(self) -> None:
+    def test_generic_math_rule_is_reclassified_for_retrieval(self) -> None:
         knowledge = {
             "domains": [
                 {
@@ -126,9 +126,9 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         catalog = build_unified_catalog_from_data(knowledge, distilled, tagged)
         rule = catalog["domains"][0]["topics"][0]["rules"][0]
         self.assertEqual(rule["scope"], "meta")
-        self.assertEqual(rule["manual_override_reason"], "generic_trig_substitution_rule")
         self.assertNotIn("sin", rule["match_features"]["trigger_keywords"])
         self.assertNotIn("cos", rule["match_features"]["trigger_keywords"])
+        self.assertIn("trig substitution", rule["match_features"]["trigger_keywords"])
 
     def test_rule_scene_phrases_improve_topic_anchors(self) -> None:
         knowledge = {
@@ -189,7 +189,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         analysis = analyze_matching(catalog, sample, top_topics=2, top_rules=6, annotation_limit=1)
         self.assertEqual(analysis["per_sample"][0]["retrieved_topics"][0]["topic"], "Gravitation and Kepler's Laws")
 
-    def test_manual_topic_anchor_override_boosts_special_relativity(self) -> None:
+    def test_rule_derived_topic_hints_boost_special_relativity(self) -> None:
         knowledge = {
             "domains": [
                 {
@@ -219,7 +219,9 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         catalog = build_unified_catalog_from_data(knowledge, distilled, [])
         topic = catalog["domains"][0]["topics"][0]
         self.assertIn("pinhole camera", topic["retrieval_hints"]["scene_keywords"])
-        self.assertIn("rod", topic["retrieval_hints"]["topic_keywords"])
+        self.assertTrue(
+            any(item in {"pinhole", "camera"} for item in topic["retrieval_hints"]["topic_keywords"])
+        )
 
         sample = [
             {
@@ -235,7 +237,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             "Special Relativity (Time Dilation, Length Contraction)",
         )
 
-    def test_induction_anchor_override_beats_generic_resistance_topic(self) -> None:
+    def test_rule_derived_induction_hints_beat_generic_resistance_topic(self) -> None:
         knowledge = {
             "domains": [
                 {
@@ -277,7 +279,10 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         }
         catalog = build_unified_catalog_from_data(knowledge, distilled, [])
         topics = {topic["name"]: topic for domain in catalog["domains"] for topic in domain["topics"]}
-        self.assertIn("eddy current", topics["Electromagnetic Induction and Faraday's Law"]["retrieval_hints"]["scene_keywords"])
+        self.assertIn(
+            "eddy current",
+            [item.casefold() for item in topics["Electromagnetic Induction and Faraday's Law"]["retrieval_hints"]["scene_keywords"]],
+        )
         self.assertNotIn("Resistance", topics["Current, Resistance, and Ohm's Law"]["retrieval_hints"]["scene_keywords"])
 
         sample = [
@@ -292,6 +297,124 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         self.assertEqual(
             analysis["per_sample"][0]["retrieved_topics"][0]["topic"],
             "Electromagnetic Induction and Faraday's Law",
+        )
+
+    def test_topic_scoring_penalizes_weak_keyword_only_candidates(self) -> None:
+        catalog = {
+            "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2"},
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [
+                        {
+                            "name": "String Waves",
+                            "rules": [],
+                            "knowledge_reference": {"rule_ids": ["w1"], "keywords": ["string", "wave", "vibration"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": ["taut string", "standing wave"],
+                                "topic_keywords": ["string", "wave", "vibration"],
+                                "required_symbols": ["L"],
+                            },
+                            "clusters": [],
+                        },
+                        {
+                            "name": "Weak Generic Topic",
+                            "rules": [],
+                            "knowledge_reference": {"rule_ids": ["g1"], "keywords": ["string", "length"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": [],
+                                "topic_keywords": ["string", "length"],
+                                "required_symbols": ["L"],
+                            },
+                            "clusters": [],
+                        },
+                    ],
+                }
+            ],
+        }
+        samples = [
+            {
+                "id": "sample_weak_keyword_only",
+                "question": "A taut string of length L supports a standing wave pattern.",
+                "prediction": "Use the standing wave condition on the string.",
+                "answer": "",
+            }
+        ]
+
+        analysis = analyze_matching(catalog, samples, top_topics=2, top_rules=6, annotation_limit=1)
+        topics = analysis["per_sample"][0]["retrieved_topics"]
+        self.assertEqual(topics[0]["topic"], "String Waves")
+        self.assertTrue(topics[1]["evidence"]["weak_keyword_only"])
+
+    def test_topic_scoring_prefers_executable_topic_over_empty_neighbor(self) -> None:
+        catalog = {
+            "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2"},
+            "domains": [
+                {
+                    "name": "Optics",
+                    "topics": [
+                        {
+                            "name": "Reflection and Refraction",
+                            "rules": [],
+                            "knowledge_reference": {"rule_ids": ["o1"], "keywords": ["reflection", "refraction"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": ["reflection", "refraction"],
+                                "topic_keywords": ["reflection", "refraction", "interface"],
+                                "required_symbols": [],
+                            },
+                            "clusters": [],
+                        },
+                        {
+                            "name": "Snell's Law and Critical Angle",
+                            "rules": [
+                                {
+                                    "rule_id": "exp_snell",
+                                    "title": "Critical angle consistency",
+                                    "trigger": "critical angle total internal reflection refraction",
+                                    "check_logic": "check the refractive-index relation and the critical-angle condition",
+                                    "error_type": "logic",
+                                    "scope": "domain",
+                                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                                    "support": {"count": 2, "sample_ids": ["1"]},
+                                    "match_features": {
+                                        "trigger_keywords": ["critical angle", "total internal reflection", "refraction"],
+                                        "object_keywords": ["refractive index"],
+                                        "required_symbols": [],
+                                        "primitive": "none",
+                                    },
+                                }
+                            ],
+                            "knowledge_reference": {"rule_ids": ["o2"], "keywords": ["Snell", "critical angle", "refraction"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": ["critical angle", "total internal reflection"],
+                                "topic_keywords": ["Snell", "refraction", "refractive index"],
+                                "required_symbols": [],
+                            },
+                            "clusters": [],
+                        },
+                    ],
+                }
+            ],
+        }
+        samples = [
+            {
+                "id": "sample_executable_neighbor",
+                "question": "A light ray reaches the interface and the solution discusses the critical angle and total internal reflection.",
+                "prediction": "Use the refraction relation and check whether the incident angle exceeds the critical angle.",
+                "answer": "",
+            }
+        ]
+
+        analysis = analyze_matching(catalog, samples, top_topics=2, top_rules=6, annotation_limit=1)
+        topics = analysis["per_sample"][0]["retrieved_topics"]
+        self.assertEqual(topics[0]["topic"], "Snell's Law and Critical Angle")
+        self.assertTrue(
+            topics[0]["evidence"].get("promoted_from_empty_topic")
+            or not topics[0]["evidence"].get("top1_empty_topic_fallback")
         )
 
     def test_unmatched_distilled_topic_raises(self) -> None:
@@ -663,8 +786,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
                                     "trigger": "sin cos tan root",
                                     "check_logic": "tan substitution",
                                     "error_type": "calculation",
-                                    "scope": "meta",
-                                    "manual_override_reason": "generic_trig_substitution_rule",
+                                    "scope": "domain",
                                     "symbolic_hint": {"primitive": "formula_pattern", "canonical": "", "required_symbols": ["θ"]},
                                     "support": {"count": 3, "sample_ids": ["2"]},
                                     "match_features": {
@@ -703,6 +825,79 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         self.assertFalse(sample_result["rules_outside_top1_topic"])
         self.assertEqual(sample_result["retrieved_rules"][0]["rule_id"], "exp_kine")
         self.assertEqual(analysis["summary"]["strong_top1_cross_topic_count"], 0)
+
+    def test_strong_top1_without_local_rule_returns_empty_instead_of_foreign_rule(self) -> None:
+        catalog = {
+            "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2"},
+            "domains": [
+                {
+                    "name": "Experimental Physics",
+                    "topics": [
+                        {
+                            "name": "Significant Figures and Rounding Rules",
+                            "rules": [],
+                            "knowledge_reference": {"rule_ids": ["e1"], "keywords": ["significant", "rounding", "digits"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": ["significant figures", "rounding rules"],
+                                "topic_keywords": ["significant", "rounding", "digits"],
+                                "required_symbols": [],
+                            },
+                            "clusters": [],
+                        }
+                    ],
+                },
+                {
+                    "name": "Thermodynamics & Statistical Physics",
+                    "topics": [
+                        {
+                            "name": "Ideal Gas Law and Real Gas Behavior",
+                            "rules": [
+                                {
+                                    "rule_id": "exp_gas",
+                                    "title": "Ideal gas relation",
+                                    "trigger": "temperature pressure gas",
+                                    "check_logic": "use gas law relation consistently",
+                                    "error_type": "logic",
+                                    "scope": "domain",
+                                    "symbolic_hint": {"primitive": "equation_equivalence", "canonical": "", "required_symbols": ["P", "V", "T"]},
+                                    "support": {"count": 3, "sample_ids": ["1"]},
+                                    "match_features": {
+                                        "trigger_keywords": ["temperature", "pressure", "gas"],
+                                        "object_keywords": ["gas law", "relation"],
+                                        "required_symbols": ["P", "V", "T"],
+                                        "primitive": "equation_equivalence",
+                                    },
+                                }
+                            ],
+                            "knowledge_reference": {"rule_ids": ["t1"], "keywords": ["temperature", "pressure", "gas"]},
+                            "tagged_reference": {"source_ids": [], "titles": [], "aliases": [], "keywords": []},
+                            "retrieval_hints": {
+                                "scene_keywords": ["gas container", "ideal gas"],
+                                "topic_keywords": ["temperature", "pressure", "gas"],
+                                "required_symbols": ["P", "V", "T"],
+                            },
+                            "clusters": [],
+                        }
+                    ],
+                },
+            ],
+        }
+        samples = [
+            {
+                "id": "sample_empty_foreign_block",
+                "question": "Report the answer using the correct number of significant digits and rounding rules.",
+                "prediction": "The student also mentions pressure and temperature, but the actual issue is significant figures.",
+                "answer": "",
+            }
+        ]
+
+        analysis = analyze_matching(catalog, samples, top_topics=2, top_rules=6, annotation_limit=1)
+        sample_result = analysis["per_sample"][0]
+        self.assertGreaterEqual(sample_result["topic_score_margin"], 3.0)
+        self.assertEqual(sample_result["retrieved_topics"][0]["topic"], "Significant Figures and Rounding Rules")
+        self.assertEqual(sample_result["retrieved_rules"], [])
+        self.assertFalse(sample_result["rules_outside_top1_topic"])
 
 
 if __name__ == "__main__":

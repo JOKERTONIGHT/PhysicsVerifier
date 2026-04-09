@@ -32,14 +32,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.unified_retrieval import (
-    apply_manual_topic_hint_override,
-    apply_manual_rule_override,
     build_scene_keywords,
     build_topic_required_symbols,
     classify_rule_scope,
     extract_keywords,
     norm_text,
     ordered_unique,
+    normalize_rule_for_retrieval,
+    refine_topic_hints,
 )
 
 CLUSTER_TOPIC_THRESHOLD = 12
@@ -249,7 +249,6 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
                 title=title,
                 trigger=trigger,
                 check_logic=check_logic,
-                rule_id=raw_rule.get("rule_id"),
             ),
             "symbolic_hint": symbolic_hint,
             "support": {
@@ -258,7 +257,7 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
             },
             "match_features": _build_match_features(title, trigger, check_logic, symbolic_hint),
         }
-        rule_leaf = apply_manual_rule_override(rule_leaf)
+        rule_leaf = normalize_rule_for_retrieval(rule_leaf)
         state["entry"]["rules"].append(rule_leaf)
 
     if unmatched:
@@ -340,11 +339,10 @@ def _finalize_topics(states: Dict[str, Dict[str, Any]]) -> None:
             tagged_aliases=entry["tagged_reference"].get("aliases") or [],
             rule_texts=domain_rule_texts,
         )
-        scene_keywords, topic_keywords = apply_manual_topic_hint_override(
-            domain=state["domain"],
-            topic=state["topic"],
+        scene_keywords, topic_keywords = refine_topic_hints(
             scene_keywords=scene_keywords,
             topic_keywords=topic_keywords,
+            rule_texts=domain_rule_texts,
         )
 
         entry["retrieval_hints"] = {

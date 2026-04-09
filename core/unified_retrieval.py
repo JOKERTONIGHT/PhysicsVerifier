@@ -39,6 +39,7 @@ STOPWORDS = {
     "it",
     "its",
     "logic",
+    "not",
     "must",
     "of",
     "on",
@@ -63,6 +64,7 @@ STOPWORDS = {
     "to",
     "topic",
     "under",
+    "along",
     "use",
     "using",
     "verify",
@@ -100,12 +102,15 @@ STOPWORDS = {
 }
 
 GENERIC_SCENE_TERMS = {
+    "atomic",
     "application",
     "applications",
     "body",
     "bodies",
     "charge",
     "charges",
+    "collision",
+    "collisions",
     "current",
     "currents",
     "dynamics",
@@ -162,13 +167,17 @@ GENERIC_SCENE_TERMS = {
 LOW_SIGNAL_KEYWORDS = {
     "about",
     "all",
+    "along",
     "area",
+    "axis",
     "being",
     "body",
     "center",
     "com",
     "constant",
+    "const",
     "current",
+    "distance",
     "dynamics",
     "energy",
     "equal",
@@ -178,6 +187,7 @@ LOW_SIGNAL_KEYWORDS = {
     "initial",
     "first",
     "length",
+    "position",
     "mass",
     "model",
     "models",
@@ -188,6 +198,7 @@ LOW_SIGNAL_KEYWORDS = {
     "objects",
     "per",
     "physical",
+    "rate",
     "results",
     "surface",
     "sum",
@@ -200,6 +211,11 @@ LOW_SIGNAL_KEYWORDS = {
     "total",
     "use",
     "used",
+    "volume",
+    "whether",
+    "very",
+    "short",
+    "opening",
     "vec",
     "all",
     "no",
@@ -244,98 +260,68 @@ META_RULE_HINTS = (
     "语义",
 )
 
-MANUAL_RULE_OVERRIDES: Dict[str, Dict[str, Any]] = {
-    "exp_8f7c1ad1fb477295": {
-        "scope": "meta",
-        "reason": "generic_trig_substitution_rule",
-        "drop_trigger_keywords": ["sin", "cos"],
-        "drop_object_keywords": ["sin", "cos", "tan", "统一化为", "的表达形式"],
-        "prepend_trigger_keywords": ["根式", "tanθ"],
-        "prepend_object_keywords": ["根式方程", "三角代换"],
-    }
+GENERIC_MATH_RULE_HINTS = {
+    "cos",
+    "cot",
+    "csc",
+    "identity",
+    "root",
+    "sec",
+    "sin",
+    "sqrt",
+    "substitution",
+    "tan",
+    "三角",
+    "代换",
+    "恒等式",
+    "根式",
 }
 
-MANUAL_TOPIC_HINT_OVERRIDES: Dict[Tuple[str, str], Dict[str, Any]] = {
-    (
-        "Experimental Physics",
-        "Measurement Techniques (Length, Time, Mass, etc.)",
-    ): {
-        "drop_scene_keywords": ["Length", "Time", "Mass", "etc."],
-        "drop_topic_keywords": ["Length", "Time", "Mass", "physical", "results", "used", "being", "etc"],
-        "prepend_scene_keywords": ["measurement instrument", "calibration setup", "experimental measurement"],
-        "prepend_topic_keywords": ["measurement", "instrument", "calibration", "uncertainty", "apparatus"],
-    },
-    (
-        "Modern Physics",
-        "Special Relativity (Time Dilation, Length Contraction)",
-    ): {
-        "prepend_scene_keywords": [
-            "pinhole camera",
-            "rod in motion",
-            "moving rod",
-            "simultaneous measurement",
-            "observer frame",
-        ],
-        "prepend_topic_keywords": [
-            "pinhole",
-            "camera",
-            "rod",
-            "observer",
-            "simultaneous",
-            "contraction",
-        ],
-    },
-    (
-        "Optics",
-        "Laser Principles and Applications",
-    ): {
-        "prepend_scene_keywords": ["ring resonator", "laser cavity", "sagnac effect"],
-        "prepend_topic_keywords": ["resonator", "cavity", "sagnac"],
-    },
-    (
-        "Optics",
-        "Optical Coherence and Interferometers",
-    ): {
-        "prepend_scene_keywords": ["ring interferometer", "sagnac interferometer", "path difference"],
-        "prepend_topic_keywords": ["interferometer", "sagnac", "coherence length"],
-    },
-    (
-        "Electromagnetism",
-        "Current, Resistance, and Ohm's Law",
-    ): {
-        "drop_scene_keywords": ["Resistance"],
-        "drop_topic_keywords": ["Resistance", "Circuit", "circuits", "currents", "Direction", "all", "sum", "total"],
-        "prepend_scene_keywords": ["ohmic resistor", "voltage current relation", "resistive wire loss"],
-        "prepend_topic_keywords": ["ohm", "resistor", "voltage", "current", "resistive", "wire loss"],
-    },
-    (
-        "Experimental Physics",
-        "Use of Multimeters and Circuit Analysis Tools",
-    ): {
-        "drop_topic_keywords": ["Circuit", "resistance", "connected", "set", "component", "current"],
-        "prepend_scene_keywords": ["multimeter probe", "ammeter connection", "voltmeter reading", "measurement mode"],
-        "prepend_topic_keywords": ["multimeter", "ammeter", "voltmeter", "ohmmeter", "probe", "measurement mode"],
-    },
-    (
-        "Electromagnetism",
-        "Electromagnetic Induction and Faraday's Law",
-    ): {
-        "prepend_scene_keywords": [
-            "eddy current",
-            "foucault current",
-            "magnetic braking",
-            "rotating disc in magnetic field",
-            "induced emf",
-        ],
-        "prepend_topic_keywords": [
-            "eddy",
-            "foucault",
-            "induced emf",
-            "flux change",
-            "magnetic braking",
-            "faraday",
-        ],
-    },
+PHYSICAL_CONTEXT_HINTS = {
+    "ammeter",
+    "atom",
+    "battery",
+    "beam",
+    "black hole",
+    "camera",
+    "capacitor",
+    "charge",
+    "circuit",
+    "coil",
+    "collision",
+    "current",
+    "dipole",
+    "disc",
+    "earth",
+    "electric",
+    "electron",
+    "field",
+    "flux",
+    "frog",
+    "gas",
+    "gravity",
+    "induction",
+    "interferometer",
+    "laser",
+    "lens",
+    "loop",
+    "magnetic",
+    "mass",
+    "orbit",
+    "particle",
+    "pinhole",
+    "planet",
+    "pressure",
+    "relativity",
+    "resistor",
+    "rod",
+    "satellite",
+    "spring",
+    "string",
+    "superconduct",
+    "torque",
+    "voltage",
+    "wave",
 }
 
 GENERIC_RULE_SIGNAL_TERMS = {
@@ -369,6 +355,35 @@ GENERIC_SCENE_PARTS = {
     "simple",
     "theory",
     "use",
+}
+
+GENERIC_ACTION_TERMS = {
+    "apply",
+    "assume",
+    "calculate",
+    "check",
+    "compute",
+    "confirm",
+    "derive",
+    "determine",
+    "ensure",
+    "given",
+    "judge",
+    "open",
+    "opening",
+    "show",
+    "solve",
+    "verify",
+    "出现",
+    "判断",
+    "处理",
+    "要求",
+    "计算",
+    "证明",
+    "给出",
+    "设",
+    "说明",
+    "需要",
 }
 
 GENERIC_SYMBOLS = {
@@ -484,74 +499,61 @@ def extract_keywords(texts: Iterable[str], *, max_keywords: int) -> List[str]:
     return [first_seen[key] for key, _ in ranked[:max_keywords]]
 
 
-def get_manual_rule_override(rule_id: Any) -> Dict[str, Any]:
-    return dict(MANUAL_RULE_OVERRIDES.get(norm_text(rule_id), {}))
-
-
 def _remove_keywords(values: Iterable[str], blocked: Iterable[str]) -> List[str]:
     blocked_keys = {norm_text(item).casefold() for item in blocked if norm_text(item)}
     return [item for item in ordered_unique(values) if norm_text(item).casefold() not in blocked_keys]
 
 
-def get_manual_topic_hint_override(domain: Any, topic: Any) -> Dict[str, Any]:
-    key = (norm_text(domain), norm_text(topic))
-    return dict(MANUAL_TOPIC_HINT_OVERRIDES.get(key, {}))
+def _count_hint_hits(text: str, hints: Iterable[str]) -> int:
+    lowered = norm_text(text).casefold()
+    return sum(1 for hint in hints if hint in lowered)
 
 
-def apply_manual_topic_hint_override(
-    *,
-    domain: Any,
-    topic: Any,
-    scene_keywords: Iterable[str],
-    topic_keywords: Iterable[str],
-) -> Tuple[List[str], List[str]]:
-    override = get_manual_topic_hint_override(domain, topic)
-    if not override:
-        return ordered_unique(scene_keywords), ordered_unique(topic_keywords)
-
-    scene = _remove_keywords(scene_keywords, override.get("drop_scene_keywords") or [])
-    keywords = _remove_keywords(topic_keywords, override.get("drop_topic_keywords") or [])
-    scene = ordered_unique(list(override.get("prepend_scene_keywords") or []) + scene)
-    keywords = ordered_unique(list(override.get("prepend_topic_keywords") or []) + keywords)
-    return scene, keywords
+def is_generic_math_rule(*, title: str, trigger: str, check_logic: str) -> bool:
+    text = " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)])
+    if not text:
+        return False
+    math_hits = _count_hint_hits(text, GENERIC_MATH_RULE_HINTS)
+    physical_hits = _count_hint_hits(text, PHYSICAL_CONTEXT_HINTS)
+    return math_hits >= 2 and physical_hits == 0
 
 
-def apply_manual_rule_override(rule: Dict[str, Any]) -> Dict[str, Any]:
-    override = get_manual_rule_override(rule.get("rule_id") or rule.get("id"))
-    if not override:
-        return rule
-
+def normalize_rule_for_retrieval(rule: Dict[str, Any]) -> Dict[str, Any]:
     patched = dict(rule)
-    if override.get("scope"):
-        patched["scope"] = norm_text(override["scope"]) or patched.get("scope") or "domain"
-    if override.get("reason"):
-        patched["manual_override_reason"] = norm_text(override["reason"])
+    if not is_generic_math_rule(
+        title=str(rule.get("title") or ""),
+        trigger=str(rule.get("trigger") or ""),
+        check_logic=str(rule.get("check_logic") or ""),
+    ):
+        return patched
 
+    patched["scope"] = "meta"
     match_features = dict(patched.get("match_features") or {})
     if match_features:
-        trigger_keywords = _remove_keywords(
-            match_features.get("trigger_keywords") or [],
-            override.get("drop_trigger_keywords") or [],
-        )
-        object_keywords = _remove_keywords(
-            match_features.get("object_keywords") or [],
-            override.get("drop_object_keywords") or [],
-        )
-        match_features["trigger_keywords"] = ordered_unique(
-            list(override.get("prepend_trigger_keywords") or []) + trigger_keywords
-        )
-        match_features["object_keywords"] = ordered_unique(
-            list(override.get("prepend_object_keywords") or []) + object_keywords
-        )
+        trigger_keywords = _remove_keywords(match_features.get("trigger_keywords") or [], GENERIC_RULE_SIGNAL_TERMS)
+        object_keywords = _remove_keywords(match_features.get("object_keywords") or [], GENERIC_RULE_SIGNAL_TERMS)
+        normalized_text = " ".join(
+            [
+                norm_text(rule.get("title") or ""),
+                norm_text(rule.get("trigger") or ""),
+                norm_text(rule.get("check_logic") or ""),
+            ]
+        ).casefold()
+        prepend_trigger: List[str] = []
+        prepend_object: List[str] = []
+        if "substitution" in normalized_text or "代换" in normalized_text:
+            prepend_trigger.append("trig substitution")
+        if "root" in normalized_text or "根式" in normalized_text:
+            prepend_object.append("root equation")
+        match_features["trigger_keywords"] = ordered_unique(prepend_trigger + trigger_keywords)
+        match_features["object_keywords"] = ordered_unique(prepend_object + object_keywords)
         patched["match_features"] = match_features
-
     return patched
 
 
-def classify_rule_scope(*, title: str, trigger: str, check_logic: str, rule_id: Any = "") -> str:
-    override = get_manual_rule_override(rule_id)
-    if override.get("scope"):
-        return norm_text(override["scope"]) or "domain"
+def classify_rule_scope(*, title: str, trigger: str, check_logic: str) -> str:
+    if is_generic_math_rule(title=title, trigger=trigger, check_logic=check_logic):
+        return "meta"
     text = " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)]).casefold()
     if not text:
         return "domain"
@@ -561,6 +563,55 @@ def classify_rule_scope(*, title: str, trigger: str, check_logic: str, rule_id: 
     return "domain"
 
 
+def _is_physical_context_token(token: str) -> bool:
+    normalized = norm_text(token).casefold()
+    if not normalized:
+        return False
+    if normalized in PHYSICAL_CONTEXT_HINTS:
+        return True
+    return any(normalized in hint or hint in normalized for hint in PHYSICAL_CONTEXT_HINTS if " " not in hint)
+
+
+def _scene_anchor_candidates(text: str) -> List[str]:
+    tokens = [
+        tok
+        for tok in TOKEN_RE.findall(norm_text(text))
+        if keep_token(tok)
+        and (tok.casefold() not in LOW_SIGNAL_KEYWORDS or _is_physical_context_token(tok))
+        and tok.casefold() not in GENERIC_SCENE_PARTS
+    ]
+    if not tokens:
+        return []
+
+    anchors: List[str] = []
+    for token in tokens:
+        lowered = token.casefold()
+        if _is_physical_context_token(token) and lowered not in GENERIC_SCENE_TERMS and len(token) >= 5:
+            anchors.append(token)
+
+    for size in range(2, min(4, len(tokens)) + 1):
+        for start in range(0, len(tokens) - size + 1):
+            window = tokens[start : start + size]
+            lowered = [tok.casefold() for tok in window]
+            if any(item in GENERIC_MATH_RULE_HINTS for item in lowered):
+                continue
+            context_count = sum(1 for tok in window if _is_physical_context_token(tok))
+            if context_count <= 0:
+                continue
+            content_tokens = [
+                item
+                for item in lowered
+                if item not in GENERIC_SCENE_TERMS and item not in GENERIC_SCENE_PARTS and item not in LOW_SIGNAL_KEYWORDS
+            ]
+            if len(content_tokens) <= 0:
+                continue
+            if size >= 3 and len(content_tokens) < 2 and context_count < 2:
+                continue
+            anchors.append(" ".join(window))
+
+    return ordered_unique(anchors)
+
+
 def build_scene_keywords(
     *,
     topic_name: str,
@@ -568,6 +619,11 @@ def build_scene_keywords(
     tagged_aliases: Iterable[str],
     rule_texts: Iterable[str] = (),
 ) -> List[str]:
+    phrase_counter: Counter[str] = Counter()
+    phrase_display: Dict[str, str] = {}
+    phrase_source_bonus: Dict[str, float] = {}
+    phrase_order: Dict[str, int] = {}
+
     def keep_scene_part(text: str, *, allow_single: bool = False) -> bool:
         item = norm_text(text)
         if not item:
@@ -581,23 +637,114 @@ def build_scene_keywords(
             return False
         return True
 
-    phrases: List[str] = []
     tagged_texts = [norm_text(item) for item in tagged_titles]
     alias_texts = [norm_text(item) for item in tagged_aliases]
     rule_phrase_texts = [norm_text(item) for item in rule_texts]
+    raw_inputs: List[Tuple[str, float]] = (
+        [(topic_name, 2.0)]
+        + [(item, 1.25) for item in tagged_texts]
+        + [(item, 1.0) for item in alias_texts]
+        + [(item, 2.5) for item in rule_phrase_texts]
+    )
 
-    for raw_text in [topic_name, *tagged_texts, *alias_texts, *rule_phrase_texts]:
+    def add_phrase(text: str, source_bonus: float, *, allow_single: bool) -> None:
+        if not keep_scene_part(text, allow_single=allow_single):
+            return
+        key = norm_text(text).casefold()
+        phrase_counter[key] += 1
+        phrase_display.setdefault(key, norm_text(text))
+        phrase_source_bonus[key] = max(phrase_source_bonus.get(key, 0.0), source_bonus)
+        phrase_order.setdefault(key, len(phrase_order))
+
+    for raw_text, source_bonus in raw_inputs:
         text = norm_text(raw_text)
         if not text:
             continue
         allow_single = raw_text == topic_name
-        if keep_scene_part(text, allow_single=allow_single):
-            phrases.append(text)
-        for part in re.split(r"[()/,;:，；]+| and | of | with | - ", text, flags=re.I):
-            item = norm_text(part)
-            if keep_scene_part(item, allow_single=False):
-                phrases.append(item)
-    return ordered_unique(phrases)[:16]
+        add_phrase(text, source_bonus, allow_single=allow_single)
+        for part in re.split(r"[()/,;:，；]+| and | of | with | - | or | 或 ", text, flags=re.I):
+            add_phrase(part, source_bonus - 0.25, allow_single=False)
+        for anchor in _scene_anchor_candidates(text):
+            add_phrase(anchor, source_bonus + 0.25, allow_single=False)
+
+    def phrase_rank(key: str) -> Tuple[float, int]:
+        phrase = phrase_display[key]
+        tokens = [tok for tok in TOKEN_RE.findall(phrase) if keep_token(tok)]
+        token_count = len(tokens)
+        context_bonus = min(sum(1 for tok in tokens if _is_physical_context_token(tok)), 2) * 0.9
+        compact_bonus = 1.5 if 2 <= token_count <= 3 else (0.75 if token_count in {1, 4} else 0.0)
+        token_bonus = min(token_count, 4) * 0.35
+        length_penalty = 1.0 if len(phrase) >= 36 else (0.5 if len(phrase) >= 24 else 0.0)
+        score = (
+            phrase_source_bonus.get(key, 0.0)
+            + context_bonus
+            + compact_bonus
+            + token_bonus
+            + phrase_counter[key]
+            - length_penalty
+        )
+        return (-score, phrase_order[key])
+
+    ranked_keys = sorted(phrase_display.keys(), key=phrase_rank)
+    return [phrase_display[key] for key in ranked_keys[:16]]
+
+
+def refine_topic_hints(
+    *,
+    scene_keywords: Iterable[str],
+    topic_keywords: Iterable[str],
+    rule_texts: Iterable[str],
+) -> Tuple[List[str], List[str]]:
+    derived_rule_keywords = extract_keywords(rule_texts, max_keywords=16)
+    keywords = ordered_unique(list(topic_keywords) + list(derived_rule_keywords))
+    keywords = [
+        item
+        for item in keywords
+        if norm_text(item).casefold() not in LOW_SIGNAL_KEYWORDS
+        and norm_text(item).casefold() not in GENERIC_SCENE_TERMS
+        and not (norm_text(item).isalpha() and len(norm_text(item)) <= 2)
+    ]
+    scene = [
+        item
+        for item in ordered_unique(scene_keywords)
+        if norm_text(item).casefold() not in LOW_SIGNAL_KEYWORDS
+        and not (norm_text(item).casefold() in {"resistance", "length", "time", "mass", "current"})
+    ]
+    filtered_scene: List[str] = []
+    for item in scene:
+        tokens = [tok for tok in TOKEN_RE.findall(item) if keep_token(tok)]
+        if not tokens:
+            continue
+        context_count = sum(1 for tok in tokens if _is_physical_context_token(tok))
+        lowered = item.casefold()
+        action_heavy = any(term in lowered for term in GENERIC_ACTION_TERMS)
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", item))
+        if lowered.endswith("时") and context_count < 2:
+            continue
+        if " or " in lowered or " 或 " in item:
+            continue
+        if len(tokens) >= 5 and context_count < 2:
+            continue
+        if len(norm_text(item)) >= 20 and context_count == 0:
+            continue
+        if action_heavy and context_count < 2 and (" " in item or len(norm_text(item)) >= 10):
+            continue
+        if action_heavy and context_count < 3 and len(tokens) >= 3:
+            continue
+        if has_cjk and context_count < 2 and len(norm_text(item)) >= 8:
+            continue
+        filtered_scene.append(item)
+    scene = filtered_scene
+    scene = sorted(
+        scene,
+        key=lambda item: (
+            -min(sum(1 for tok in TOKEN_RE.findall(item) if _is_physical_context_token(tok)), 2),
+            -(1 if 2 <= len([tok for tok in TOKEN_RE.findall(item) if keep_token(tok)]) <= 3 else 0),
+            len(norm_text(item)),
+            item.casefold(),
+        ),
+    )
+    return scene[:16], keywords[:20]
 
 
 def build_topic_required_symbols(rules: Iterable[Dict[str, Any]]) -> List[str]:
@@ -620,6 +767,7 @@ def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
             topic_name = norm_text(topic.get("name") or "Unknown")
             topic_obj = dict(topic)
             topic_obj.setdefault("domain", domain_name)
+            executable_rule_count = len(topic.get("rules", []) or [])
             tagged_reference = topic.get("tagged_reference") if isinstance(topic.get("tagged_reference"), dict) else {}
             retrieval_hints = topic.get("retrieval_hints") if isinstance(topic.get("retrieval_hints"), dict) else {}
             knowledge_reference = topic.get("knowledge_reference") if isinstance(topic.get("knowledge_reference"), dict) else {}
@@ -633,6 +781,7 @@ def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "topic_keywords": ordered_unique(retrieval_hints.get("topic_keywords") or []),
                     "knowledge_keywords": ordered_unique(knowledge_reference.get("keywords") or []),
                     "required_symbols": ordered_unique(retrieval_hints.get("required_symbols") or []),
+                    "executable_rule_count": executable_rule_count,
                 }
             )
     return out
@@ -658,6 +807,15 @@ def build_signal_document_frequency(topic_candidates: List[Dict[str, Any]]) -> D
         "scene_df": scene_df,
         "symbol_df": symbol_df,
     }
+
+
+def topic_executable_rule_count(item: Dict[str, Any]) -> int:
+    topic_obj = item.get("topic_obj")
+    if not isinstance(topic_obj, dict):
+        topic_obj = item.get("topic")
+    if not isinstance(topic_obj, dict):
+        return 0
+    return len(topic_obj.get("rules", []) or [])
 
 
 def _df_weight(value: str, df_counter: Counter[str], *, strong: float, weak: float) -> float:
@@ -721,17 +879,49 @@ def score_topic_candidate(
             sym for sym in ordered_unique(candidate.get("required_symbols") or []) if match_phrase_or_symbol(sym, text_for_topic)
         ]
 
-    phrase_score = 6.0 if phrase_hits else 0.0
+    phrase_score = 5.0 if phrase_hits else 0.0
     scene_score = min(
-        sum(_df_weight(hit, signal_df["scene_df"], strong=3.5, weak=0.75) for hit in scene_hits),
-        12.0,
+        sum(_df_weight(hit, signal_df["scene_df"], strong=4.25, weak=1.0) for hit in scene_hits),
+        14.0,
     )
     keyword_score = min(
-        sum(_df_weight(hit, signal_df["keyword_df"], strong=2.0, weak=0.35) for hit in keyword_hits),
-        8.0,
+        sum(_df_weight(hit, signal_df["keyword_df"], strong=1.5, weak=0.25) for hit in keyword_hits),
+        6.0,
     )
     symbol_score = min(sum(_symbol_df_weight(hit, signal_df["symbol_df"]) for hit in symbol_hits), 3.0)
-    score = float(phrase_score + scene_score + keyword_score + symbol_score)
+    anchor_bonus = 0.0
+    if scene_hits:
+        anchor_bonus += 1.0
+        if len(scene_hits) >= 2:
+            anchor_bonus += 0.75
+    if phrase_hits and scene_hits:
+        anchor_bonus += 0.75
+
+    weak_keyword_only = bool(not phrase_hits and not scene_hits and 0 < len(keyword_hits) <= 3)
+    weak_keyword_penalty = 0.0
+    weak_keyword_context = sum(1 for hit in keyword_hits if _is_physical_context_token(hit))
+    if weak_keyword_only:
+        if len(keyword_hits) == 1:
+            keyword_score *= 0.35
+            symbol_score = 0.0
+            weak_keyword_penalty = 1.0
+        elif len(keyword_hits) == 2:
+            keyword_score *= 0.55
+            symbol_score = min(symbol_score, 0.5)
+            weak_keyword_penalty = 0.75
+        else:
+            keyword_score *= 0.75
+            symbol_score = min(symbol_score, 1.0)
+            weak_keyword_penalty = 0.25
+        if weak_keyword_context == 0:
+            keyword_score *= 0.5
+            symbol_score = min(symbol_score, 0.5)
+            weak_keyword_penalty += 1.25
+        elif weak_keyword_context == 1:
+            weak_keyword_penalty += 0.5
+    score = float(
+        max(0.0, phrase_score + scene_score + keyword_score + symbol_score + anchor_bonus - weak_keyword_penalty)
+    )
 
     return {
         "domain": candidate["domain"],
@@ -743,9 +933,71 @@ def score_topic_candidate(
             "keyword_hits": keyword_hits,
             "required_symbol_hits": symbol_hits,
             "symbol_gate_open": symbol_gate_open,
+            "weak_keyword_only": weak_keyword_only,
+            "weak_keyword_penalty": weak_keyword_penalty,
+            "executable_rule_count": int(candidate.get("executable_rule_count") or 0),
         },
         "topic_obj": candidate["topic_obj"],
     }
+
+
+def select_topic_matches_with_rule_fallback(
+    scored: List[Dict[str, Any]],
+    *,
+    top_k: int,
+    scan_limit: int = 12,
+    same_domain_gap: float = 6.0,
+    cross_domain_gap: float = 4.0,
+) -> List[Dict[str, Any]]:
+    if not scored or top_k <= 0:
+        return []
+
+    selected = list(scored[:top_k])
+    if topic_executable_rule_count(selected[0]) > 0:
+        return selected
+
+    top1 = selected[0]
+    top1_domain = str(top1.get("domain") or "")
+    top1_score = float(top1.get("score") or 0.0)
+    same_domain_candidate = None
+    cross_domain_candidate = None
+
+    for item in scored[1 : min(len(scored), scan_limit)]:
+        if topic_executable_rule_count(item) <= 0:
+            continue
+        gap = top1_score - float(item.get("score") or 0.0)
+        if str(item.get("domain") or "") == top1_domain and gap <= same_domain_gap:
+            same_domain_candidate = item
+            break
+        if cross_domain_candidate is None and gap <= cross_domain_gap:
+            cross_domain_candidate = item
+
+    promoted = same_domain_candidate or cross_domain_candidate
+    if promoted is None:
+        return selected
+
+    def _mark(item: Dict[str, Any], *, promoted_from_empty_topic: bool) -> Dict[str, Any]:
+        cloned = dict(item)
+        evidence = dict(cloned.get("evidence") or {})
+        evidence["promoted_from_empty_topic"] = promoted_from_empty_topic
+        evidence["top1_empty_topic_fallback"] = True
+        cloned["evidence"] = evidence
+        return cloned
+
+    out = [_mark(promoted, promoted_from_empty_topic=True), _mark(top1, promoted_from_empty_topic=False)]
+    seen = {
+        (str(promoted.get("domain") or ""), str(promoted.get("topic") or promoted.get("name") or "")),
+        (str(top1.get("domain") or ""), str(top1.get("topic") or top1.get("name") or "")),
+    }
+    for item in selected[1:]:
+        key = (str(item.get("domain") or ""), str(item.get("topic") or item.get("name") or ""))
+        if key in seen:
+            continue
+        out.append(item)
+        seen.add(key)
+        if len(out) >= top_k:
+            break
+    return out[:top_k]
 
 
 def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
@@ -907,7 +1159,16 @@ def select_rules_with_topic_priority(
         ]
         if top1_only:
             return top1_only[:top_n]
-        return eligible[: min(2, top_n)]
+        top1_relaxed = [
+            item
+            for item in scored
+            if (str(item.get("domain") or ""), str(item.get("topic") or "")) == top1_key
+            and float(item.get("score") or 0.0) > 0.0
+            and float(item.get("adjusted_score", item.get("score") or 0.0)) > 0.0
+        ]
+        if top1_relaxed:
+            return top1_relaxed[:top_n]
+        return []
 
     eligible_top1_count = sum(
         1

@@ -2,7 +2,7 @@
   "metadata": {
     "version": "2.0",
     "catalog_type": "unified_rules_v2",
-    "generated_at": "2026-04-07T22:41:58.450563",
+    "generated_at": "2026-04-09T21:43:22.683637",
     "total_domains": 6,
     "total_topics": 123,
     "topics_with_rules": 70,
@@ -746,24 +746,7 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Kinematics in 1D/2D/3D",
-              "Kinematics in 1D",
-              "周期运动状态唯一性陷阱",
-              "描述简谐运动、自由落体反弹等具有对称性的周期运动",
-              "极值搜索导数判别准则",
-              "题目要求寻找使某个物理量（如偏差、位移）最大化的自变量取值时",
-              "多面反射镜像展开法",
-              "物体在封闭边界内发生n次弹性碰撞后到达特定点",
-              "边界碰撞序列校验",
-              "题目明确给出碰撞边的先后顺序（如先撞BC再撞AD）",
-              "上抛运动双向过点时间差规律",
-              "物体两次经过同一高度点，且给出时间间隔 Δt",
-              "物体两次经过同一高度点",
-              "且给出时间间隔 Δt",
-              "高度差计算的对称性检查",
-              "计算竖直上抛或自由落体中两位置的高度差"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Kinematics",
               "1D",
@@ -771,20 +754,20 @@
               "3D",
               "Ensure",
               "acceleration",
-              "equations",
-              "motion",
               "velocity",
-              "constant",
-              "time",
               "horizontal",
               "vertical",
               "correctly",
               "displacement",
-              "initial",
-              "all",
               "consistent",
               "units",
-              "angular"
+              "angular",
+              "theta",
+              "周期运动状态唯一性陷阱",
+              "描述简谐运动",
+              "自由落体反弹等具有对称性的周期运动",
+              "极值搜索导数判别准则",
+              "题目要求寻找使某个物理量"
             ],
             "required_symbols": [
               "H",
@@ -995,29 +978,28 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Relative Motion",
-              "非惯性系相对加速度合成准则",
-              "物体在加速运动的容器（电梯、小车）内做自由落体或抛体运动",
-              "脱离瞬间相对初速度归零律",
-              "物体从运动载体上“松脱”、“掉落”或“静止释放”"
+              "Relative Motion"
             ],
             "topic_keywords": [
               "Relative",
-              "Motion",
               "velocity",
               "reference",
               "Ensure",
               "between",
               "same",
-              "all",
-              "objects",
               "subtraction",
               "components",
               "acceleration",
               "measured",
               "inertial",
               "frame",
-              "vector"
+              "vector",
+              "非惯性系相对加速度合成准则",
+              "物体在加速运动的容器",
+              "内做自由落体或抛体运动",
+              "脱离瞬间相对初速度归零律",
+              "物体从运动载体上",
+              "静止释放"
             ],
             "required_symbols": [
               "g",
@@ -1194,10 +1176,9 @@
                   "和仰角"
                 ],
                 "object_keywords": [
-                  "tan",
+                  "root equation",
                   "利用轨迹方程",
                   "v0",
-                  "cos",
                   "代入落地坐标",
                   "建立关于",
                   "的二次方程",
@@ -1234,15 +1215,15 @@
               },
               "match_features": {
                 "trigger_keywords": [
-                  "根式",
-                  "tanθ",
+                  "trig substitution",
                   "三角恒等式代换一致性",
                   "方程中同时出现",
                   "且含有根式"
                 ],
                 "object_keywords": [
-                  "根式方程",
-                  "三角代换",
+                  "root equation",
+                  "统一化为",
+                  "的表达形式",
                   "若直接设",
                   "导致高次或根式方程",
                   "应优先考虑切化弦或弦化切"
@@ -1251,8 +1232,7 @@
                   "θ"
                 ],
                 "primitive": "formula_pattern"
-              },
-              "manual_override_reason": "generic_trig_substitution_rule"
+              }
             },
             {
               "rule_id": "exp_fd524b9e5283e803",
@@ -1368,26 +1348,11 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Projectile Motion",
-              "Projectile from elevated launch: tan(theta) substitution consistency",
-              "Projectile from elevated launch",
-              "theta",
-              "substitution consistency",
-              "Missing vertical flight-time and g-dependence in jump-off clearance problems",
-              "Missing vertical flight-time",
-              "g-dependence in jump-off clearance problems",
-              "Projectile double-pass time symmetry (require 1/2 factor)",
-              "Projectile double-pass time symmetry",
-              "require 1",
-              "2 factor",
-              "动量守恒下的相对位移约束",
-              "系统初动量为零且物体在另一运动物体上移动一段距离",
-              "镜像法处理弹性碰撞轨迹",
-              "物体与垂直平面（如墙面、篮板）发生完全弹性碰撞"
+              "题目要求“跳出",
+              "Projectile Motion"
             ],
             "topic_keywords": [
               "Projectile",
-              "Motion",
               "horizontal",
               "Ensure",
               "v_0",
@@ -1395,17 +1360,18 @@
               "sin",
               "consistent",
               "velocity",
-              "equations",
               "have",
               "launch",
               "heights",
-              "initial",
               "angle",
               "components",
-              "time",
               "t1",
               "t4",
-              "speed"
+              "speed",
+              "动量守恒下的相对位移约束",
+              "系统初动量为零且物体在另一运动物体上移动一段距离",
+              "镜像法处理弹性碰撞轨迹",
+              "物体与垂直平面"
             ],
             "required_symbols": [
               "m",
@@ -1840,40 +1806,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Circular Motion and Centripetal Force",
               "Circular Motion",
-              "Centripetal Force",
-              "圆周运动径向动力学校验",
-              "物体在重力场中做圆周运动（如摆球、过山车）",
-              "隐函数求导一致性检查",
-              "通过两个几何方程组定义动点坐标 (x,y) 时",
-              "通过两个几何方程组定义动点坐标",
-              "临界摩擦力平衡判定",
-              "要求计算“最小静摩擦系数”或“不下滑条件”",
-              "圆周运动交点动力学简化",
-              "求解约束在圆轨道上的交点/动点的向心加速度时",
-              "求解约束在圆轨道上的交点",
-              "动点的向心加速度时",
-              "圆环旋转受力建模",
-              "涉及旋转圆环、橡皮筋或细绳的径向扩张平衡问题"
+              "Centripetal Force"
             ],
             "topic_keywords": [
               "Circular",
-              "Motion",
               "Centripetal",
-              "Force",
               "Ensure",
               "inward",
               "velocity",
               "path",
-              "forces",
               "Angular",
               "F_c",
               "radius",
               "correctly",
               "calculations",
               "Coordinate",
-              "System"
+              "圆周运动径向动力学校验",
+              "物体在重力场中做圆周运动",
+              "如摆球",
+              "过山车",
+              "隐函数求导一致性检查",
+              "通过两个几何方程组定义动点坐标",
+              "临界摩擦力平衡判定",
+              "要求计算"
             ],
             "required_symbols": [
               "T",
@@ -2025,36 +1981,25 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Newton's Laws and Free Body Diagrams",
               "Newton's Laws",
-              "Free Body Diagrams",
-              "平方阻力运动方程标准化",
-              "物体在恒定重力场中受与速度平方成正比的阻力（f = kv^2）",
-              "近地近似下的参数简化",
-              "题目给出复杂的空间分布函数（如指数或幂律密度），但限定高度 h << R",
-              "题目给出复杂的空间分布函数（如指数或幂律密度）",
-              "但限定高度 h << R"
+              "Free Body Diagrams"
             ],
             "topic_keywords": [
               "Newton",
-              "Laws",
               "Free",
-              "Body",
               "Diagrams",
-              "forces",
               "Ensure",
-              "object",
               "acceleration",
-              "force",
               "acting",
-              "motion",
-              "system",
               "Vertical",
               "Friction",
-              "mass",
-              "all",
               "Consistent",
-              "no"
+              "平方阻力运动方程标准化",
+              "物体在恒定重力场中受与速度平方成正比的阻力",
+              "近地近似下的参数简化",
+              "题目给出复杂的空间分布函数",
+              "如指数或幂律密度",
+              "但限定高度"
             ],
             "required_symbols": [
               "m",
@@ -2387,41 +2332,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Friction and Contact Forces",
-              "Friction",
               "Contact Forces",
-              "复合运动摩擦力投影规则",
-              "物体同时存在平动 v 和转动 ωr，且满足 ωr << v 时计算阻力变化",
-              "物体同时存在平动 v 和转动 ωr",
-              "且满足 ωr << v 时计算阻力变化",
-              "局部极大值动力学判据",
-              "题目要求物理量（如位移、角度）存在 local maximum 时",
-              "约束运动能量方程微分一致性",
-              "物体在约束路径（如转动杆）上受变力运动求速度关系",
-              "滚动摩擦力状态判定",
-              "涉及圆环/圆柱在有摩擦平面上受水平力作用时",
-              "涉及圆环",
-              "圆柱在有摩擦平面上受水平力作用时",
-              "各向异性摩擦力做功校验"
+              "涉及圆环"
             ],
             "topic_keywords": [
               "Friction",
               "Contact",
-              "Forces",
-              "force",
               "static",
               "Ensure",
-              "motion",
               "kinetic",
               "_s",
               "normal",
               "_k",
               "coordinate",
-              "object",
               "applied",
               "only",
               "consistent",
-              "system"
+              "复合运动摩擦力投影规则",
+              "物体同时存在平动",
+              "和转动",
+              "且满足",
+              "时计算阻力变化",
+              "局部极大值动力学判据",
+              "题目要求物理量",
+              "如位移"
             ],
             "required_symbols": [
               "μ",
@@ -2821,40 +2755,29 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Work-Energy Theorem and Conservation of Energy",
-              "Work-Energy Theorem",
-              "Conservation",
-              "圆周运动瞬时向心力校验",
-              "求绳索张力或法向接触力",
-              "变摆长系统能量基准统一",
-              "物体运动过程中支点改变导致有效摆长变化",
-              "曲面约束运动最高点动能校验",
-              "物体在容器（如抛物面、球面）内运动求最大高度",
-              "约束面运动能量守恒审计",
-              "物体在特定几何曲面（如抛物面、球面）上运动并求极值高度时",
-              "引力做功符号一致性检查",
-              "物体向引力源（原点）移动时",
-              "避免无效循环恒等式",
-              "推导过程中出现 z_max = z_0 或类似初始态等于末态的平庸结果时",
-              "分段力场动能衔接校验"
+              "Work-Energy Theorem"
             ],
             "topic_keywords": [
-              "Energy",
               "Work",
               "Theorem",
               "Conservation",
-              "forces",
               "Non",
               "conservative",
               "done",
               "Ensure",
               "Mechanical",
-              "system",
-              "potential",
               "displacement",
-              "force",
               "calculations",
-              "kinetic"
+              "kinetic",
+              "如抛物面",
+              "圆周运动瞬时向心力校验",
+              "求绳索张力或法向接触力",
+              "变摆长系统能量基准统一",
+              "物体运动过程中支点改变导致有效摆长变化",
+              "曲面约束运动最高点动能校验",
+              "物体在容器",
+              "内运动求最大高度",
+              "约束面运动能量守恒审计"
             ],
             "required_symbols": [
               "T",
@@ -3005,28 +2928,21 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Power and Energy Dissipation",
-              "Power",
-              "Energy Dissipation"
+              "Energy Dissipation",
+              "Power"
             ],
             "topic_keywords": [
               "Power",
-              "Energy",
               "Dissipation",
               "Ensure",
               "Calculations",
-              "Forces",
               "work",
               "Velocity",
               "friction",
               "mechanical",
-              "all",
-              "Time",
-              "potential",
               "kinetic",
               "Reference",
-              "Point",
-              "Force"
+              "Point"
             ],
             "required_symbols": []
           },
@@ -3422,28 +3338,15 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Linear Momentum and Collisions",
-              "Linear Momentum",
-              "Collisions",
-              "子弹穿木块功能关系校验",
-              "涉及子弹穿过运动木块并求阻力或位移",
-              "完全非弹性碰撞能量转化",
-              "瞬时拾取或合并质量的过程",
-              "弹性碰撞相对速度守恒律",
-              "处理完全弹性碰撞（Perfectly Elastic Collision）时",
-              "多体碰撞动量守恒校验",
-              "处理滑块在容器内多次往复碰撞（恢复系数 e < 1）时",
-              "能量损失极限判定",
-              "题目要求动能损失不超过比例 k 时",
-              "多体叠放自由落体碰撞模型",
-              "出现“两球叠放”、“自由落体”、“与地面弹性碰撞”等描述时"
+              "Elastic Collision",
+              "Momentum Collisions",
+              "Linear Momentum Collisions",
+              "Perfectly Elastic Collision",
+              "Linear Momentum and Collisions"
             ],
             "topic_keywords": [
               "Linear",
               "Momentum",
-              "Collisions",
-              "collision",
-              "Energy",
               "Conservation",
               "elastic",
               "Impulse",
@@ -3451,10 +3354,17 @@
               "Velocity",
               "inelastic",
               "equals",
-              "system",
-              "no",
               "before",
-              "Relative"
+              "Relative",
+              "子弹穿木块功能关系校验",
+              "涉及子弹穿过运动木块并求阻力或位移",
+              "完全非弹性碰撞能量转化",
+              "瞬时拾取或合并质量的过程",
+              "弹性碰撞相对速度守恒律",
+              "处理完全弹性碰撞",
+              "Perfectly",
+              "多体碰撞动量守恒校验",
+              "处理滑块在容器内多次往复碰撞"
             ],
             "required_symbols": [
               "f",
@@ -3878,42 +3788,28 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Impulse and Momentum Transfer",
-              "Impulse",
-              "Momentum Transfer",
-              "矢量速度转向的最时优路径",
-              "要求在恒定合外力限制下，从速度 v1 变为 v2 的最短时间",
-              "要求在恒定合外力限制下",
-              "从速度 v1 变为 v2 的最短时间",
-              "非质心碰撞力矩力臂建模",
-              "刚体碰撞点不在质心水平线上（存在高度差 $h$）",
-              "圆周运动非转向最优解",
-              "题目要求“最小时间”改变运动方向且存在摩擦力上限",
-              "刚体冲量矩参考点一致性",
-              "计算冲量对刚体产生的角动量增量时",
-              "区分碰撞冲量与持续受力",
-              "物体在旋转状态下撞击地面并伴随摩擦",
-              "冲量-动量定理分量独立性检查"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Impulse",
               "Momentum",
-              "Transfer",
-              "forces",
               "Conservation",
-              "collision",
-              "system",
-              "energy",
               "Theorem",
               "F_net",
-              "time",
               "ensuring",
-              "all",
               "quantities",
               "correctly",
               "vector",
-              "no"
+              "矢量速度转向的最时优路径",
+              "要求在恒定合外力限制下",
+              "从速度",
+              "v1",
+              "v2",
+              "的最短时间",
+              "非质心碰撞力矩力臂建模",
+              "刚体碰撞点不在质心水平线上",
+              "存在高度差",
+              "圆周运动非转向最优解",
+              "题目要求"
             ],
             "required_symbols": [
               "v1",
@@ -4222,7 +4118,7 @@
               "trigger": "给出 ∫csc(x)dx 等三角函数积分提示且涉及大角度变加速运动时",
               "check_logic": "禁止使用简谐运动线性近似。必须通过能量守恒 E=K+V 导出 dθ/dt = g(θ)，再构造 dt = dθ/g(θ) 进行定积分计算。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "t = \\int \\frac{1}{\\dot{\\theta}(\\theta)} d\\theta",
@@ -4242,7 +4138,6 @@
                 "trigger_keywords": [
                   "非线性摆动时间积分规则",
                   "给出",
-                  "csc",
                   "dx",
                   "等三角函数积分提示且涉及大角度变加速运动时"
                 ],
@@ -4584,28 +4479,10 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Rotational Kinematics and Dynamics",
-              "Rotational Kinematics",
-              "约束脱离临界判定规则",
-              "物体沿约束面（墙面/球面）滑动问脱离点时",
-              "物体沿约束面（墙面",
-              "球面）滑动问脱离点时",
-              "非完整约束滚动建模检查",
-              "物体在平面上“纯滚动”且涉及多维坐标（如x, y, theta, phi）",
-              "物体在平面上“纯滚动”且涉及多维坐标（如x",
-              "theta",
-              "phi）",
-              "组合体动力学质量一致性检查",
-              "题目给出‘排除某部件后的质量’或‘由多个组件构成的系统’时",
-              "非保守力做功判定",
-              "题目出现‘rubs against’, ‘friction’, ‘starts rolling’等描述滑动摩擦过程时",
-              "题目出现‘rubs against’"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Rotational",
               "Kinematics",
-              "Dynamics",
               "angular",
               "Ensure",
               "torque",
@@ -4613,14 +4490,17 @@
               "applied",
               "consistent",
               "quantities",
-              "axis",
               "acceleration",
               "student",
-              "energy",
               "torques",
-              "equations",
               "changes",
-              "rotation"
+              "rotation",
+              "slipping",
+              "rolling",
+              "约束脱离临界判定规则",
+              "物体沿约束面",
+              "滑动问脱离点时",
+              "非完整约束滚动建模检查"
             ],
             "required_symbols": [
               "N",
@@ -4639,8 +4519,6 @@
               "m",
               "r",
               "g",
-              "t",
-              "\\dot{\\theta}",
               "\\vec{v}",
               "\\mu",
               "\\hat{u}",
@@ -4746,22 +4624,18 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Moment of Inertia and Rotational Energy",
+              "Rotational Energy",
               "Moment",
-              "Inertia",
-              "Rotational Energy"
+              "Inertia"
             ],
             "topic_keywords": [
               "Moment",
               "Inertia",
               "Rotational",
-              "Energy",
               "b2",
               "c9",
-              "axis",
               "Ensure",
               "angular",
-              "mass",
               "rigid",
               "theorem",
               "confirm",
@@ -4990,27 +4864,16 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Torque Static",
+              "Torque Static Equilibrium",
               "Torque and Static Equilibrium",
               "Torque",
-              "Static Equilibrium",
-              "刚体倾覆临界判定准则",
-              "题目要求寻找物体“开始翻倒”或“能够翻倒”的参数条件",
-              "软绳/链条动力学力矩审计",
-              "链条动力学力矩审计",
-              "软绳或链条在曲面上滑动并涉及整体平衡（如翻倒、移动）",
-              "多体接触平衡建模校验",
-              "题目涉及两个或多个刚体相互接触并靠在边界（墙/地）上时",
-              "题目涉及两个或多个刚体相互接触并靠在边界（墙",
-              "地）上时",
-              "临界平衡不等式方向检查",
-              "求取角度满足的平衡条件（Condition）时"
+              "Static Equilibrium"
             ],
             "topic_keywords": [
               "Torque",
               "Static",
               "Equilibrium",
-              "system",
-              "force",
               "Ensure",
               "torques",
               "point",
@@ -5019,9 +4882,15 @@
               "pivot",
               "lever",
               "friction",
-              "sum",
-              "all",
-              "axis"
+              "刚体倾覆临界判定准则",
+              "题目要求寻找物体",
+              "开始翻倒",
+              "能够翻倒",
+              "的参数条件",
+              "链条动力学力矩审计",
+              "软绳或链条在曲面上滑动并涉及整体平衡",
+              "如翻倒",
+              "多体接触平衡建模校验"
             ],
             "required_symbols": [
               "\\tau",
@@ -5670,22 +5539,12 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Angular Momentum Conservation",
-              "Angular momentum non-conservation must be attributed to torques, not dissipation",
-              "Angular momentum non-conservation must be attributed to torques",
-              "not dissipation",
-              "No tangential speed from instantaneous radial change at turning point",
-              "复合系统角动量叠加",
-              "计算包含自转和公转的系统总角动量",
-              "潮汐锁定同步判据",
-              "题目提及“潮汐锁定”、“同步旋转”或“过程结束且力矩消失”",
-              "角动量守恒判定准则",
-              "题目询问某物理系统（如大气环流、天体轨道）角动量是否守恒或不守恒原因时",
-              "柔性绳与刚性杆约束差异",
-              "题目对比刚性杆（Cantilever）与柔性绳（Soft string）约束时",
-              "质量流失系统的角速度守恒判定",
-              "物体旋转时向径向或切向无推力喷射质量（如沙子流出、雨滴落下）",
-              "变摆长系统突变分析"
+              "Soft string",
+              "attributed torques",
+              "torques dissipation",
+              "attributed torques dissipation",
+              "conservation attributed torques",
+              "non conservation attributed torques"
             ],
             "topic_keywords": [
               "Angular",
@@ -5694,20 +5553,20 @@
               "torque",
               "ensure",
               "external",
-              "system",
               "moment",
               "inertia",
-              "all",
               "torques",
               "velocity",
               "correctly",
               "consistent",
-              "forces",
               "changes",
               "change",
-              "energy",
               "tangential",
-              "non"
+              "non",
+              "复合系统角动量叠加",
+              "计算包含自转和公转的系统总角动量",
+              "潮汐锁定同步判据",
+              "题目提及"
             ],
             "required_symbols": [
               "I",
@@ -5897,7 +5756,7 @@
               "trigger": "题目涉及非赤道地区的行星/恒星落山时间或最大可见时长计算",
               "check_logic": "需检查是否引入球面三角公式（如时角公式 cos H = -tan φ tan δ）或考虑天球赤道与地平线的夹角 (90°-φ)，而非直接转换经度差。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "Δt = H / ω, where cos H = (sin h - sin φ sin δ) / (cos φ cos δ)",
@@ -5920,10 +5779,8 @@
                   "恒星落山时间或最大可见时长计算"
                 ],
                 "object_keywords": [
-                  "tan",
                   "需检查是否引入球面三角公式",
                   "如时角公式",
-                  "cos",
                   "或考虑天球赤道与地平线的夹角",
                   "而非直接转换经度差"
                 ],
@@ -6198,7 +6055,7 @@
               "trigger": "计算地内行星（如金星、水银）相对于太阳的最大张角",
               "check_logic": "验证是否满足直角三角形关系，即视线与行星轨道相切，sin θ = r/R。",
               "error_type": "concept",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "sin(θ_max) = R_inner / R_outer",
@@ -6223,8 +6080,7 @@
                 ],
                 "object_keywords": [
                   "验证是否满足直角三角形关系",
-                  "即视线与行星轨道相切",
-                  "sin"
+                  "即视线与行星轨道相切"
                 ],
                 "required_symbols": [
                   "R_inner",
@@ -7170,42 +7026,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Gravitation and Kepler's Laws",
-              "Gravitation",
-              "Kepler's Laws",
-              "卫星轨道衰减能量守恒陷阱",
-              "涉及大气阻力导致的轨道半径减小（Orbital Decay）时",
-              "天体碰撞变轨判定",
-              "涉及卫星碰撞后坠落或近地点高度限制时",
-              "高纬度天体可见时间修正",
-              "题目涉及非赤道地区的行星/恒星落山时间或最大可见时长计算",
-              "题目涉及非赤道地区的行星",
-              "恒星落山时间或最大可见时长计算",
-              "零场强区域势能恒定律",
-              "题目给出或推导出某一区域内场强（重力场或静电场）为零时",
-              "区分广义相对论与牛顿力学偏转",
-              "题目明确要求“不考虑广义相对论效应”或“使用牛顿引力定律”时",
-              "远日点与包络边界区分"
+              "planet mass",
+              "planet mass enclosed",
+              "planet mass enclosed radius",
+              "mass enclosed",
+              "Orbital Decay",
+              "mass enclosed radius"
             ],
             "topic_keywords": [
               "Gravitation",
               "Kepler",
-              "Laws",
               "gravitational",
               "Ensure",
               "masses",
               "between",
-              "Law",
               "Formula",
               "m1",
               "m2",
-              "force",
-              "Equal",
               "coordinate",
               "correctly",
               "two",
               "Confirm",
-              "planet"
+              "planet",
+              "Orbital",
+              "ground",
+              "卫星轨道衰减能量守恒陷阱",
+              "涉及大气阻力导致的轨道半径减小",
+              "Decay",
+              "天体碰撞变轨判定"
             ],
             "required_symbols": [
               "G",
@@ -7215,17 +7063,13 @@
               "r_p",
               "v_{after}",
               "R_E",
-              "φ",
-              "δ",
-              "H",
               "Phi",
               "k",
               "r_a",
               "v",
               "v_0",
+              "h",
               "dr",
-              "R_inner",
-              "R_outer",
               "v_{ground}",
               "v_{inertial}",
               "\\omega",
@@ -7498,7 +7342,7 @@
               "trigger": "涉及地球表面物体随自转产生的悬线偏角（重力偏差）极值问题",
               "check_logic": "利用矢量合成，偏角 alpha ≈ (ω²R sinλ cosλ) / g = (ω²R sin2λ) / 2g。极值必在 sin2λ=1 即 λ=45° 处取得。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "alpha = (omega^2 * R * sin(2 * lambda)) / (2 * g)",
@@ -7527,8 +7371,6 @@
                   "利用矢量合成",
                   "偏角",
                   "alpha",
-                  "sin",
-                  "cos",
                   "2g",
                   "极值必在"
                 ],
@@ -7629,22 +7471,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Non-inertial Reference Frames and Pseudo Forces",
-              "Non-inertial Reference Frames",
               "Pseudo Forces",
-              "非惯性系表观力符号辨析",
-              "要求求解转动参考系下的“观测力”或“有效力” F_R",
-              "旋转流体静力平衡判别",
-              "题目涉及旋转容器内的流体（气体/液体）压力梯度与位置关系时",
-              "题目涉及旋转容器内的流体（气体",
-              "液体）压力梯度与位置关系时",
-              "非惯性系合力方向校验",
-              "在旋转参考系中确定“垂直”或“水平”方向",
-              "地球自转偏角极值判定",
-              "涉及地球表面物体随自转产生的悬线偏角（重力偏差）极值问题",
-              "转动系加速度变换算符一致性",
-              "涉及惯性系与转动系速度、加速度转换（v, v_R, a, a_R）",
-              "涉及惯性系与转动系速度、加速度转换（v"
+              "a_R）"
             ],
             "topic_keywords": [
               "Non",
@@ -7652,8 +7480,6 @@
               "Reference",
               "Frames",
               "Pseudo",
-              "Forces",
-              "force",
               "frame",
               "acceleration",
               "Ensure",
@@ -7661,8 +7487,14 @@
               "rotating",
               "direction",
               "consistent",
-              "system",
-              "a_frame"
+              "a_frame",
+              "非惯性系表观力符号辨析",
+              "要求求解转动参考系下的",
+              "观测力",
+              "有效力",
+              "F_R",
+              "旋转流体静力平衡判别",
+              "题目涉及旋转容器内的流体"
             ],
             "required_symbols": [
               "F_R",
@@ -7675,8 +7507,6 @@
               "x",
               "g_eff",
               "g_0",
-              "lambda",
-              "g",
               "a_in",
               "a_rot",
               "v_rot"
@@ -8067,7 +7897,6 @@
                   "的导数关系"
                 ],
                 "object_keywords": [
-                  "tan",
                   "_0",
                   "与",
                   "的正负号及三角关系",
@@ -8293,22 +8122,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Fluid Statics (Buoyancy, Pressure in Fluids)",
-              "Fluid Statics",
-              "Buoyancy",
               "Pressure in Fluids",
-              "转轴力臂定义一致性检查",
-              "计算分布载荷（如静水压力）对特定轴的力矩时",
-              "无穷远场零势能约束",
-              "题目定义“远方水面为 z=0”或“far away from the board is on the x y plane with z=0”",
-              "题目定义“远方水面为 z=0”或“far away from the board is on the x y plane",
-              "z=0”",
-              "球冠体积公式对象校验",
-              "涉及球体浮力、排水体积或球冠几何计算时",
-              "浮力驱动加速度量级判定",
-              "涉及小温差导致的流体对流或浮子上升运动",
-              "势能梯度求力法",
-              "题目要求估计两物体间的相互作用力且给出势能提示或位移场叠加原理时"
+              "board plane",
+              "Pressure Fluids",
+              "away board plane",
+              "Buoyancy Pressure",
+              "Buoyancy Pressure Fluids",
+              "Statics Buoyancy Pressure",
+              "plane",
+              "far away board plane",
+              "Fluid Statics Buoyancy Pressure",
+              "Statics Buoyancy Pressure Fluids"
             ],
             "topic_keywords": [
               "Fluid",
@@ -8316,18 +8140,21 @@
               "Buoyancy",
               "Pressure",
               "Fluids",
-              "surface",
               "Ensure",
-              "Force",
               "Depth",
-              "object",
               "tension",
               "density",
               "Buoyant",
               "applied",
               "equilibrium",
-              "forces",
-              "effects"
+              "effects",
+              "tan",
+              "转轴力臂定义一致性检查",
+              "计算分布载荷",
+              "如静水压力",
+              "对特定轴的力矩时",
+              "无穷远场零势能约束",
+              "题目定义"
             ],
             "required_symbols": [
               "h",
@@ -9317,9 +9144,9 @@
               "pressure",
               "system",
               "whether",
-              "along",
-              "not",
-              "no"
+              "no",
+              "cross",
+              "sectional"
             ]
           },
           "tagged_reference": {
@@ -9329,42 +9156,28 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Fluid Dynamics (Bernoulli's Equation, Continuity)",
-              "Fluid Dynamics",
-              "Bernoulli's Equation",
-              "Continuity",
-              "伯努利方程常数项跨介质误用",
-              "公式出现 p + 1/2ρv² + ρgz = const 且涉及两种流体界面时",
-              "公式出现 p + 1",
-              "2ρv² + ρgz = const 且涉及两种流体界面时",
-              "多孔介质流体动力学建模完备性检查",
-              "题目涉及porous medium, reservoir, permeability (k), viscosity (μ) 时",
-              "题目涉及porous medium",
-              "reservoir",
-              "permeability",
-              "viscosity",
-              "诱导速度矢量合成校验",
-              "在流体或电磁场镜像法计算末尾"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Fluid",
-              "Dynamics",
               "Bernoulli",
               "Continuity",
               "Ensure",
               "streamline",
-              "energy",
               "rho",
-              "Terms",
               "incompressible",
               "flow",
               "pressure",
-              "system",
-              "whether",
-              "along",
-              "not",
-              "no"
+              "cross",
+              "sectional",
+              "题目提及",
+              "伯努利方程常数项跨介质误用",
+              "公式出现",
+              "且涉及两种流体界面时",
+              "多孔介质流体动力学建模完备性检查",
+              "题目涉及porous",
+              "medium",
+              "reservoir",
+              "permeability"
             ],
             "required_symbols": [
               "p",
@@ -9489,7 +9302,7 @@
               "trigger": "题目给定驱动频率 ω 且一端固定、一端受迫振动时",
               "check_logic": "驻波表达式必须以驱动频率 ω 为自变量，且分母通常包含 sin(kL) 或 cos(kL) 项，不能假设 kL 必须等于 nπ/2。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "y(x,t) = A(x)cos(ωt + φ), A(0)=A_0, A(L)=0",
@@ -9518,9 +9331,7 @@
                   "驻波表达式必须以驱动频率",
                   "为自变量",
                   "且分母通常包含",
-                  "sin",
                   "或",
-                  "cos",
                   "项"
                 ],
                 "required_symbols": [
@@ -9538,7 +9349,7 @@
               "trigger": "波在固定端（如 x=L）反射形成驻波时",
               "check_logic": "检查驻波空间部分是否在固定端点取值为0。若右端固定，空间项应形如 sin(k(L-x)) 而非简单的 cos(kx)。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "y(L, t) = 0",
@@ -9564,9 +9375,7 @@
                   "检查驻波空间部分是否在固定端点取值为0",
                   "若右端固定",
                   "空间项应形如",
-                  "sin",
                   "而非简单的",
-                  "cos",
                   "kx"
                 ],
                 "required_symbols": [
@@ -9893,7 +9702,7 @@
               "trigger": "进行复杂根式化简或分式合并时",
               "check_logic": "核实系数进入根号时幂次是否正确，尤其是分母上的系数移动。检查 $\\sqrt{a} \\cdot b$ 是否错误写成了 $\\sqrt{ab}$ 而非 $\\sqrt{ab^2}$。",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "k\\sqrt{\\frac{m}{x}} = \\sqrt{\\frac{k^2 m}{x}}",
@@ -9913,7 +9722,7 @@
                   "进行复杂根式化简或分式合并时"
                 ],
                 "object_keywords": [
-                  "sqrt",
+                  "root equation",
                   "ab",
                   "核实系数进入根号时幂次是否正确",
                   "尤其是分母上的系数移动",
@@ -10473,53 +10282,32 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Oscillations and Simple Harmonic Motion",
-              "Oscillations",
-              "Simple Harmonic Motion",
-              "区分受迫驻波与自由振动本征模",
-              "题目给定驱动频率 ω 且一端固定、一端受迫振动时",
-              "固定端点相位突变校验",
-              "波在固定端（如 x=L）反射形成驻波时",
-              "干摩擦振子停止判据",
-              "计算受干摩擦力作用的振子最终停止位置或振动次数",
-              "耦合振子特征频率求解",
-              "要求求解具有两个自由度（如x和q）系统的角频率时",
-              "恒力场简谐运动平衡位置判定",
-              "弹簧振子处于重力、斜面支持力等恒力场中时",
-              "叠放物体简谐运动受力分离",
-              "物体叠放在振子（弹簧连接体）上随之运动求接触力",
-              "复杂约束下的等效刚度"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Oscillations",
               "Simple",
               "Harmonic",
-              "Motion",
               "phase",
               "Frequency",
               "Ensure",
               "SHM",
-              "constant",
-              "Equations",
               "damping",
-              "systems",
               "correctly",
-              "Forces",
               "Angular",
-              "Energy",
               "Velocity",
               "Spring",
-              "Mass",
-              "Conditions"
+              "Conditions",
+              "题目给出",
+              "coefficient",
+              "干摩擦振子停止判据",
+              "计算受干摩擦力作用的振子最终停止位置或振动次数",
+              "耦合振子特征频率求解",
+              "要求求解具有两个自由度",
+              "如x和q"
             ],
             "required_symbols": [
-              "ω",
-              "L",
-              "u",
-              "A_0",
-              "x",
               "k",
+              "x",
               "\\mu",
               "m",
               "g",
@@ -10528,6 +10316,7 @@
               "F_ext",
               "N",
               "a",
+              "U",
               "y",
               "I",
               "R",
@@ -10536,6 +10325,7 @@
               "mu_2",
               "v",
               "t",
+              "L",
               "q",
               "S",
               "epsilon_0"
@@ -10576,12 +10366,12 @@
               "keywords": [
                 "或",
                 "时",
-                "cos",
                 "题目给出",
                 "2N",
                 "固定端点相位突变校验",
                 "波在固定端",
-                "如"
+                "如",
+                "反射形成驻波时"
               ],
               "rule_ids": [
                 "exp_2f68f3b0daf6c7a0",
@@ -10638,25 +10428,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Resonance and Damped Oscillations",
-              "Resonance",
-              "Damped Oscillations"
+              "Damped Oscillations",
+              "Resonance"
             ],
             "topic_keywords": [
               "Resonance",
               "Damped",
               "Oscillations",
-              "dt",
-              "force",
               "frequency",
               "damping",
-              "dx",
               "_0",
-              "kx",
               "restoring",
               "driving",
               "Ensure",
-              "forces",
               "natural",
               "_d"
             ],
@@ -10759,7 +10543,7 @@
               "trigger": "使用拉格朗日力学求解小振幅摆动问题",
               "check_logic": "必须在求导前或求导后立即对 sinθ≈θ 和 cosθ≈1 进行一致性近似，防止在二阶项（如 θ_dot^2 * sinθ）上浪费计算量，该类项在小角近似下为三阶小量应直接忽略。",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "sin(theta) -> theta, cos(theta) -> 1, dot(theta)^2 * sin(theta) -> 0",
@@ -10779,10 +10563,8 @@
                   "使用拉格朗日力学求解小振幅摆动问题"
                 ],
                 "object_keywords": [
-                  "sin",
                   "必须在求导前或求导后立即对",
                   "和",
-                  "cos",
                   "进行一致性近似",
                   "防止在二阶项",
                   "如",
@@ -10882,17 +10664,7 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Normal Modes and Coupled Oscillations",
-              "Normal Modes",
-              "Coupled Oscillations",
-              "耦合振动系统周期检查",
-              "涉及小车-摆锤或多质点耦合系统的简谐运动周期计算",
-              "内力系统合力与质心守恒检查",
-              "题目要求分析系统内力关系及位移的物理意义时",
-              "拉格朗日方程小角化简时机",
-              "使用拉格朗日力学求解小振幅摆动问题",
-              "链式多体系统边界受力校验",
-              "处理 N 个物体由 N-1 个弹簧连接的线性链式模型时"
+              "Normal Modes"
             ],
             "topic_keywords": [
               "Normal",
@@ -10900,20 +10672,21 @@
               "Coupled",
               "Oscillations",
               "Ensure",
-              "system",
-              "motion",
-              "equations",
               "displacements",
               "consistency",
               "correctly",
               "derived",
               "coupling",
-              "forces",
-              "terms",
               "frequencies",
               "matrix",
-              "all",
-              "energy"
+              "耦合振动系统周期检查",
+              "涉及小车",
+              "摆锤或多质点耦合系统的简谐运动周期计算",
+              "内力系统合力与质心守恒检查",
+              "题目要求分析系统内力关系及位移的物理意义时",
+              "链式多体系统边界受力校验",
+              "个物体由",
+              "个弹簧连接的线性链式模型时"
             ],
             "required_symbols": [
               "M",
@@ -10922,7 +10695,6 @@
               "F_i",
               "m_i",
               "x_i",
-              "theta",
               "F_1",
               "x_1",
               "x_2",
@@ -11296,27 +11068,11 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Elasticity and Hooke's Law",
-              "Elasticity",
-              "Hooke's Law",
-              "微观能量单位换算校验",
-              "计算涉及电子伏特(eV)与国际单位制(SI)力学常数（如N/m）转换时",
-              "计算涉及电子伏特",
-              "与国际单位制",
-              "力学常数（如N",
-              "m）转换时",
-              "势能函数简谐近似准则",
-              "题目要求从非线性势能函数（如Morse, Lennard-Jones）推导劲度系数k时",
-              "题目要求从非线性势能函数（如Morse",
-              "Lennard-Jones）推导劲度系数k时",
-              "缓冲制动最大加速度建模",
-              "题目涉及自由落体后进入弹性绳缓冲并限制最大加速度 a_max",
-              "对称形变边界条件校验"
+              "SI 力学常数"
             ],
             "topic_keywords": [
               "Elasticity",
               "Hooke",
-              "Law",
               "material",
               "elastic",
               "Strain",
@@ -11325,12 +11081,16 @@
               "limit",
               "deformation",
               "within",
-              "kx",
               "Stress",
-              "force",
               "spring",
               "sign",
-              "used"
+              "微观能量单位换算校验",
+              "计算涉及电子伏特",
+              "与国际单位制",
+              "力学常数",
+              "转换时",
+              "势能函数简谐近似准则",
+              "题目要求从非线性势能函数"
             ],
             "required_symbols": [
               "eV",
@@ -11474,36 +11234,23 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Center of Mass and Motion of Extended Bodies",
-              "Extended Bodies",
-              "人船模型适用边界",
-              "涉及两个物体相对运动求位移，且存在地面摩擦力时",
-              "涉及两个物体相对运动求位移",
-              "且存在地面摩擦力时",
-              "阻力系统位移判据",
-              "物体从静止开始运动最终停止，且受阻力 $f = -kv$ 时",
-              "物体从静止开始运动最终停止",
-              "且受阻力 $f = -kv$ 时"
+              "Mass Extended",
+              "Extended Bodies"
             ],
             "topic_keywords": [
-              "Center",
-              "Mass",
-              "Motion",
               "Extended",
-              "Bodies",
-              "vec",
-              "system",
               "Ensure",
-              "com",
               "_i",
               "correctly",
               "calculated",
-              "sum",
               "coordinate",
-              "position",
               "symmetry",
-              "axis",
-              "about"
+              "人船模型适用边界",
+              "涉及两个物体相对运动求位移",
+              "且存在地面摩擦力时",
+              "阻力系统位移判据",
+              "物体从静止开始运动最终停止",
+              "且受阻力"
             ],
             "required_symbols": [
               "k",
@@ -11650,33 +11397,23 @@
           "retrieval_hints": {
             "scene_keywords": [
               "Dynamics of Systems of Particles",
-              "非标准色散关系加速度校验",
-              "题目给出非二次型动能公式 K(p) 或色散关系 E(k) 时",
-              "题目给出非二次型动能公式 K",
               "或色散关系 E",
-              "各向异性/准粒子动力学分量分解",
-              "各向异性",
-              "准粒子动力学分量分解",
-              "涉及准粒子在电磁场中运动且 K-p 关系包含线性项或高次项"
+              "各向异性"
             ],
             "topic_keywords": [
-              "Dynamics",
-              "Systems",
-              "Particles",
-              "system",
-              "Mass",
               "external",
               "Momentum",
-              "total",
-              "forces",
-              "Center",
-              "all",
               "Ensure",
               "consistent",
-              "equations",
-              "force",
               "acceleration",
-              "F_ext"
+              "F_ext",
+              "非标准色散关系加速度校验",
+              "题目给出非二次型动能公式",
+              "或色散关系",
+              "各向异性",
+              "准粒子动力学分量分解",
+              "涉及准粒子在电磁场中运动且",
+              "关系包含线性项或高次项"
             ],
             "required_symbols": [
               "K",
@@ -11730,13 +11467,10 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Coriolis Force and Applications",
               "Coriolis Force"
             ],
             "topic_keywords": [
               "Coriolis",
-              "Force",
-              "Applications",
               "velocity",
               "frame",
               "rotating",
@@ -11934,38 +11668,33 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Electric Fields",
+              "Coulomb Electric Fields",
               "Coulomb's Law and Electric Fields",
               "Coulomb's Law",
-              "Electric Fields",
-              "有限长带电线场强对称性校验",
-              "计算带电线段在空间任意点的场强 E 时",
-              "积分限与物理域一致性检查",
-              "在计算连续分布电荷产生的场强，设定积分变量 x 和场点距离 r 时",
-              "在计算连续分布电荷产生的场强",
-              "设定积分变量 x 和场点距离 r 时",
-              "多边形内心场强对称性判定",
-              "均匀带电多边形边界，求解内心（Incenter）处的场强",
-              "均匀带电多边形边界",
-              "求解内心（Incenter）处的场强"
+              "Coulomb Electric"
             ],
             "topic_keywords": [
               "Coulomb",
-              "Law",
-              "Electric",
-              "Fields",
-              "charges",
               "Ensure",
-              "Field",
-              "force",
               "consistent",
               "correctly",
-              "distance",
               "calculated",
               "vector",
               "coordinate",
               "between",
               "point",
-              "all"
+              "有限长带电线场强对称性校验",
+              "计算带电线段在空间任意点的场强",
+              "积分限与物理域一致性检查",
+              "在计算连续分布电荷产生的场强",
+              "设定积分变量",
+              "和场点距离",
+              "多边形内心场强对称性判定",
+              "均匀带电多边形边界",
+              "求解内心",
+              "Incenter",
+              "处的场强"
             ],
             "required_symbols": [
               "E",
@@ -12675,7 +12404,6 @@
                   "题目明确指出角动量不守恒",
                   "angular",
                   "momentum",
-                  "not",
                   "conserved",
                   "但要求求解速度分量"
                 ],
@@ -12735,32 +12463,11 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Electric Potential and Potential Energy",
-              "Electric Potential",
-              "Potential Energy",
-              "简谐运动回复力线性一致性检查",
-              "题目要求计算“小位移振动（small oscillations）”的周期",
-              "级联放大系统总功审计",
-              "涉及多级倍增（如光电倍增管、雪崩过程）及恒定级间电压",
-              "能源共享类问题单位一致性检查",
-              "涉及总能量分配给总人口并计算持续时间时",
-              "量级估算题优先使用题干约束",
-              "题目要求Order of magnitude estimate并提供特定模型数据（如曲线、常数）时",
-              "题目要求Order",
-              "magnitude estimate并提供特定模型数据（如曲线、常数）时",
-              "临界穿越能量守恒律",
-              "电荷从无穷远向同号电荷中心运动并要求“穿过”或“到达”某点",
-              "等壳电势一致性检查"
+              "Electric Potential"
             ],
             "topic_keywords": [
-              "Potential",
-              "Electric",
-              "Energy",
-              "charge",
-              "charges",
               "point",
               "Ensure",
-              "field",
               "calculations",
               "work",
               "done",
@@ -12768,7 +12475,17 @@
               "consistency",
               "correctly",
               "positive",
-              "q1"
+              "q1",
+              "简谐运动回复力线性一致性检查",
+              "题目要求计算",
+              "小位移振动",
+              "small",
+              "oscillations",
+              "的周期",
+              "级联放大系统总功审计",
+              "涉及多级倍增",
+              "如光电倍增管",
+              "雪崩过程"
             ],
             "required_symbols": [
               "F",
@@ -13078,37 +12795,29 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Gauss's Law and Applications",
-              "Gauss's Law",
-              "几何对称性匹配检查",
-              "在球体表面极小高度（h << R）范围内应用高斯定理时",
-              "实体导体场强分段检查",
-              "题目给出具有特定半径（如 r0, R）的金属丝、球体或柱体导体时",
-              "题目给出具有特定半径（如 r0",
-              "R）的金属丝、球体或柱体导体时",
-              "高斯面选取对称性匹配",
-              "计算无限长线电荷、无限大平面或球对称电荷分布的场强时",
-              "近地电场高斯面建模",
-              "涉及地球表面大气电场随高度变化计算电荷密度时"
+              "Gauss's Law"
             ],
             "topic_keywords": [
               "Gauss",
-              "Law",
-              "Applications",
-              "charge",
               "Ensure",
-              "electric",
-              "field",
               "correctly",
-              "charges",
               "symmetry",
               "flux",
-              "application",
-              "surface",
               "enclosed",
               "spherical",
               "cylindrical",
-              "conditions"
+              "conditions",
+              "几何对称性匹配检查",
+              "在球体表面极小高度",
+              "范围内应用高斯定理时",
+              "实体导体场强分段检查",
+              "题目给出具有特定半径",
+              "r0",
+              "的金属丝",
+              "球体或柱体导体时",
+              "高斯面选取对称性匹配",
+              "计算无限长线电荷",
+              "无限大平面或球对称电荷分布的场强时"
             ],
             "required_symbols": [
               "Phi",
@@ -13339,19 +13048,10 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Capacitance Dielectrics",
               "Capacitance and Dielectrics",
-              "Capacitance",
               "Dielectrics",
-              "临界平衡态能量转化判定",
-              "题目提及“弹性膜/弹簧”、“电荷注入”及“临界力常数k”时",
-              "题目提及“弹性膜",
-              "弹簧”、“电荷注入”及“临界力常数k”时",
-              "平行板电容器变间距受力分析",
-              "涉及电容器极板间距d变化且受弹性力平衡时",
-              "多层平行板电容器面数判定",
-              "出现 N+1 片定片与 N 片动片交错排列时",
-              "静电常数k与介电常数辨析",
-              "题目给定静电常数 k 而非 ε0 时"
+              "Capacitance"
             ],
             "topic_keywords": [
               "Capacitance",
@@ -13366,11 +13066,14 @@
               "Plate",
               "capacitor",
               "material",
-              "Energy",
               "voltage",
-              "Constant",
-              "Potential",
-              "Series"
+              "Series",
+              "临界平衡态能量转化判定",
+              "题目提及",
+              "弹性膜",
+              "电荷注入",
+              "临界力常数k",
+              "平行板电容器变间距受力分析"
             ],
             "required_symbols": [
               "k",
@@ -13654,32 +13357,32 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "ohmic resistor",
-              "voltage current relation",
-              "resistive wire loss",
               "Current, Resistance, and Ohm's Law",
               "Ohm's Law",
-              "连续介质电阻积分法",
-              "计算具有特定几何对称性（球、柱）的非均匀或连续导电介质电阻",
-              "区分结构间距与元件长度",
-              "题目同时给出平行导轨间距（如h）和横向元件分布间距（如L）时",
-              "微观参数关联检查",
-              "题目给出电子数密度n、质量m、电荷e等微观量用于宏观电阻估算时",
-              "超导电流衰减建模",
-              "涉及超导线圈电流长期保持、电阻上限估算或电流变化精度时"
+              "Current Resistance",
+              "Current Resistance Ohm"
             ],
             "topic_keywords": [
-              "ohm",
-              "resistor",
+              "Resistance",
+              "Ohm",
               "voltage",
-              "current",
-              "resistive",
-              "wire loss",
-              "Law",
               "ensure",
-              "temperature",
               "Power",
-              "consistent"
+              "Direction",
+              "consistent",
+              "Circuit",
+              "circuits",
+              "连续介质电阻积分法",
+              "计算具有特定几何对称性",
+              "的非均匀或连续导电介质电阻",
+              "区分结构间距与元件长度",
+              "题目同时给出平行导轨间距",
+              "和横向元件分布间距",
+              "微观参数关联检查",
+              "题目给出电子数密度n",
+              "质量m",
+              "电荷e等微观量用于宏观电阻估算时",
+              "超导电流衰减建模"
             ],
             "required_symbols": [
               "\\rho",
@@ -14088,42 +13791,32 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "DC Circuits and Kirchhoff's Laws",
               "DC Circuits",
-              "Kirchhoff's Laws",
+              "ideal ammeter",
+              "Circuits Kirchhoff",
+              "DC Circuits Kirchhoff"
+            ],
+            "topic_keywords": [
+              "Circuits",
+              "Kirchhoff",
+              "Ensure",
+              "Voltage",
+              "zero",
+              "power",
+              "voltages",
+              "circuit",
+              "junction",
+              "ideal",
               "电压表理想化模型选择",
               "电路包含电压表且未给出具体内阻时",
               "动态电路趋势一致性校验",
-              "题目描述电阻 R 减小但相关电压 V 增大时",
+              "题目描述电阻",
+              "减小但相关电压",
+              "增大时",
               "电压表理想化模型校验",
-              "题目提及“电压表连接到电路”且未给出具体内阻时",
-              "理想电表接入审计",
-              "题目要求在两点间接入“ideal ammeter”或“ideal voltmeter”时",
-              "复杂网络比例系数校验",
-              "答案要求以总电流Is或总电压Us的比例形式（如1/n）表达时",
-              "答案要求以总电流Is或总电压Us的比例形式（如1",
-              "n）表达时",
-              "RC稳态节点电势判定"
-            ],
-            "topic_keywords": [
-              "DC",
-              "Circuits",
-              "Kirchhoff",
-              "Laws",
-              "Ensure",
-              "sum",
-              "Voltage",
-              "Current",
-              "zero",
-              "Law",
-              "equal",
-              "currents",
-              "power",
-              "voltages",
-              "all",
-              "circuit",
-              "junction",
-              "total"
+              "题目提及",
+              "电压表连接到电路",
+              "且未给出具体内阻时"
             ],
             "required_symbols": [
               "V",
@@ -14280,17 +13973,16 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "AC Circuits (Impedance and Reactance)",
               "AC Circuits",
-              "Impedance",
-              "Reactance",
-              "乘法器DC分量提取规则",
-              "当题目涉及两个正弦信号相乘并提取DC（直流）分量时",
-              "区分有效值与平均值",
-              "涉及交流电（AC）充电、电解或电镀等电量累积过程时"
+              "AC Circuits Impedance",
+              "AC Circuits Impedance Reactance",
+              "AC Circuits (Impedance and Reactance)",
+              "AC 充电",
+              "Circuits Impedance",
+              "Circuits Impedance Reactance",
+              "Circuits"
             ],
             "topic_keywords": [
-              "AC",
               "Circuits",
               "Impedance",
               "Reactance",
@@ -14298,14 +13990,18 @@
               "voltage",
               "angle",
               "values",
-              "used",
               "Power",
-              "current",
               "phase",
               "Resonance",
               "units",
               "RMS",
-              "Confirm"
+              "Confirm",
+              "乘法器DC分量提取规则",
+              "当题目涉及两个正弦信号相乘并提取DC",
+              "分量时",
+              "区分有效值与平均值",
+              "涉及交流电",
+              "电解或电镀等电量累积过程时"
             ],
             "required_symbols": [
               "V1",
@@ -14949,7 +14645,6 @@
                   "loop",
                   "repeatedly",
                   "或",
-                  "not",
                   "escape",
                   "且未给半径时"
                 ],
@@ -15109,7 +14804,7 @@
               "trigger": "给定磁偶极子场分量 $B_r \\propto -2\\sin\\lambda, B_\\lambda \\propto \\cos\\lambda$ 时",
               "check_logic": "校验场强模值因子是否为 $\\sqrt{4\\sin^2\\lambda + \\cos^2\\lambda} = \\sqrt{1+3\\sin^2\\lambda}$，常误写为 $\\sqrt{1+3\\cos^2\\lambda}$",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "B \\propto \\sqrt{1+3\\sin^2\\lambda}",
@@ -15131,15 +14826,10 @@
                   "磁偶极子场强模值校验",
                   "给定磁偶极子场分量",
                   "B_r",
-                  "sin",
-                  "B_",
-                  "cos"
+                  "B_"
                 ],
                 "object_keywords": [
                   "lambda",
-                  "sqrt",
-                  "sin",
-                  "cos",
                   "校验场强模值因子是否为",
                   "常误写为"
                 ],
@@ -15927,40 +15617,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Magnetic Fields and Lorentz Force",
-              "Magnetic Fields",
-              "Lorentz Force",
-              "等质量弹性碰撞速度交换律",
-              "出现“absolutely elastic”、“mass m”且为“central collision”时",
-              "多级电场运动顺序校验",
-              "题目描述包含“dual acceleration field”及“drift region”",
-              "线性阻力位移矢量关系",
-              "受线性阻力 f = -kv 且初速度为 v0 的粒子运动",
-              "镜像法矢量叠加一致性",
-              "涉及点电荷/单极子在无限大平面边界附近的场强计算",
-              "涉及点电荷",
-              "单极子在无限大平面边界附近的场强计算",
-              "绝热不变性半径关联",
-              "磁场缓慢变化（时间远大于旋转周期）且电荷做圆周运动",
-              "复杂磁场背景下的受力完整性检查"
+              "strong magnetic field",
+              "Magnetic Fields Lorentz",
+              "magnetic field 且涉及带电体碰撞时",
+              "absolutely elastic mass",
+              "dual acceleration field",
+              "field lines constrained"
             ],
             "topic_keywords": [
-              "Magnetic",
-              "Fields",
               "Lorentz",
-              "Force",
               "Ensure",
-              "Law",
-              "current",
-              "Field",
               "calculated",
-              "electric",
               "correctly",
               "velocity",
               "Right",
               "direction",
-              "Application",
-              "particle"
+              "题目涉及",
+              "r0",
+              "等质量弹性碰撞速度交换律",
+              "absolutely",
+              "elastic",
+              "central",
+              "多级电场运动顺序校验",
+              "题目描述包含",
+              "dual"
             ],
             "required_symbols": [
               "v",
@@ -15986,7 +15666,6 @@
               "\\alpha",
               "gamma",
               "Delta_t",
-              "\\lambda",
               "l",
               "e",
               "d",
@@ -16063,12 +15742,12 @@
               "keywords": [
                 "时",
                 "lambda",
-                "sin",
-                "cos",
                 "j_x",
                 "j_y",
                 "广义动量守恒项量纲检查",
-                "要求写出受磁场力影响的"
+                "要求写出受磁场力影响的",
+                "修改后动量",
+                "或"
               ],
               "rule_ids": [
                 "exp_3c20c3d95614cd31",
@@ -16130,15 +15809,12 @@
                   "已知比例系数形式的反向约束",
                   "题目明确给出结果正比于特定函数",
                   "如",
-                  "tan",
                   "时"
                 ],
                 "object_keywords": [
                   "在积分或代数化简中",
                   "优先寻找能产生该特定半角函数的几何关系",
                   "如",
-                  "cos",
-                  "sin",
                   "避免陷入不相关的倍角变换"
                 ],
                 "required_symbols": [
@@ -16323,38 +15999,29 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Biot-Savart Law and Ampere's Law",
-              "Biot-Savart Law",
               "Ampere's Law",
-              "复杂源磁通量积分校验",
-              "要求计算穿过特定回路的磁通量 Phi，且电流源分布在空间区域时",
-              "要求计算穿过特定回路的磁通量 Phi",
-              "且电流源分布在空间区域时",
-              "有限长电流磁场角度定义校验",
-              "计算直导线磁场 B = (μ0 i / 4π r) * (cos θ1 - cos θ2) 时",
-              "计算直导线磁场 B =",
-              "μ0 i",
-              "4π r",
+              "Biot-Savart Law",
               "cos θ1",
               "cos θ2"
             ],
             "topic_keywords": [
-              "Law",
               "Biot",
               "Savart",
               "Ampere",
-              "field",
-              "magnetic",
-              "current",
               "Ensure",
-              "currents",
               "loop",
               "element",
-              "dl",
               "steady",
               "symmetry",
               "direction",
-              "units"
+              "units",
+              "cos",
+              "复杂源磁通量积分校验",
+              "要求计算穿过特定回路的磁通量",
+              "Phi",
+              "且电流源分布在空间区域时",
+              "有限长电流磁场角度定义校验",
+              "计算直导线磁场"
             ],
             "required_symbols": [
               "\\Phi",
@@ -17116,7 +16783,7 @@
               "trigger": "题目给出旋转角度 θ 且涉及多个空间方向的导线时",
               "check_logic": "检查感应电动势是否包含 sin(θ) 和 cos(θ) 的线性组合，以反映不同空间取向导线切割磁感线的相位差。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "E \\propto B l^2 \\omega (a \\sin\\theta + b \\cos\\theta)",
@@ -17139,9 +16806,7 @@
                 ],
                 "object_keywords": [
                   "检查感应电动势是否包含",
-                  "sin",
                   "和",
-                  "cos",
                   "的线性组合",
                   "以反映不同空间取向导线切割磁感线的相位差"
                 ],
@@ -17284,52 +16949,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "eddy current",
-              "foucault current",
-              "magnetic braking",
-              "rotating disc in magnetic field",
-              "induced emf",
-              "Electromagnetic Induction and Faraday's Law",
               "Electromagnetic Induction",
-              "Faraday's Law",
-              "多支路感应电流建模",
-              "涉及旋转对称框架（如立方体、多边形）在磁场中感应电流时",
-              "RL感应回路稳态电流耦合检查",
-              "题目同时给出互感 M、自感 L 和电阻 R 要求求解感应电流时",
-              "速度相关力的运动学积分校验",
-              "加速度 a 表达式中包含速度变量 v 时",
-              "旋转回路磁通变化判定",
-              "闭合回路在恒定磁场中绕垂直于磁场轴旋转",
-              "相位差定义基准对齐",
-              "涉及两个交流量（如 I1, I2）的相位差 δ 或 tan δ 时",
-              "涉及两个交流量（如 I1",
-              "I2）的相位差 δ 或 tan δ 时",
-              "离散求和转积分一致性"
+              "Electromagnetic Induction Faraday"
             ],
             "topic_keywords": [
-              "eddy",
-              "foucault",
-              "induced emf",
-              "flux change",
-              "magnetic braking",
-              "faraday",
               "Electromagnetic",
-              "Induction",
-              "Law",
-              "magnetic",
+              "Faraday",
               "EMF",
               "Ensure",
               "loop",
               "flux",
               "induced",
-              "surface",
-              "time",
               "consistent",
-              "field",
               "closed",
               "correctly",
               "integral",
-              "change"
+              "change",
+              "多支路感应电流建模",
+              "涉及旋转对称框架",
+              "如立方体",
+              "多边形",
+              "在磁场中感应电流时",
+              "RL感应回路稳态电流耦合检查",
+              "题目同时给出互感",
+              "和电阻"
             ],
             "required_symbols": [
               "E",
@@ -17357,7 +17000,6 @@
               "B_induced_avg",
               "F",
               "ε",
-              "\\theta",
               "\\tau",
               "F_drag"
             ]
@@ -17703,39 +17345,31 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Lenz's Law and Eddy Currents",
-              "Lenz's Law",
               "Eddy Currents",
-              "涡流扩散特征速度建模",
-              "磁偶极子在薄膜上方运动并涉及特征速度 v0 时",
-              "趋肤效应临界速度判定",
-              "涉及运动磁源与导体薄膜相互作用，且提及趋肤深度与厚度关系时",
-              "涉及运动磁源与导体薄膜相互作用",
-              "且提及趋肤深度与厚度关系时",
-              "区分超导与普通导体响应",
-              "题目描述为 conducting thin film 而非 superconductor 时",
-              "感应磁矩与磁场变化率方向一致性",
-              "计算由均匀磁场变化率 B_dot 产生的感应磁矩 μ"
+              "Lenz Eddy Currents",
+              "superconductor"
             ],
             "topic_keywords": [
               "Lenz",
-              "Law",
               "Eddy",
-              "Currents",
               "flux",
               "induced",
-              "magnetic",
               "EMF",
-              "current",
               "direction",
               "change",
               "Ensure",
-              "field",
-              "energy",
-              "dt",
               "Faraday",
               "correctly",
-              "sign"
+              "sign",
+              "涡流扩散特征速度建模",
+              "磁偶极子在薄膜上方运动并涉及特征速度",
+              "v0",
+              "趋肤效应临界速度判定",
+              "涉及运动磁源与导体薄膜相互作用",
+              "且提及趋肤深度与厚度关系时",
+              "区分超导与普通导体响应",
+              "题目描述为",
+              "conducting"
             ],
             "required_symbols": [
               "v_0",
@@ -17984,15 +17618,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Self-Inductance and Mutual Inductance",
               "Self-Inductance",
-              "Mutual Inductance",
-              "互感系数与磁通量比例关联",
-              "出现“磁感线穿过比例”或“磁通量分配比例”描述两个线圈关系时",
-              "自感与磁场公式区分",
-              "计算圆环或线圈的电感 L 时",
-              "超导电流衰减建模",
-              "题目涉及超导环电流随时间变化（如一年后的变化量）求电阻率"
+              "Mutual Inductance"
             ],
             "topic_keywords": [
               "Inductance",
@@ -18000,17 +17627,21 @@
               "Mutual",
               "Ensure",
               "coil",
-              "current",
               "induced",
               "change",
               "calculations",
-              "magnetic",
               "Consistency",
-              "Equations",
               "voltage",
               "applied",
-              "time",
-              "between"
+              "between",
+              "互感系数与磁通量比例关联",
+              "磁感线穿过比例",
+              "磁通量分配比例",
+              "描述两个线圈关系时",
+              "自感与磁场公式区分",
+              "计算圆环或线圈的电感",
+              "超导电流衰减建模",
+              "题目涉及超导环电流随时间变化"
             ],
             "required_symbols": [
               "M",
@@ -18381,7 +18012,7 @@
               "trigger": "计算回路 tan δ 或 cos φ 时",
               "check_logic": "检查阻抗角是否错误包含了互感系数 M。M 仅决定感生电动势的大小，不属于次级回路本身的复阻抗构成部分。",
               "error_type": "concept",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "Z_secondary = R + j * omega * L",
@@ -18401,9 +18032,7 @@
                 "trigger_keywords": [
                   "阻抗定义域一致性检查",
                   "计算回路",
-                  "tan",
                   "或",
-                  "cos",
                   "时"
                 ],
                 "object_keywords": [
@@ -18458,40 +18087,36 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "RC RLC Circuits",
+              "RL RC RLC Circuits",
               "RL, RC, and RLC Circuits",
-              "RLC Circuits",
-              "RL回路电动势平衡判定",
-              "题目要求在包含电感L和电阻R的闭合回路中表达感应电动势或电压关系",
-              "分段激励源的连续性处理",
-              "磁场或电压源在特定时刻t_0发生斜率改变（如从线性增长变为恒定）",
-              "互感感应电流相位判定",
-              "涉及互感电动势驱动的次级回路电流与初级电流相位差计算",
-              "磁通量突变初始电流判定",
-              "题目给出初始磁通量Φ且磁场在极短时间内消失",
-              "非线性元件电路建模校验",
-              "题目出现非线性元件（如 thyristor, element X）与 RC 组合且提到 jumping/oscillation",
-              "题目出现非线性元件（如 thyristor",
-              "element X）与 RC 组合且提到 jumping",
-              "oscillation",
-              "暂态过程时间常数校验"
+              "与 RC",
+              "RL RC",
+              "RC RLC",
+              "RL RC RLC",
+              "RLC Circuits"
             ],
             "topic_keywords": [
-              "RL",
-              "RC",
               "RLC",
               "Circuits",
               "Voltage",
               "circuit",
-              "Energy",
               "ensure",
-              "current",
               "inductor",
               "capacitor",
-              "Time",
-              "Constant",
               "units",
               "consistent",
-              "analysis"
+              "analysis",
+              "RL回路电动势平衡判定",
+              "题目要求在包含电感L和电阻R的闭合回路中表达感应电动势或电压关系",
+              "分段激励源的连续性处理",
+              "磁场或电压源在特定时刻t_0发生斜率改变",
+              "如从线性增长变为恒定",
+              "互感感应电流相位判定",
+              "涉及互感电动势驱动的次级回路电流与初级电流相位差计算",
+              "磁通量突变初始电流判定",
+              "题目给出初始磁通量",
+              "且磁场在极短时间内消失"
             ],
             "required_symbols": [
               "E",
@@ -18506,8 +18131,7 @@
               "C",
               "V_threshold",
               "\\Delta t",
-              "\\tau",
-              "Z"
+              "\\tau"
             ]
           },
           "clusters": []
@@ -18557,21 +18181,12 @@
             ],
             "topic_keywords": [
               "Maxwell",
-              "Equations",
-              "magnetic",
-              "Law",
-              "Electric",
-              "surface",
               "loop",
-              "Fields",
               "equals",
-              "field",
               "flux",
               "Ensure",
               "closed",
-              "charge",
-              "integral",
-              "current"
+              "integral"
             ],
             "required_symbols": []
           },
@@ -18859,41 +18474,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Electromagnetic Waves and Energy Transport",
               "Electromagnetic Waves",
-              "Energy Transport",
-              "介质参数量级常识检查",
-              "计算电磁波在土壤或常规介质中的传播参数时",
-              "偶极子时均势能系数完整性",
-              "计算诱导偶极子在交变电场中的时间平均势能 < -p·E > 时",
-              "低损耗介质衰减近似校验",
-              "当出现 (sigma / (omega * epsilon))^2 << 1 的损耗角正切平方项远小于1时",
-              "sigma",
-              "omega * epsilon",
-              "^2 << 1 的损耗角正切平方项远小于1时",
-              "光强与电场幅值转换系数校验",
-              "涉及激光强度 I 与电场幅值 E0 的能量转换计算时",
-              "驻波边界条件量子化规则",
-              "题目要求在固定边界（如Box, Cavity, String）处场量或位移为零时"
+              "Electromagnetic Waves Transport",
+              "Electromagnetic Waves and Energy Transport",
+              "Cavity String",
+              "Waves Transport",
+              "String"
             ],
             "topic_keywords": [
               "Electromagnetic",
-              "Waves",
-              "Energy",
               "Transport",
-              "wave",
               "free",
               "space",
               "Ensure",
-              "field",
               "direction",
-              "electric",
               "vector",
               "density",
               "Poynting",
-              "magnetic",
               "components",
-              "plane"
+              "plane",
+              "介质参数量级常识检查",
+              "计算电磁波在土壤或常规介质中的传播参数时",
+              "偶极子时均势能系数完整性",
+              "计算诱导偶极子在交变电场中的时间平均势能",
+              "低损耗介质衰减近似校验",
+              "当出现",
+              "sigma",
+              "omega",
+              "epsilon"
             ],
             "required_symbols": [
               "mu",
@@ -19094,33 +18702,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Poynting Vector and Radiation Pressure",
-              "Poynting Vector",
               "Radiation Pressure",
-              "复合幂次分母核验",
-              "计算包含多个负指数幂次乘积的分母时",
-              "辐射压力反射系数确认",
-              "题目提及“辐射压力”且涉及表面性质（如平滑、全反射、吸收）时",
-              "电磁场动量密度一致性",
-              "涉及坡印廷矢量 S 与动量密度 p_V 的转换时"
+              "Vector Radiation Pressure",
+              "Pressure",
+              "Poynting Vector Radiation Pressure",
+              "Poynting Vector and Radiation Pressure",
+              "Poynting Vector"
             ],
             "topic_keywords": [
               "Poynting",
               "Vector",
-              "Radiation",
               "Pressure",
-              "energy",
               "Ensure",
               "correctly",
               "direction",
-              "electric",
-              "magnetic",
               "density",
               "electromagnetic",
               "units",
               "applied",
               "conditions",
-              "media"
+              "media",
+              "复合幂次分母核验",
+              "计算包含多个负指数幂次乘积的分母时",
+              "辐射压力反射系数确认",
+              "题目提及",
+              "辐射压力",
+              "且涉及表面性质",
+              "如平滑",
+              "全反射"
             ],
             "required_symbols": [
               "a",
@@ -19240,7 +18849,7 @@
               "trigger": "在笛卡尔坐标与极坐标单位矢量间进行投影转换时",
               "check_logic": "验证 $\\hat{r} = \\cos\\theta\\hat{z} + \\sin\\theta\\hat{x}$ 与 $\\hat{\\theta} = -\\sin\\theta\\hat{z} + \\cos\\theta\\hat{x}$ 的正交性及与题目定义的夹角起始轴是否一致。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "\\vec{E} = E_r\\hat{r} + E_\\theta\\hat{\\theta}",
@@ -19263,8 +18872,6 @@
                 "object_keywords": [
                   "hat",
                   "theta",
-                  "cos",
-                  "sin",
                   "与",
                   "的正交性及与题目定义的夹角起始轴是否一致"
                 ],
@@ -19281,7 +18888,7 @@
               "trigger": "计算电偶极子在极坐标下的场强分量 $E_r, E_\\theta$ 时",
               "check_logic": "检查径向分量与极角分量的系数比是否满足 $E_r / E_\\theta = 2\\cot\\theta$。若比例不为2或三角函数对调则存在建模错误。",
               "error_type": "concept",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "E_r = 2E_\\theta \\cdot \\cot\\theta",
@@ -19311,7 +18918,6 @@
                   "检查径向分量与极角分量的系数比是否满足",
                   "E_r",
                   "E_",
-                  "cot",
                   "若比例不为2或三角函数对调则存在建模错误"
                 ],
                 "required_symbols": [
@@ -19409,42 +19015,37 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Electric Dipoles and Multipole Expansion",
               "Electric Dipoles",
-              "Multipole Expansion",
-              "受迫振动极化率模长校验",
-              "涉及电子云在交变电场下的位移响应及极化率计算",
-              "简谐量幅值与相位关联检查",
-              "使用x = x0 cos(wt + phi) 假设解代入微分方程时",
-              "使用x = x0 cos",
+              "Electric Dipoles Multipole",
+              "Electric Dipoles Multipole Expansion",
+              "Electric Dipoles and Multipole Expansion",
+              "Dipoles Multipole",
+              "Dipoles Multipole Expansion",
+              "Dipoles",
               "wt + phi",
-              "假设解代入微分方程时",
-              "极坐标投影矢量一致性",
-              "在笛卡尔坐标与极坐标单位矢量间进行投影转换时",
-              "偶极子场强分量比例检查",
-              "计算电偶极子在极坐标下的场强分量 $E_r, E_\\theta$ 时",
-              "计算电偶极子在极坐标下的场强分量 $E_r",
-              "E_\\theta$ 时"
+              "Multipole Expansion"
             ],
             "topic_keywords": [
-              "Electric",
               "Dipoles",
               "Multipole",
               "Expansion",
               "Dipole",
-              "Field",
               "Ensure",
               "Moment",
-              "Energy",
-              "charge",
               "Confirm",
               "correctly",
-              "Potential",
               "Torque",
               "Calculation",
-              "distance",
-              "axis",
-              "angle"
+              "angle",
+              "受迫振动极化率模长校验",
+              "涉及电子云在交变电场下的位移响应及极化率计算",
+              "简谐量幅值与相位关联检查",
+              "使用x",
+              "x0",
+              "cos",
+              "phi",
+              "假设解代入微分方程时",
+              "偶极子电势符号一致性检查"
             ],
             "required_symbols": [
               "e",
@@ -19454,13 +19055,9 @@
               "gamma",
               "x0",
               "F",
-              "\\hat{r}",
-              "\\hat{\\theta}",
-              "E_r",
-              "E_\\theta",
-              "\\theta",
               "\\vec{p}",
-              "\\vec{r}"
+              "\\vec{r}",
+              "\\theta"
             ]
           },
           "clusters": []
@@ -19554,30 +19151,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Magnetic Dipoles and Magnetic Materials",
+              "Dipoles Magnetic",
               "Magnetic Dipoles",
+              "Magnetic Dipoles Magnetic",
+              "Dipoles Magnetic Materials",
+              "Magnetic Dipoles Magnetic Materials",
+              "Magnetic Dipoles and Magnetic Materials",
               "Magnetic Materials",
-              "磁源模型极性校验",
-              "题目涉及两个磁单极子（magnetic monopoles）或磁偶极子计算时"
+              "magnetic monopoles",
+              "Dipoles"
             ],
             "topic_keywords": [
-              "Magnetic",
               "Dipoles",
               "Materials",
               "dipole",
               "Ensure",
               "loop",
-              "field",
               "correctly",
               "moment",
               "vector",
-              "used",
               "size",
-              "current",
               "unit",
               "right",
               "hand",
-              "consistent"
+              "consistent",
+              "磁源模型极性校验",
+              "题目涉及两个磁单极子",
+              "monopoles",
+              "或磁偶极子计算时"
             ],
             "required_symbols": [
               "q_m",
@@ -19726,32 +19327,26 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Displacement Current and Its Role in Maxwell's Equations",
+              "Induced Magnetic Field",
+              "题目涉及电容器充放电过程中的感生磁场 Induced Magnetic Field",
+              "Induced Magnetic",
               "Displacement Current",
-              "Its Role in Maxwell's Equations",
-              "非均匀介质磁场环流校验",
-              "题目涉及电容器充放电过程中的感生磁场（Induced Magnetic Field）计算",
-              "电磁能量流出积分完整性",
-              "要求计算从初始到平衡态流出的总电磁能量"
+              "Displacement Current Role Maxwell"
             ],
             "topic_keywords": [
               "Displacement",
-              "Current",
-              "Role",
               "Maxwell",
-              "Equations",
-              "term",
-              "electric",
               "Ensure",
-              "Law",
-              "field",
-              "time",
               "varying",
-              "fields",
               "continuity",
               "correctly",
               "density",
-              "consistency"
+              "consistency",
+              "非均匀介质磁场环流校验",
+              "题目涉及电容器充放电过程中的感生磁场",
+              "Induced",
+              "电磁能量流出积分完整性",
+              "要求计算从初始到平衡态流出的总电磁能量"
             ],
             "required_symbols": [
               "B",
@@ -20137,42 +19732,28 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Electrostatics in Conductors and Insulators",
-              "Electrostatics in Conductors",
-              "Insulators",
-              "多板静电平衡电荷分布规则",
-              "出现多个平行带电导体板接触或重新分布电荷时",
-              "区分相互作用能与系统静电能",
-              "题目要求计算“移动电荷做的功”或“配置电荷的能量”",
-              "感应电荷电势抵消律",
-              "计算点电荷在封闭导体空腔内产生的总电势贡献时",
-              "镜像法功与能的减半规则",
-              "计算点电荷在导体平面附近的静电能或移动电荷做功时",
-              "静电压力法求合力",
-              "求解带电导体受到的静电排斥力或维持平衡的最小外力",
-              "导体接触等势判据修正",
-              "表述中出现“由于板相同，电荷平分”或类似逻辑时",
-              "表述中出现“由于板相同"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Electrostatics",
               "Conductors",
               "Insulators",
-              "electric",
-              "field",
               "conductor",
-              "charge",
-              "surface",
               "inside",
-              "potential",
               "Ensure",
-              "charges",
               "density",
               "correctly",
               "zero",
-              "all",
-              "consistent"
+              "consistent",
+              "多板静电平衡电荷分布规则",
+              "出现多个平行带电导体板接触或重新分布电荷时",
+              "区分相互作用能与系统静电能",
+              "题目要求计算",
+              "移动电荷做的功",
+              "配置电荷的能量",
+              "感应电荷电势抵消律",
+              "计算点电荷在封闭导体空腔内产生的总电势贡献时",
+              "镜像法功与能的减半规则",
+              "计算点电荷在导体平面附近的静电能或移动电荷做功时"
             ],
             "required_symbols": [
               "Q_i",
@@ -20228,10 +19809,10 @@
               "scale",
               "Kelvin",
               "no",
-              "not",
               "Scales",
               "states",
-              "system"
+              "system",
+              "being"
             ]
           },
           "tagged_reference": {
@@ -20242,16 +19823,12 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Zeroth Law and Temperature Scales",
               "Zeroth Law",
               "Temperature Scales"
             ],
             "topic_keywords": [
               "Zeroth",
-              "Law",
-              "Temperature",
               "Scales",
-              "systems",
               "Ensure",
               "equilibrium",
               "thermal",
@@ -20259,10 +19836,7 @@
               "state",
               "scale",
               "Kelvin",
-              "no",
-              "not",
-              "states",
-              "system"
+              "states"
             ],
             "required_symbols": []
           },
@@ -21069,8 +20643,20 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "First Law of Thermodynamics",
-              "First Law",
+              "而非 net",
+              "net heat"
+            ],
+            "topic_keywords": [
+              "Ensure",
+              "heat",
+              "work",
+              "ideal",
+              "gas",
+              "applied",
+              "change",
+              "internal",
+              "units",
+              "closed",
               "活塞平衡态势能转化校验",
               "涉及重力活塞在绝热气缸中移动至新平衡态",
               "混合气体压强等效判定",
@@ -21080,29 +20666,7 @@
               "绝热系统功能守恒校验",
               "系统与外界无热交换但体积发生变化",
               "分子速率温度幂次律",
-              "求解不同温度下同种气体的方均根速率、平均速率或最概然速率之比",
-              "循环过程净功面积校验",
-              "涉及PV图中的闭合循环过程（Positive Cycle）",
-              "变力做功系统的等效热容分析",
-              "气体压力与位移（弹簧）线性相关且求比热/热容时"
-            ],
-            "topic_keywords": [
-              "First",
-              "Law",
-              "Thermodynamics",
-              "Ensure",
-              "system",
-              "heat",
-              "work",
-              "ideal",
-              "gas",
-              "used",
-              "applied",
-              "change",
-              "internal",
-              "energy",
-              "units",
-              "closed"
+              "求解不同温度下同种气体的方均根速率"
             ],
             "required_symbols": [
               "P_{final}",
@@ -21481,34 +21045,27 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Heat Transfer (Conduction, Convection, Radiation)",
+              "an order",
               "Heat Transfer",
               "Conduction",
-              "Convection",
-              "数量级估算边界校验",
-              "出现 'estimate of an order of magnitude' 表述时",
-              "出现 'estimate",
-              "an order",
-              "magnitude' 表述时"
+              "Convection"
             ],
             "topic_keywords": [
               "Heat",
-              "Transfer",
               "Conduction",
               "Convection",
-              "Radiation",
-              "Law",
-              "temperature",
               "correctly",
-              "Equations",
               "Conditions",
-              "dT",
-              "dx",
               "steady",
               "state",
               "T_surface",
               "thermal",
-              "sign"
+              "sign",
+              "数量级估算边界校验",
+              "estimate",
+              "order",
+              "magnitude",
+              "表述时"
             ],
             "required_symbols": [
               "k",
@@ -21559,28 +21116,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Work Done by Gases and PV Diagrams",
+              "Gases PV",
+              "Done Gases",
+              "Done Gases PV",
+              "Work Done Gases",
+              "Gases PV Diagrams",
               "Work Done by Gases",
+              "Gases",
+              "Work Done Gases PV",
+              "Done Gases PV Diagrams",
               "PV Diagrams"
             ],
             "topic_keywords": [
               "Work",
               "Done",
               "Gases",
-              "PV",
               "Diagrams",
               "gas",
               "Ensure",
               "pressure",
-              "volume",
-              "area",
-              "constant",
               "units",
               "calculated",
               "sign",
               "calculations",
               "curve",
-              "initial",
               "final"
             ],
             "required_symbols": []
@@ -21895,22 +21454,13 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Thermodynamic Processes (Isothermal, Adiabatic, etc.)",
-              "Thermodynamic Processes",
-              "Isothermal",
-              "Adiabatic",
-              "etc.",
-              "球体绝热过程幂律转换",
-              "题目涉及球体半径变化且声明为绝热过程（忽略热交换）时",
-              "绝热过程变量微分关系校验",
-              "涉及理想气体绝热过程（Adiabatic）中 P, V, T 之间的变化比例关系时",
-              "涉及理想气体绝热过程（Adiabatic）中 P",
-              "T 之间的变化比例关系时",
-              "喷管流动能量守恒一致性",
-              "涉及流体在通道或喷嘴（nozzle/channel）中的流动速度与状态变化时",
-              "涉及流体在通道或喷嘴（nozzle",
-              "channel）中的流动速度与状态变化时",
-              "两相流绝热膨胀建模"
+              "gaseous phases",
+              "liquid gaseous",
+              "liquid gaseous phases",
+              "between liquid gaseous",
+              "gaseous",
+              "between liquid gaseous phases",
+              "equilibrium between liquid gaseous"
             ],
             "topic_keywords": [
               "Thermodynamic",
@@ -21918,19 +21468,21 @@
               "Isothermal",
               "Adiabatic",
               "etc",
-              "constant",
-              "volume",
               "heat",
-              "PV",
               "Ensure",
-              "system",
-              "temperature",
               "work",
               "sign",
               "Constraints",
               "Consistency",
               "nRT",
-              "law"
+              "球体绝热过程幂律转换",
+              "题目涉及球体半径变化且声明为绝热过程",
+              "忽略热交换",
+              "绝热过程变量微分关系校验",
+              "涉及理想气体绝热过程",
+              "之间的变化比例关系时",
+              "喷管流动能量守恒一致性",
+              "涉及流体在通道或喷嘴"
             ],
             "required_symbols": [
               "T",
@@ -22168,37 +21720,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Second Law and Entropy",
               "Second Law",
-              "Entropy",
-              "恒温热库熵变简化律",
-              "题目要求计算“恒温热库（Heat Reservoir/Bath）”的熵变时",
-              "题目要求计算“恒温热库（Heat Reservoir",
-              "Bath）”的熵变时",
-              "区分热接触与热机做功",
-              "两个不同温度物体达到最终平衡温度",
-              "变温热源最大功约束",
-              "有限热容物体间热机做功、提取最大能量、最大功",
-              "绝热联动系统能量守恒",
-              "存在绝热壁、绝热活塞分割的多气室系统且涉及热交换时"
+              "Entropy"
             ],
             "topic_keywords": [
-              "Second",
-              "Law",
               "Entropy",
               "Processes",
               "heat",
               "Change",
               "zero",
               "Ensure",
-              "temperature",
               "Positive",
               "Irreversible",
               "reversible",
               "Carnot",
               "engine",
               "absolute",
-              "Boltzmann"
+              "Boltzmann",
+              "恒温热库熵变简化律",
+              "题目要求计算",
+              "恒温热库",
+              "Reservoir",
+              "Bath",
+              "的熵变时",
+              "区分热接触与热机做功"
             ],
             "required_symbols": [
               "\\Delta S_{bath}",
@@ -22353,13 +21898,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Carnot Cycle and Efficiency",
               "Carnot Cycle",
-              "Efficiency",
-              "循环过程状态量一致性",
-              "处理类奥托循环（Otto Cycle）的四段式过程时",
-              "量子热力学功热辨析",
-              "题目给出 d<E> = p dE + E dp 形式的能量变化分解时"
+              "Efficiency"
             ],
             "topic_keywords": [
               "Carnot",
@@ -22374,10 +21914,14 @@
               "Work",
               "engine",
               "Done",
-              "Temperature",
               "Ideal",
               "Gas",
-              "two"
+              "two",
+              "循环过程状态量一致性",
+              "处理类奥托循环",
+              "Otto",
+              "的四段式过程时",
+              "量子热力学功热辨析"
             ],
             "required_symbols": [
               "Delta_U",
@@ -22433,26 +21977,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Thermodynamic Potentials (Helmholtz, Gibbs)",
-              "Thermodynamic Potentials",
-              "Helmholtz",
-              "Gibbs"
+              "Gibbs",
+              "Helmholtz"
             ],
             "topic_keywords": [
               "Thermodynamic",
               "Potentials",
               "Helmholtz",
               "Gibbs",
-              "energy",
               "Ensure",
-              "constant",
-              "temperature",
               "correctly",
-              "potential",
               "conditions",
               "free",
               "work",
-              "equations",
               "consistent",
               "derivatives",
               "appropriate",
@@ -22508,19 +22045,13 @@
             ],
             "topic_keywords": [
               "Maxwell",
-              "Relations",
               "Ensure",
               "thermodynamic",
               "derivatives",
-              "used",
               "consistent",
-              "relation",
-              "volume",
               "correctly",
               "equilibrium",
               "conditions",
-              "constant",
-              "statistical",
               "numerical",
               "partial"
             ],
@@ -22775,7 +22306,7 @@
               "trigger": "涉及气体分子撞击率 J 与压强 P、温度 T 的关系推导",
               "check_logic": "检查是否正确联立 n=P/(kT) 和平均速率 v=sqrt(8kT/πm)，并验证系数 1/4 * sqrt(8) 是否简化为 1/sqrt(2π)",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "J = (1/4) * (P/kT) * sqrt(8kT/πm) = P/sqrt(2πmkT)",
@@ -22794,6 +22325,7 @@
               },
               "match_features": {
                 "trigger_keywords": [
+                  "trig substitution",
                   "气体动理论速率代换一致性",
                   "涉及气体分子撞击率",
                   "与压强",
@@ -22801,7 +22333,6 @@
                   "的关系推导"
                 ],
                 "object_keywords": [
-                  "sqrt",
                   "检查是否正确联立",
                   "kT",
                   "和平均速率",
@@ -23079,41 +22610,31 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Kinetic Gases",
               "Kinetic Theory of Gases",
-              "Kinetic Theory",
-              "Gases",
-              "大气物理常数代入完整性",
-              "题目要求给出具体的数值阈值（At which values of...）",
-              "单原子理想气体内能积分一致性",
-              "题目要求将总内能 U 表示为空间分布积分时",
-              "旋转流体压力梯度符号检查",
-              "涉及旋转参考系（如离心力、人工重力）中的流体压力分布计算",
-              "气体分子速率数量级校验",
-              "计算常温下（约300K）常见气体（如N2, O2, Air）的平均速率或方均根速率时",
-              "计算常温下（约300K）常见气体（如N2",
-              "Air）的平均速率或方均根速率时",
-              "气体动理论速率代换一致性",
-              "涉及气体分子撞击率 J 与压强 P、温度 T 的关系推导",
-              "防止代数化简死循环"
+              "Gases"
             ],
             "topic_keywords": [
               "Kinetic",
-              "Theory",
               "Gases",
               "Gas",
               "Ideal",
-              "temperature",
-              "Energy",
               "Ensure",
               "conditions",
               "monoatomic",
               "pressure",
               "Kelvin",
               "Distribution",
-              "volume",
-              "particles",
               "units",
-              "nRT"
+              "nRT",
+              "大气物理常数代入完整性",
+              "题目要求给出具体的数值阈值",
+              "values",
+              "单原子理想气体内能积分一致性",
+              "题目要求将总内能",
+              "表示为空间分布积分时",
+              "旋转流体压力梯度符号检查",
+              "涉及旋转参考系"
             ],
             "required_symbols": [
               "M",
@@ -23126,7 +22647,6 @@
               "rho",
               "omega",
               "T",
-              "k",
               "h",
               "ρ",
               "z",
@@ -23845,9 +23365,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Ideal Gas Law and Real Gas Behavior",
+              "Gas Real Gas",
+              "Ideal Gas Real Gas",
+              "Gas Real Gas Behavior",
+              "Gas Real",
+              "Real Gas",
+              "Ideal Gas",
+              "Gas Behavior",
               "Ideal Gas Law",
-              "Real Gas Behavior",
+              "Ideal Gas Real",
+              "Real Gas Behavior"
+            ],
+            "topic_keywords": [
+              "Gas",
+              "Ideal",
+              "Real",
+              "Behavior",
+              "kelvins",
+              "Ensure",
+              "conditions",
+              "units",
+              "Work",
+              "changes",
+              "nRT",
+              "pressure",
               "饱和蒸汽压独立性规则",
               "混合气体中包含饱和蒸汽且发生等温体积压缩",
               "混合气体平均摩尔质量计算",
@@ -23855,31 +23396,7 @@
               "等温等压气体密度正比律",
               "题目给定不同成分气体在相同温度和压力下的密度比较或变化",
               "开口容器等压模型校验",
-              "题目出现“open-bottomed”或“开口容器”且缓慢加热时",
-              "理想气体总动能恒定判据",
-              "等压且等容（P, V均为定值）的过程",
-              "等压且等容（P",
-              "V均为定值）的过程",
-              "恒星静力平衡量级估算"
-            ],
-            "topic_keywords": [
-              "Gas",
-              "Ideal",
-              "Law",
-              "Real",
-              "Behavior",
-              "temperature",
-              "Mass",
-              "volume",
-              "kelvins",
-              "Ensure",
-              "constant",
-              "conditions",
-              "units",
-              "Work",
-              "changes",
-              "nRT",
-              "pressure"
+              "题目出现"
             ],
             "required_symbols": [
               "P_{sat}",
@@ -24005,8 +23522,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Molecular Speed Distribution (Maxwell-Boltzmann)",
-              "Molecular Speed Distribution",
               "Maxwell-Boltzmann"
             ],
             "topic_keywords": [
@@ -24017,7 +23532,6 @@
               "Boltzmann",
               "Ensure",
               "units",
-              "all",
               "ideal",
               "consistent",
               "mean",
@@ -24515,22 +24029,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Phase Transitions and Latent Heat",
-              "Phase Transitions",
-              "Latent Heat",
-              "区分题号与数值常量",
-              "题目末尾出现括号数字如 (27) 或 (15) 时",
-              "题目末尾出现括号数字如",
-              "通量时间积分能量守恒律",
-              "题目给出功率密度（W/m²）并要求计算随时间累积的物理量变化（如厚度、质量）",
-              "题目给出功率密度（W",
-              "m²）并要求计算随时间累积的物理量变化（如厚度、质量）",
-              "相变体积变化耦合位移规则",
-              "涉及冰/水转化且存在表面形变（如凹陷、隆起）时",
-              "水转化且存在表面形变（如凹陷、隆起）时",
-              "光热转换效率建模约束",
-              "出现“纳米颗粒/介质吸收光能转化为热能”的描述时",
-              "出现“纳米颗粒"
+              "pressure equilibrium",
+              "pressure"
             ],
             "topic_keywords": [
               "Phase",
@@ -24541,14 +24041,18 @@
               "transition",
               "equilibrium",
               "Ensure",
-              "temperature",
               "pressure",
               "diagram",
               "units",
               "calculations",
               "melting",
               "constraints",
-              "points"
+              "points",
+              "区分题号与数值常量",
+              "题目末尾出现括号数字如",
+              "通量时间积分能量守恒律",
+              "题目给出功率密度",
+              "并要求计算随时间累积的物理量变化"
             ],
             "required_symbols": [
               "J_Q",
@@ -24799,19 +24303,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Specific Heat and Heat Capacities",
               "Specific Heat",
-              "Heat Capacities",
-              "多原子分子自由度校验",
-              "计算水蒸气（H2O）、甲烷（CH4）等非线性多原子分子的热容时",
-              "混合气体平均热容权重",
-              "计算混合气体的摩尔热容 $C_{V,mix}$ 时",
-              "计算混合气体的摩尔热容 $C_{V",
-              "mix}$ 时",
-              "变系数热量积分等价性检查",
-              "当热容 C 为温度 T 的线性函数 C=a+bT 时",
-              "混合物强度性质计算规则",
-              "计算理想气体混合物的摩尔热容量、摩尔质量或摩尔焓等强度性质时"
+              "Heat Capacities"
             ],
             "topic_keywords": [
               "Heat",
@@ -24820,17 +24313,20 @@
               "Capacity",
               "Ensure",
               "correctly",
-              "energy",
-              "temperature",
               "Calculations",
               "phase",
               "applied",
-              "used",
               "Valid",
               "transitions",
               "Adiabatic",
               "latent",
-              "system"
+              "多原子分子自由度校验",
+              "计算水蒸气",
+              "H2O",
+              "CH4",
+              "等非线性多原子分子的热容时",
+              "混合气体平均热容权重",
+              "计算混合气体的摩尔热容"
             ],
             "required_symbols": [
               "C_{V,m}",
@@ -24889,28 +24385,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Statistical Ensembles (Microcanonical, Canonical, Grand Canonical)",
-              "Statistical Ensembles",
-              "Microcanonical",
+              "Grand Canonical",
               "Canonical",
-              "Grand Canonical"
+              "Microcanonical"
             ],
             "topic_keywords": [
               "Canonical",
-              "Statistical",
               "Ensembles",
               "Microcanonical",
               "Grand",
-              "energy",
               "ensemble",
-              "system",
               "k_B",
               "entropy",
-              "all",
               "derived",
-              "potential",
-              "number",
-              "constant",
               "partition",
               "thermodynamic"
             ],
@@ -24959,24 +24446,16 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Partition Function and Its Applications",
               "Partition Function",
               "Its Applications"
             ],
             "topic_keywords": [
               "Partition",
-              "Function",
-              "Applications",
-              "kT",
               "states",
               "exp",
               "E_i",
-              "energy",
               "thermodynamic",
               "Ensure",
-              "temperature",
-              "all",
-              "system",
               "state",
               "Boltzmann",
               "quantities",
@@ -25027,20 +24506,14 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Equipartition Theorem"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Equipartition",
               "Theorem",
-              "Energy",
               "Freedom",
-              "temperature",
               "Degrees",
               "Ensure",
-              "system",
               "degree",
-              "kT",
               "quantum",
               "units",
               "high",
@@ -25442,41 +24915,28 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Blackbody Radiation and Stefan-Boltzmann Law",
-              "Blackbody Radiation",
-              "Stefan-Boltzmann Law",
-              "有效截面与表面积区分",
-              "计算行星（球体）吸收太阳辐射与向外辐射能量平衡时",
-              "热力学温标强制检查",
-              "题目给出摄氏度（°C）且涉及比例、乘除或辐射定律计算时",
-              "幂函数相对变化率转换",
-              "物理量满足 y = k * x^n 且涉及微小相对变化 Δy/y 时",
-              "物理量满足 y = k * x^n 且涉及微小相对变化 Δy",
-              "y 时",
-              "大气层能量平衡模型校验",
-              "涉及行星表面温度且给出不同波段（可见光/红外）吸收率时",
-              "涉及行星表面温度且给出不同波段（可见光",
-              "红外）吸收率时",
-              "辐射平衡微扰线性化"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Blackbody",
-              "Radiation",
               "Stefan",
               "Boltzmann",
-              "Law",
               "Ensure",
               "Kelvin",
               "correctly",
               "emissivity",
-              "temperature",
               "calculated",
               "Confirm",
-              "energy",
-              "area",
               "perfect",
-              "Heat"
+              "Heat",
+              "有效截面与表面积区分",
+              "计算行星",
+              "吸收太阳辐射与向外辐射能量平衡时",
+              "热力学温标强制检查",
+              "题目给出摄氏度",
+              "且涉及比例",
+              "乘除或辐射定律计算时",
+              "幂函数相对变化率转换",
+              "物理量满足"
             ],
             "required_symbols": [
               "S",
@@ -25540,7 +25000,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Heat Engines and Refrigerators",
               "Heat Engines",
               "Refrigerators"
             ],
@@ -25548,19 +25007,14 @@
               "Heat",
               "Engines",
               "Refrigerators",
-              "Qc",
               "Ensure",
-              "all",
               "work",
               "reversible",
               "efficiency",
-              "Qh",
               "positive",
               "COP",
-              "system",
               "processes",
               "engine",
-              "Law",
               "Kelvin",
               "reservoir"
             ],
@@ -25607,17 +25061,12 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Clausius-Clapeyron Equation"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Clausius",
               "Clapeyron",
               "phase",
-              "dP",
-              "dT",
               "heat",
-              "temperature",
               "change",
               "Ensure",
               "latent",
@@ -25625,7 +25074,6 @@
               "Confirm",
               "slope",
               "boundary",
-              "volume",
               "order"
             ],
             "required_symbols": []
@@ -25679,7 +25127,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Reflection and Refraction",
               "Reflection",
               "Refraction"
             ],
@@ -25756,7 +25203,7 @@
               "trigger": "涉及曲率半径 R、弦长 D（直径）和接触角 α 的几何建模",
               "check_logic": "验证是否满足球冠基本几何关系：R*sin(α) = D/2。若公式中出现 cot(α) 且无平方项对应，需警惕维度或三角函数误用。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "R = D / (2 * sin(alpha))",
@@ -25783,9 +25230,7 @@
                 ],
                 "object_keywords": [
                   "验证是否满足球冠基本几何关系",
-                  "sin",
                   "若公式中出现",
-                  "cot",
                   "且无平方项对应",
                   "需警惕维度或三角函数误用"
                 ],
@@ -25837,16 +25282,12 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Mirrors Lenses",
               "Laws of Mirrors and Lenses",
-              "Mirrors",
               "Lenses",
-              "区分反射与折射成像模型",
-              "题目涉及液滴表面成像或利用液面作为光学元件时",
-              "球冠几何参数一致性校验",
-              "涉及曲率半径 R、弦长 D（直径）和接触角 α 的几何建模"
+              "Mirrors"
             ],
             "topic_keywords": [
-              "Laws",
               "Mirrors",
               "Lenses",
               "optical",
@@ -25856,18 +25297,17 @@
               "distances",
               "focal",
               "image",
-              "axis",
               "images",
               "Ensure",
               "magnification",
               "paraxial",
-              "approximation"
+              "approximation",
+              "区分反射与折射成像模型",
+              "题目涉及液滴表面成像或利用液面作为光学元件时"
             ],
             "required_symbols": [
               "f",
-              "R",
-              "D",
-              "alpha"
+              "R"
             ]
           },
           "clusters": []
@@ -25915,10 +25355,9 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Optical Instruments (Microscopes, Telescopes)",
               "Optical Instruments",
-              "Microscopes",
-              "Telescopes"
+              "Telescopes",
+              "Microscopes"
             ],
             "topic_keywords": [
               "Optical",
@@ -25929,14 +25368,10 @@
               "lens",
               "Focal",
               "image",
-              "Length",
-              "optics",
               "distances",
-              "object",
               "Magnification",
               "calculations",
               "eyepiece",
-              "distance",
               "lenses",
               "Sign"
             ],
@@ -25953,7 +25388,7 @@
               "trigger": "题目给出 n(z) 或 n^2(z) 随高度变化的函数关系时",
               "check_logic": "应使用 Snell 定律的层状变形公式 n(z)·cos(θ) = Constant（θ为光线与水平面夹角），并结合 dx = dz/tan(θ) 建立轨迹积分。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "n(z) * cos(theta(z)) = n_0 * cos(theta_0)",
@@ -25979,7 +25414,6 @@
                   "应使用",
                   "Snell",
                   "定律的层状变形公式",
-                  "cos",
                   "Constant",
                   "为光线与水平面夹角",
                   "并结合",
@@ -26165,22 +25599,11 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Snell's Law and Critical Angle",
               "Snell's Law",
-              "Critical Angle",
-              "连续折射率梯度建模",
-              "题目给出 n(z) 或 n^2(z) 随高度变化的函数关系时",
-              "题目给出 n",
-              "或 n^2",
-              "随高度变化的函数关系时",
-              "光学-力学类比速度映射规则",
-              "题目要求将光线路径类比为质点在势场中的运动轨迹时",
-              "蜃景临界距离判定",
-              "要求计算观察者到“虚幻湖面”或蜃景起始点的距离 d"
+              "Critical Angle"
             ],
             "topic_keywords": [
               "Snell",
-              "Law",
               "Critical",
               "Angle",
               "n1",
@@ -26189,20 +25612,23 @@
               "refractive",
               "media",
               "angles",
-              "light",
               "Ensure",
               "medium",
               "incidence",
-              "total",
-              "internal"
+              "internal",
+              "力学类比速度映射规则",
+              "题目要求将光线路径类比为质点在势场中的运动轨迹时",
+              "蜃景临界距离判定",
+              "要求计算观察者到",
+              "虚幻湖面",
+              "或蜃景起始点的距离"
             ],
             "required_symbols": [
-              "n(z)",
-              "theta",
               "v",
               "n",
               "E_p",
-              "d"
+              "d",
+              "n(z)"
             ]
           },
           "clusters": []
@@ -26264,7 +25690,7 @@
               "trigger": "题目要求证明电场为 $\\cos$ 形式而磁场包含 $\\sin$ 分量时",
               "check_logic": "验证波矢 $\\vec{k}$ 是否为复数。若 $k_z$ 为纯虚数，则磁场在该方向的分量必与电场存在 $\\pi/2$ 相位差。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "\\vec{B} = \\frac{1}{\\omega} \\vec{k} \\times \\vec{E}",
@@ -26285,9 +25711,7 @@
                 "trigger_keywords": [
                   "电磁场横波分量相位一致性",
                   "题目要求证明电场为",
-                  "cos",
                   "形式而磁场包含",
-                  "sin",
                   "分量时"
                 ],
                 "object_keywords": [
@@ -26349,14 +25773,9 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Total Internal Reflection",
-              "复数波矢实部提取规则",
-              "处理全反射衰减波（Evanescent wave）或有耗介质传播时",
-              "电磁场横波分量相位一致性",
-              "题目要求证明电场为 $\\cos$ 形式而磁场包含 $\\sin$ 分量时"
+              "Evanescent wave"
             ],
             "topic_keywords": [
-              "Total",
               "Internal",
               "Reflection",
               "angle",
@@ -26365,21 +25784,21 @@
               "Ensure",
               "during",
               "critical",
-              "light",
               "refractive",
               "sin",
               "phase",
               "shift",
               "medium",
-              "confirm"
+              "confirm",
+              "复数波矢实部提取规则",
+              "处理全反射衰减波",
+              "Evanescent",
+              "或有耗介质传播时"
             ],
             "required_symbols": [
               "i",
               "e",
-              "phi",
-              "B",
-              "k",
-              "\\omega"
+              "phi"
             ]
           },
           "clusters": []
@@ -26426,6 +25845,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Wavefronts Huygens",
+              "Wavefronts Huygens Principle",
               "Wavefronts and Huygens' Principle",
               "Wavefronts",
               "Huygens' Principle"
@@ -26544,7 +25965,7 @@
               "trigger": "当干涉级数 n 较大或狭缝间距 d 与波长 λ 接近时",
               "check_logic": "必须先通过 sin θ = nλ/d 计算出确切的 θ 值，再代入含有 cos θ 的微分变化率公式，不可盲目使用小角近似（cos θ ≈ 1）。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "cos(theta) = sqrt(1 - (n*lambda/d)^2)",
@@ -26570,9 +25991,7 @@
                   "接近时"
                 ],
                 "object_keywords": [
-                  "cos",
                   "必须先通过",
-                  "sin",
                   "计算出确切的",
                   "值",
                   "再代入含有",
@@ -26594,7 +26013,7 @@
               "trigger": "在双缝干涉的一条光路中插入折射率为 $\\mu$、厚度为 $w$ 的透明介质",
               "check_logic": "该路径光程增加 $(\\mu-1)w$，在相位因子 $\\cos(\\phi_1 - \\phi_2)$ 中，该项符号应与几何路程差 $d\\sin\\theta$ 相反。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "\\Delta \\phi = \\frac{\\omega}{c}(d\\sin\\theta - (\\mu-1)w)",
@@ -26623,7 +26042,6 @@
                   "该路径光程增加",
                   "mu",
                   "在相位因子",
-                  "cos",
                   "phi_1",
                   "phi_2",
                   "中",
@@ -26722,20 +26140,9 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Interference (Young's Double Slit, Thin Films)",
-              "Interference",
               "Young's Double Slit",
               "Thin Films",
-              "介质不改变真空入射光的干涉条纹间距",
-              "两束平行光以夹角 α 从真空射入平行介质板并在其中干涉时",
-              "双光束干涉周期公式系数检查",
-              "计算两束对称相交平面波的干涉条纹空间周期时",
-              "高阶干涉角余弦修正校验",
-              "当干涉级数 n 较大或狭缝间距 d 与波长 λ 接近时",
-              "介质引入相位滞后判定",
-              "在双缝干涉的一条光路中插入折射率为 $\\mu$、厚度为 $w$ 的透明介质",
-              "显式比例常数核查",
-              "题目明确给出强度与电场平方的比例系数（如 $\\beta$ 或 $\\frac{1}{2}\\epsilon_0 c$）"
+              "Interference"
             ],
             "topic_keywords": [
               "Interference",
@@ -26754,21 +26161,16 @@
               "Difference",
               "Phase",
               "refractive",
-              "used",
-              "medium"
+              "medium",
+              "介质不改变真空入射光的干涉条纹间距",
+              "两束平行光以夹角",
+              "从真空射入平行介质板并在其中干涉时"
             ],
             "required_symbols": [
               "λ_0",
               "α_0",
               "λ",
               "θ",
-              "n",
-              "lambda",
-              "d",
-              "theta",
-              "\\mu",
-              "w",
-              "\\theta",
               "\\beta",
               "I",
               "E"
@@ -26878,7 +26280,7 @@
               "trigger": "题目给出单位长度内的周期结构数量 n (slit density) 时",
               "check_logic": "必须确认光栅常数 d = 1/n，而非 d = n。检查衍射方程 d*sin(theta) = m*lambda 是否正确代换为 (1/n)*sin(theta) = m*lambda。",
               "error_type": "modeling",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "d = 1/n",
@@ -26895,6 +26297,7 @@
               },
               "match_features": {
                 "trigger_keywords": [
+                  "trig substitution",
                   "光栅常数与缝密度转换规则",
                   "题目给出单位长度内的周期结构数量",
                   "slit",
@@ -26902,7 +26305,6 @@
                   "时"
                 ],
                 "object_keywords": [
-                  "sin",
                   "theta",
                   "lambda",
                   "必须确认光栅常数",
@@ -27137,22 +26539,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Diffraction (Single Slit, Double Slit, Gratings)",
-              "Diffraction",
-              "Single Slit",
               "Double Slit",
-              "Gratings",
-              "光栅分辨率双重约束检查",
-              "题目同时给出光栅参数（N, d）和探测器参数（像素密度/尺寸）时",
-              "题目同时给出光栅参数（N",
-              "d）和探测器参数（像素密度",
-              "尺寸）时",
-              "衍射角正弦值有界性检查",
-              "要求解或证明衍射角 beta_m 的表达式时",
-              "光栅常数与缝密度转换规则",
-              "题目给出单位长度内的周期结构数量 n (slit density) 时",
-              "题目给出单位长度内的周期结构数量 n",
-              "slit density"
+              "Single Slit"
             ],
             "topic_keywords": [
               "Slit",
@@ -27168,11 +26556,13 @@
               "angle",
               "order",
               "condition",
-              "used",
               "correctly",
               "maxima",
               "negative",
-              "maximum"
+              "maximum",
+              "光栅分辨率双重约束检查",
+              "题目同时给出光栅参数",
+              "和探测器参数"
             ],
             "required_symbols": [
               "m",
@@ -27311,20 +26701,13 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Polarization of Light",
-              "Polarization",
-              "球面三角形面积与立体角等价性",
-              "在单位球面上讨论球面多边形面积与立体角关系时",
-              "庞加莱球几何相位面积关系",
-              "涉及偏振态在庞加莱球上的演化路径及相位差计算时"
+              "Polarization"
             ],
             "topic_keywords": [
               "Polarization",
-              "Light",
               "polarized",
               "angle",
               "intensity",
-              "Law",
               "refractive",
               "reflection",
               "Ensure",
@@ -27334,7 +26717,11 @@
               "incidence",
               "n2",
               "n1",
-              "parameters"
+              "parameters",
+              "球面三角形面积与立体角等价性",
+              "在单位球面上讨论球面多边形面积与立体角关系时",
+              "庞加莱球几何相位面积关系",
+              "涉及偏振态在庞加莱球上的演化路径及相位差计算时"
             ],
             "required_symbols": [
               "Omega",
@@ -27386,16 +26773,13 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Brewster's Angle and Malus's Law",
-              "Brewster's Angle",
-              "Malus's Law"
+              "Malus's Law",
+              "Brewster's Angle"
             ],
             "topic_keywords": [
               "Brewster",
               "Angle",
               "Malus",
-              "Law",
-              "light",
               "polarized",
               "_B",
               "n_2",
@@ -27454,9 +26838,7 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Dispersion and Chromatic Aberration",
-              "Dispersion",
-              "Chromatic Aberration"
+              "Dispersion"
             ],
             "topic_keywords": [
               "Dispersion",
@@ -27468,7 +26850,6 @@
               "index",
               "material",
               "range",
-              "light",
               "wavelengths",
               "correctly",
               "decreases",
@@ -27522,28 +26903,23 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "ring interferometer",
-              "sagnac interferometer",
-              "path difference",
+              "Coherence Interferometers",
+              "Optical Coherence Interferometers",
               "Optical Coherence and Interferometers",
-              "Optical Coherence",
-              "Interferometers"
+              "Interferometers",
+              "Optical Coherence"
             ],
             "topic_keywords": [
-              "interferometer",
-              "sagnac",
-              "coherence length",
               "Optical",
               "Coherence",
               "Interferometers",
               "difference",
-              "length",
               "path",
               "interference",
               "ensure",
-              "light",
               "L_c",
               "units",
+              "interferometer",
               "wavelength",
               "phase",
               "consistent",
@@ -27594,27 +26970,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "ring resonator",
-              "laser cavity",
-              "sagnac effect",
+              "Laser Principles",
               "Laser Principles and Applications",
-              "Laser Principles"
+              "Laser"
             ],
             "topic_keywords": [
-              "resonator",
-              "cavity",
-              "sagnac",
               "Laser",
-              "Principles",
-              "Applications",
-              "Equations",
               "gain",
               "Ensure",
               "beam",
-              "length",
+              "Cavity",
               "intensity",
-              "Rate",
-              "energy",
               "Lasers",
               "Approximation",
               "coherence",
@@ -27667,9 +27033,7 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Fresnel and Fraunhofer Diffraction",
-              "Fresnel",
-              "Fraunhofer Diffraction"
+              "Fresnel"
             ],
             "topic_keywords": [
               "Fresnel",
@@ -27683,7 +27047,6 @@
               "Confirm",
               "correctly",
               "angles",
-              "used",
               "obstacle",
               "calculations",
               "Boundary",
@@ -27833,26 +27196,15 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Fiber Optics and Applications",
-              "Fiber Optics",
-              "光纤传播速度定义校验",
-              "题目定义传播速度为轴向位移 z 与总时间 tau 之比时",
-              "变折射率介质射线守恒律",
-              "折射率随坐标连续变化（如 n=n(x)）且求路径或时间时",
-              "折射率随坐标连续变化（如 n=n",
-              "）且求路径或时间时"
+              "Fiber Optics"
             ],
             "topic_keywords": [
               "Fiber",
-              "Optics",
-              "Applications",
-              "light",
               "Ensure",
               "Angle",
               "reflection",
               "core",
               "cladding",
-              "total",
               "internal",
               "dispersion",
               "critical",
@@ -27860,7 +27212,13 @@
               "fibers",
               "mode",
               "than",
-              "diameter"
+              "diameter",
+              "光纤传播速度定义校验",
+              "题目定义传播速度为轴向位移",
+              "与总时间",
+              "tau",
+              "之比时",
+              "变折射率介质射线守恒律"
             ],
             "required_symbols": [
               "v",
@@ -27916,27 +27274,20 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Nonlinear Optics (Harmonic Generation, Self-Focusing)",
+              "Self-Focusing",
               "Nonlinear Optics",
-              "Harmonic Generation",
-              "Self-Focusing"
+              "Harmonic Generation"
             ],
             "topic_keywords": [
               "Nonlinear",
-              "Optics",
               "Harmonic",
               "Generation",
               "Self",
               "Focusing",
-              "wave",
-              "equations",
               "Ensure",
-              "terms",
-              "energy",
               "medium",
               "beam",
               "correctly",
-              "field",
               "interacting",
               "threshold"
             ],
@@ -27984,13 +27335,10 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Aberrations in Optical Systems"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Aberrations",
               "Optical",
-              "Systems",
               "aberration",
               "lens",
               "approximation",
@@ -27998,11 +27346,8 @@
               "Ensure",
               "focal",
               "formula",
-              "light",
               "small",
               "angles",
-              "axis",
-              "equations",
               "calculations",
               "sign"
             ],
@@ -28050,23 +27395,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Rayleigh Scattering and Applications",
               "Rayleigh Scattering"
             ],
             "topic_keywords": [
               "Rayleigh",
               "Scattering",
-              "Applications",
-              "light",
               "Ensure",
               "wavelength",
-              "Particle",
               "Intensity",
               "calculations",
-              "particles",
               "Refractive",
               "Angle",
-              "Relation",
               "than",
               "typically",
               "Index",
@@ -28356,7 +27695,7 @@
               "trigger": "坐标时表现为 $\\sinh$ 或 $\\cosh$ 的参数化形式时",
               "check_logic": "检查速度 $\\beta$ 与 $\\gamma$ 因子是否符合 $\\gamma = \\cosh(\\alpha)$ 和 $\\beta\\gamma = \\sinh(\\alpha)$ 的双曲恒等式关系，确保积分常数满足 $t=0$ 或 $\\tau=0$ 的初始位移。",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "cosh(tau)^2 - sinh(tau)^2 == 1",
@@ -28541,7 +27880,7 @@
               "trigger": "题目要求以角度θ表示位置x_c时",
               "check_logic": "检查结果是否符合Terrell旋转或视长收缩的几何投影规律。若涉及x轴运动且观测点在原点，通常涉及cot或csc等描述投影长度的函数。",
               "error_type": "calculation",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "formula_pattern",
                 "canonical": "x_c \\propto -vt \\cot^2 \\theta",
@@ -28952,52 +28291,33 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "pinhole camera",
-              "rod in motion",
-              "moving rod",
-              "simultaneous measurement",
-              "observer frame",
-              "Special Relativity (Time Dilation, Length Contraction)",
               "Special Relativity",
-              "Time Dilation",
-              "Length Contraction",
-              "高阶效应误差分析准则",
-              "要求计算相对论公式与经典公式的“误差”或“差异”时",
-              "低速相对论效应误差分析",
-              "当 v << c 且要求计算相对论与经典公式的误差时",
-              "闵氏度规微分关联检查",
-              "涉及固有时间 $\\tau$ 与坐标时空 $(t, x)$ 的动力学转换时",
-              "涉及固有时间 $\\tau$ 与坐标时空 $",
-              "$ 的动力学转换时",
-              "视运动几何中心校验",
-              "涉及高速运动物体在特定观测时刻t的视形状或对称中心时",
-              "萨尼亚克效应介质无关性",
-              "涉及旋转环路（光纤或激光陀螺）中光程差或时间差计算，且存在介质折射率 μ 时"
+              "Relativity Dilation",
+              "Special Relativity Dilation",
+              "Relativity Dilation Contraction",
+              "pinhole"
             ],
             "topic_keywords": [
-              "pinhole",
-              "camera",
-              "rod",
-              "observer",
-              "simultaneous",
-              "contraction",
               "Special",
               "Relativity",
-              "Time",
               "Dilation",
-              "Length",
+              "Contraction",
               "frames",
               "Ensure",
               "speed",
-              "light",
               "velocity",
               "inertial",
               "frame",
-              "all",
               "sqrt",
               "proper",
               "relative",
-              "calculations"
+              "calculations",
+              "高阶效应误差分析准则",
+              "要求计算相对论公式与经典公式的",
+              "低速相对论效应误差分析",
+              "且要求计算相对论与经典公式的误差时",
+              "闵氏度规微分关联检查",
+              "涉及固有时间"
             ],
             "required_symbols": [
               "beta",
@@ -29011,14 +28331,11 @@
               "A",
               "Ω",
               "\\lambda",
-              "sinh",
-              "cosh",
               "F",
               "P",
               "g",
               "τ",
               "L",
-              "\\theta",
               "M",
               "\\beta",
               "d",
@@ -29107,7 +28424,7 @@
               "trigger": "正负电子湮灭产生一对等能光子，求实验室系出射角",
               "check_logic": "利用动量三角形，因两光子能量相等则动量大小相等，构成等腰三角形。初始动量p为底边，2*p_gamma*cos(alpha) = p_total。",
               "error_type": "logic",
-              "scope": "domain",
+              "scope": "meta",
               "symbolic_hint": {
                 "primitive": "equation_equivalence",
                 "canonical": "cos(alpha) = p_e / (2 * E_gamma / c)",
@@ -29135,7 +28452,6 @@
                   "构成等腰三角形",
                   "初始动量p为底边",
                   "p_gamma",
-                  "cos",
                   "alpha",
                   "p_total"
                 ],
@@ -29453,45 +28769,30 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Relativistic Energy and Momentum",
-              "Relativistic Energy",
-              "Momentum",
-              "对称能量光子出射角判定",
-              "正负电子湮灭产生一对等能光子，求实验室系出射角",
-              "正负电子湮灭产生一对等能光子",
-              "求实验室系出射角",
-              "相对论动力学微分建模律",
-              "涉及火箭喷气、变质量系统且要求使用 Special Relativistic Mechanics 时",
-              "相对论火箭方程指数特征",
-              "推导末速度 V 与质量比 M/Mi 的关系时",
-              "推导末速度 V 与质量比 M",
-              "Mi 的关系时",
-              "分布函数归一化一致性",
-              "计算分布函数演化结果后",
-              "绝热膨胀分布演化校验"
+              "Relativistic Energy"
             ],
             "topic_keywords": [
               "Relativistic",
-              "Energy",
               "Momentum",
               "rest",
-              "mass",
-              "mc",
-              "pc",
-              "particles",
               "Ensure",
               "consistent",
-              "equations",
-              "all",
               "massless",
-              "particle",
               "calculated",
-              "terms"
+              "相对论动力学微分建模律",
+              "涉及火箭喷气",
+              "变质量系统且要求使用",
+              "Special",
+              "相对论火箭方程指数特征",
+              "推导末速度",
+              "与质量比",
+              "的关系时",
+              "分布函数归一化一致性",
+              "计算分布函数演化结果后",
+              "绝热膨胀分布演化校验",
+              "adiabatic"
             ],
             "required_symbols": [
-              "p_e",
-              "E_gamma",
-              "alpha",
               "gamma",
               "m",
               "v",
@@ -29640,37 +28941,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Quantum Mechanics (Wave-Particle Duality)",
-              "Quantum Mechanics",
+              "Wave Particle Duality",
               "Wave-Particle Duality",
-              "不确定关系估算动能能级",
-              "要求使用不确定关系 (Uncertainty Relation) 估算基态动能或能量惩罚时",
-              "要求使用不确定关系",
-              "Uncertainty Relation",
-              "估算基态动能或能量惩罚时",
-              "强磁场量子限长度选取",
-              "涉及强磁场 (B) 下电子的二维局限或量子霍尔效应估算时",
-              "涉及强磁场",
-              "下电子的二维局限或量子霍尔效应估算时"
+              "Mechanics Wave Particle Duality",
+              "Quantum Mechanics Wave Particle",
+              "Quantum Mechanics (Wave-Particle Duality)",
+              "Particle Duality",
+              "Quantum Mechanics",
+              "涉及强磁场"
             ],
             "topic_keywords": [
               "Quantum",
-              "Mechanics",
-              "Wave",
-              "Particle",
               "Duality",
               "Ensure",
               "momentum",
-              "Energy",
               "Wavefunction",
               "conditions",
               "Consistency",
-              "application",
-              "all",
               "probability",
               "ensuring",
               "proper",
-              "Wavelength"
+              "Wavelength",
+              "不确定关系估算动能能级",
+              "要求使用不确定关系",
+              "Uncertainty",
+              "估算基态动能或能量惩罚时",
+              "强磁场量子限长度选取",
+              "涉及强磁场",
+              "下电子的二维局限或量子霍尔效应估算时"
             ],
             "required_symbols": [
               "hbar",
@@ -29813,34 +29111,25 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Heisenberg Uncertainty Principle",
-              "衰变常数与时间不确定性映射",
-              "题目给出 decay time (τ) 要求计算能量不确定性时",
-              "题目给出 decay time",
-              "要求计算能量不确定性时",
-              "能量时间不确定性单位对齐",
-              "计算 ΔE · Δt ≥ ħ/2 且参考答案单位为 Joule 时",
-              "计算 ΔE · Δt ≥ ħ",
-              "2 且参考答案单位为 Joule 时"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Heisenberg",
               "Uncertainty",
               "Principle",
               "Ensure",
-              "energy",
-              "time",
               "momentum",
               "dimensions",
-              "position",
               "product",
               "conjugate",
-              "systems",
               "consistent",
-              "wave",
               "inequality",
-              "relation"
+              "衰变常数与时间不确定性映射",
+              "题目给出",
+              "decay",
+              "要求计算能量不确定性时",
+              "能量时间不确定性单位对齐",
+              "且参考答案单位为",
+              "Joule"
             ],
             "required_symbols": [
               "τ",
@@ -29891,25 +29180,22 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "dinger Wavefunctions",
+              "Schr dinger Wavefunctions",
               "Schrödinger Equation and Wavefunctions",
-              "Schrödinger Equation",
               "Wavefunctions"
             ],
             "topic_keywords": [
               "Schr",
               "dinger",
               "Wavefunctions",
-              "potential",
               "Wavefunction",
-              "dx",
               "probability",
               "relativistic",
               "quantum",
               "Ensure",
-              "all",
               "states",
               "discontinuities",
-              "particle",
               "2m",
               "space"
             ],
@@ -29965,19 +29251,14 @@
               "Quantum",
               "Tunneling",
               "barrier",
-              "potential",
               "Ensure",
-              "energy",
               "probability",
               "wavefunction",
               "consistent",
               "Schr",
               "dinger",
-              "particle",
               "height",
-              "dx",
-              "correctly",
-              "all"
+              "correctly"
             ],
             "required_symbols": []
           },
@@ -30297,43 +29578,33 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Atomic Models (Bohr, Quantum Mechanical)",
+              "Atomic Bohr",
               "Atomic Models",
-              "Bohr",
-              "Quantum Mechanical",
-              "类氢原子物理量比例缩放准则",
-              "涉及不同质量粒子（如μ子）或不同核电荷数Z的类氢原子模型时",
-              "双体碰撞激发能阈值判定",
-              "相同质量粒子碰撞并发生能级跃迁/激发",
-              "相同质量粒子碰撞并发生能级跃迁",
-              "多普勒冷却极限参数匹配",
-              "涉及原子激光冷却、自然宽度 γ 及最小温度 T 时",
-              "普朗克常数符号一致性检查",
-              "题目给出 η 或 h 且包含具体数值时",
-              "运动原子辐射多普勒频差",
-              "要求计算运动原子向不同方向发射光子的频率差/百分比",
-              "要求计算运动原子向不同方向发射光子的频率差"
+              "Atomic Bohr Quantum",
+              "Atomic Bohr Quantum Mechanical",
+              "Quantum Mechanical"
             ],
             "topic_keywords": [
-              "Atomic",
-              "Models",
               "Bohr",
               "Quantum",
               "Mechanical",
               "Ensure",
               "electron",
               "momentum",
-              "Energy",
-              "mechanics",
               "Angular",
-              "model",
               "hydrogen",
-              "number",
               "Confirm",
               "Radius",
               "a_0",
               "correctly",
-              "Wavefunction"
+              "Wavefunction",
+              "类氢原子物理量比例缩放准则",
+              "涉及不同质量粒子",
+              "或不同核电荷数Z的类氢原子模型时",
+              "双体碰撞激发能阈值判定",
+              "相同质量粒子碰撞并发生能级跃迁",
+              "多普勒冷却极限参数匹配",
+              "涉及原子激光冷却"
             ],
             "required_symbols": [
               "m_x",
@@ -30574,34 +29845,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Photoelectric Effect and Compton Scattering",
               "Photoelectric Effect",
-              "Compton Scattering",
-              "各向同性发射的平均能量守恒",
-              "出现“等概率向相反方向自发辐射”或“各向同性发射”",
-              "多普勒频移方向一致性检查",
-              "涉及波源与观察者相对运动（如激光冷却、原子吸收光谱）",
-              "热源激发阈值匹配原则",
-              "要求估算“刚好能激发”某种能隙的热源温度时"
+              "Photoelectric Effect Compton",
+              "Photoelectric",
+              "Photoelectric Effect Compton Scattering",
+              "Photoelectric Effect and Compton Scattering",
+              "Compton Scattering"
             ],
             "topic_keywords": [
               "Photoelectric",
               "Effect",
               "Compton",
               "Scattering",
-              "energy",
               "Ensure",
               "electron",
               "photon",
-              "hf",
               "K_max",
               "calculated",
               "ensuring",
               "correctly",
               "kinetic",
               "work",
-              "function",
-              "frequency"
+              "frequency",
+              "各向同性发射的平均能量守恒",
+              "等概率向相反方向自发辐射",
+              "各向同性发射",
+              "多普勒频移方向一致性检查",
+              "涉及波源与观察者相对运动",
+              "如激光冷却"
             ],
             "required_symbols": [
               "E_rest",
@@ -30946,28 +30217,18 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Wave-Particle Duality and de Broglie Wavelength",
+              "Wave Particle Duality",
               "Wave-Particle Duality",
+              "Wave Particle Duality de",
+              "Particle Duality",
+              "Broglie Wavelength",
+              "Particle Duality de",
               "de Broglie Wavelength",
-              "量子隧穿等效建模校验",
-              "题目要求将德布罗意波长λ与最近距离d_c关联以估算温度/能量时",
-              "题目要求将德布罗意波长λ与最近距离d_c关联以估算温度",
-              "复杂物理常数项幂次检查",
-              "推导包含 e, epsilon_0, h, m_p 的组合表达式时",
-              "推导包含 e",
-              "epsilon_0",
-              "m_p 的组合表达式时",
-              "能量单位 eV 与电压 V 的数值等价性",
-              "计算电子在静电场中加速后的动能（单位 eV）与电压（单位 V）",
-              "等效质量数密度建模规则",
-              "处理恒星或宏观等离子体中的电子数密度，且给定质子质量远大于电子质量时",
-              "处理恒星或宏观等离子体中的电子数密度"
+              "Particle Duality de Broglie",
+              "Duality de Broglie Wavelength"
             ],
             "topic_keywords": [
-              "Wave",
-              "Particle",
               "Duality",
-              "de",
               "Broglie",
               "Wavelength",
               "Ensure",
@@ -30975,11 +30236,18 @@
               "like",
               "quantum",
               "effects",
-              "particles",
-              "energy",
               "consistency",
               "calculations",
-              "system"
+              "与电压",
+              "量子隧穿等效建模校验",
+              "题目要求将德布罗意波长",
+              "与最近距离d_c关联以估算温度",
+              "能量时",
+              "复杂物理常数项幂次检查",
+              "推导包含",
+              "epsilon_0",
+              "m_p",
+              "的组合表达式时"
             ],
             "required_symbols": [
               "k_B",
@@ -31319,41 +30587,29 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Nuclear Physics (Binding Energy, Radioactivity)",
-              "Nuclear Physics",
-              "Binding Energy",
-              "Radioactivity",
-              "天体物理极限值量级校验",
-              "计算白矮星临界质量（钱德拉塞卡极限）或中子星质量极限时",
-              "铀铅测年丰度比时间一致性",
-              "题目给出238U:235U比例且涉及长时间跨度衰变时",
-              "题目给出238U",
-              "235U比例且涉及长时间跨度衰变时",
-              "核反应自发性结合能判据",
-              "涉及核衰变（如alpha、beta衰变）或裂变/聚变的自发性判断时",
-              "涉及核衰变（如alpha、beta衰变）或裂变",
-              "聚变的自发性判断时",
-              "比结合能线性近似建模",
-              "题目要求使用 linear approximation 处理 B/A 随 A 变化的关系时"
+              "Binding Energy"
             ],
             "topic_keywords": [
               "Nuclear",
               "Binding",
-              "Energy",
               "Radioactivity",
-              "mass",
               "decay",
               "Ensure",
               "defect",
-              "total",
               "calculated",
               "nuclei",
               "nucleon",
               "nucleus",
-              "per",
-              "number",
               "N_0",
-              "all"
+              "天体物理极限值量级校验",
+              "计算白矮星临界质量",
+              "钱德拉塞卡极限",
+              "或中子星质量极限时",
+              "铀铅测年丰度比时间一致性",
+              "题目给出238U",
+              "235U比例且涉及长时间跨度衰变时",
+              "核反应自发性结合能判据",
+              "涉及核衰变"
             ],
             "required_symbols": [
               "M_s",
@@ -31418,24 +30674,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Nuclear Reactions (Fission, Fusion)",
               "Nuclear Reactions",
-              "Fission",
-              "Fusion"
+              "Fusion",
+              "Fission"
             ],
             "topic_keywords": [
               "Nuclear",
               "Reactions",
               "Fission",
               "Fusion",
-              "energy",
-              "mass",
               "reaction",
               "binding",
               "Ensure",
               "momentum",
-              "mc",
-              "total",
               "defect",
               "calculations",
               "sign",
@@ -31486,28 +30737,22 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Particle Physics (Quarks, Leptons, Bosons)",
+              "Particle Quarks",
+              "Particle Quarks Leptons",
               "Particle Physics",
+              "Particle Quarks Leptons Bosons",
+              "Particle Physics (Quarks, Leptons, Bosons)",
+              "Bosons",
               "Quarks",
-              "Leptons",
-              "Bosons"
+              "Leptons"
             ],
             "topic_keywords": [
-              "Particle",
               "Quarks",
               "Leptons",
               "Bosons",
-              "energy",
-              "all",
-              "interactions",
-              "mass",
               "conservation",
-              "interaction",
               "Ensure",
               "before",
-              "particles",
-              "charge",
-              "total",
               "spin",
               "baryon"
             ],
@@ -31542,10 +30787,10 @@
               "conservation",
               "forces",
               "one",
-              "not",
               "example",
               "have",
-              "units"
+              "units",
+              "four"
             ]
           },
           "tagged_reference": {
@@ -31556,27 +30801,22 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Standard Particle",
               "Standard Model of Particle Physics",
-              "Standard Model",
-              "Particle Physics"
+              "Particle Physics",
+              "Standard Model"
             ],
             "topic_keywords": [
               "Standard",
-              "Model",
-              "Particle",
               "Ensure",
-              "interactions",
               "quark",
-              "charge",
-              "all",
               "calculations",
               "conservation",
-              "forces",
               "one",
-              "not",
               "example",
               "have",
-              "units"
+              "units",
+              "four"
             ],
             "required_symbols": []
           },
@@ -31624,27 +30864,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Fundamental Forces and Interactions",
               "Fundamental Forces"
             ],
             "topic_keywords": [
               "Fundamental",
-              "Forces",
-              "Interactions",
-              "force",
               "Ensure",
               "gravitational",
-              "equations",
-              "used",
               "weak",
               "consistent",
               "point",
               "strong",
               "nuclear",
-              "law",
               "applied",
-              "coordinate",
-              "system"
+              "coordinate"
             ],
             "required_symbols": []
           },
@@ -31692,27 +30924,24 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Applications of Quantum Mechanics (Semiconductors, Lasers)",
+              "Semiconductors Lasers",
+              "Mechanics Semiconductors Lasers",
+              "Lasers",
+              "Quantum Mechanics Semiconductors Lasers",
               "Quantum Mechanics",
-              "Semiconductors",
-              "Lasers"
+              "Semiconductors"
             ],
             "topic_keywords": [
-              "Applications",
               "Quantum",
-              "Mechanics",
               "Semiconductors",
               "Lasers",
-              "Energy",
               "Ensure",
               "Band",
               "Population",
-              "Mass",
               "semiconductor",
               "Inversion",
               "Effective",
               "Calculation",
-              "used",
               "calculated",
               "state",
               "laser",
@@ -31764,25 +30993,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Blackbody Radiation and Planck's Law",
-              "Blackbody Radiation",
-              "Planck's Law"
+              "Planck's Law",
+              "Blackbody Radiation"
             ],
             "topic_keywords": [
               "Blackbody",
-              "Radiation",
               "Planck",
-              "Law",
-              "temperature",
               "Ensure",
               "Wavelength",
               "Formula",
-              "constant",
               "Spectral",
               "Radiance",
               "Kelvin",
               "Boltzmann",
-              "Total",
               "Rayleigh",
               "Jeans"
             ],
@@ -31831,9 +31054,7 @@
             "keywords": []
           },
           "retrieval_hints": {
-            "scene_keywords": [
-              "Pauli Exclusion Principle"
-            ],
+            "scene_keywords": [],
             "topic_keywords": [
               "Pauli",
               "Exclusion",
@@ -31841,14 +31062,8 @@
               "quantum",
               "fermions",
               "spin",
-              "magnetic",
               "Ensure",
-              "numbers",
-              "ms",
               "two",
-              "system",
-              "number",
-              "particles",
               "electrons",
               "values"
             ],
@@ -32066,36 +31281,34 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Spin and Magnetic Moments",
-              "Spin",
+              "field 或",
+              "Spin Magnetic",
+              "molecular field",
               "Magnetic Moments",
-              "物理量误差量级自检",
-              "计算得出误差项 δX 时",
-              "实验分裂位移比例一致性",
-              "斯特恩-盖拉赫实验中涉及位移 Δz 与磁矩 μ 关系时",
-              "分子场理论能量映射",
-              "题目提及“分子场（molecular field）”或“平均场”且涉及相变温度θ时",
-              "自旋翻转能量倍数校验",
-              "一维点阵中非边界点自旋翻转"
+              "Spin Magnetic Moments",
+              "Spin and Magnetic Moments"
             ],
             "topic_keywords": [
               "Spin",
-              "Magnetic",
               "Moments",
               "moment",
               "Ensure",
               "correctly",
-              "particle",
-              "current",
               "direction",
-              "used",
               "fermions",
               "calculations",
-              "field",
               "right",
               "hand",
               "values",
-              "gyromagnetic"
+              "gyromagnetic",
+              "物理量误差量级自检",
+              "计算得出误差项",
+              "实验分裂位移比例一致性",
+              "斯特恩",
+              "盖拉赫实验中涉及位移",
+              "与磁矩",
+              "关系时",
+              "分子场理论能量映射"
             ],
             "required_symbols": [
               "\\delta \\mu",
@@ -32151,24 +31364,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Elementary Particles and Conservation Laws",
               "Elementary Particles",
+              "Particles Conservation",
+              "Elementary Particles Conservation",
+              "Elementary Particles and Conservation Laws",
               "Conservation Laws"
             ],
             "topic_keywords": [
               "Elementary",
-              "Particles",
               "Conservation",
-              "Laws",
-              "energy",
-              "number",
-              "all",
-              "total",
-              "charge",
-              "interaction",
               "have",
               "baryon",
-              "numbers",
               "Ensure",
               "lepton",
               "momentum",
@@ -32549,22 +31755,11 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Cosmology and General Relativity (Basics)",
-              "Cosmology",
+              "Relativity Basics",
               "General Relativity",
-              "Basics",
-              "弗里德曼方程曲率项关联",
-              "涉及宇宙平坦度（Flatness Problem）或密度参数演化时",
-              "定位误差量级一致性",
-              "要求计算GPS定位误差（error in position）时",
-              "区分固有时间与坐标时间",
-              "涉及黑洞度规 $ds^2$ 或时间膨胀效应的计算题",
-              "辐射能量密度演化幂次校验",
-              "涉及宇宙膨胀中无质量粒子（如光子、辐射）的能量密度随尺度因子 a(t) 变化时",
-              "涉及宇宙膨胀中无质量粒子（如光子、辐射）的能量密度随尺度因子 a",
-              "视界坐标时发散判定",
-              "计算物体到达史瓦西半径 $r_S$ 的坐标时间 $t$ 时",
-              "GPS相对论修正符号检查"
+              "General Relativity Basics",
+              "Cosmology General Relativity",
+              "Cosmology General Relativity Basics"
             ],
             "topic_keywords": [
               "Cosmology",
@@ -32572,21 +31767,21 @@
               "Relativity",
               "Basics",
               "Ensure",
-              "Equations",
               "universe",
               "correctly",
               "consistent",
               "Einstein",
               "tensor",
               "metric",
-              "used",
               "cosmological",
-              "Field",
               "Friedmann",
               "curvature",
               "Redshift",
               "Consistency",
-              "constant"
+              "弗里德曼方程曲率项关联",
+              "涉及宇宙平坦度",
+              "Flatness",
+              "或密度参数演化时"
             ],
             "required_symbols": [
               "a",
@@ -32638,12 +31833,12 @@
               "reported",
               "Analysis",
               "values",
-              "not",
               "measurement",
               "addition",
               "total",
               "division",
-              "Subtraction"
+              "Subtraction",
+              "same"
             ]
           },
           "tagged_reference": {
@@ -32654,10 +31849,9 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Error Analysis (Absolute, Relative, Percentage Errors)",
-              "Error Analysis",
               "Absolute",
               "Relative",
+              "Error Analysis",
               "Percentage Errors"
             ],
             "topic_keywords": [
@@ -32671,12 +31865,11 @@
               "measured",
               "reported",
               "values",
-              "not",
               "measurement",
               "addition",
-              "total",
               "division",
-              "Subtraction"
+              "Subtraction",
+              "same"
             ],
             "required_symbols": []
           },
@@ -32816,15 +32009,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Uncertainty Propagation",
-              "多参数几何定位校验",
-              "题目给出仰角(θ)、距离/时间(τ)及球体半径(R)求高度(H)时",
-              "题目给出仰角",
               "及球体半径",
-              "误差传递系数数量级审视",
-              "计算光速相关的距离误差 ΔH = (dH/dτ)Δτ 时",
-              "计算光速相关的距离误差 ΔH =",
-              "Δτ 时"
+              "题目给出仰角"
             ],
             "topic_keywords": [
               "Uncertainty",
@@ -32835,14 +32021,18 @@
               "variables",
               "absolute",
               "propagated",
-              "function",
               "values",
               "units",
               "geometric",
               "correctly",
-              "used",
               "partial",
-              "derivatives"
+              "derivatives",
+              "多参数几何定位校验",
+              "题目给出仰角",
+              "及球体半径",
+              "求高度",
+              "误差传递系数数量级审视",
+              "计算光速相关的距离误差"
             ],
             "required_symbols": [
               "R",
@@ -32897,7 +32087,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Significant Figures and Rounding Rules",
               "Significant Figures",
               "Rounding Rules"
             ],
@@ -32906,7 +32095,6 @@
               "Figures",
               "Rounding",
               "Ensure",
-              "number",
               "precision",
               "calculations",
               "match",
@@ -32964,10 +32152,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Graphical Data Representation (Logarithmic, Linear Scales)",
-              "Graphical Data Representation",
-              "Logarithmic",
-              "Linear Scales"
+              "Linear Scales",
+              "Logarithmic"
             ],
             "topic_keywords": [
               "Graphical",
@@ -33033,7 +32219,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Curve Fitting and Regression Analysis",
               "Curve Fitting",
               "Regression Analysis"
             ],
@@ -33042,14 +32227,12 @@
               "Fitting",
               "Regression",
               "Analysis",
-              "model",
               "Ensure",
               "data",
               "experimental",
               "linear",
               "fit",
               "uncertainties",
-              "system",
               "conventions",
               "expected",
               "theoretical",
@@ -33104,24 +32287,23 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "measurement instrument",
-              "calibration setup",
-              "experimental measurement",
-              "Measurement Techniques (Length, Time, Mass, etc.)",
-              "Measurement Techniques"
+              "Mass etc",
+              "Techniques Mass",
+              "Techniques Mass etc",
+              "Measurement Techniques Mass",
+              "Measurement Techniques Mass etc",
+              "etc."
             ],
             "topic_keywords": [
-              "measurement",
-              "instrument",
-              "calibration",
-              "uncertainty",
-              "apparatus",
+              "Measurement",
               "Techniques",
+              "etc",
               "Ensure",
               "measurements",
               "ruler",
               "measured",
               "environmental",
+              "calibration",
               "consistency",
               "aligns"
             ],
@@ -33172,7 +32354,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Use of Vernier Calipers and Micrometers",
               "Vernier Calipers",
               "Micrometers"
             ],
@@ -33191,7 +32372,6 @@
               "main",
               "Micrometer",
               "measured",
-              "object",
               "instrument",
               "positive"
             ],
@@ -33241,8 +32421,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Oscilloscope Operation and Signal Analysis",
-              "Oscilloscope Operation",
               "Signal Analysis"
             ],
             "topic_keywords": [
@@ -33258,9 +32436,7 @@
               "trigger",
               "voltage",
               "displayed",
-              "DC",
               "bandwidth",
-              "time",
               "scale",
               "display",
               "within"
@@ -33311,7 +32487,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Calibration of Instruments",
               "Calibration",
               "Instruments"
             ],
@@ -33322,13 +32497,11 @@
               "Ensure",
               "standard",
               "consistency",
-              "all",
               "measurements",
               "reference",
               "range",
               "within",
               "voltage",
-              "physical",
               "linear",
               "data",
               "specified",
@@ -33380,18 +32553,13 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Data Processing and Statistical Analysis",
-              "Data Processing",
-              "Statistical Analysis"
+              "Data Processing"
             ],
             "topic_keywords": [
               "Data",
               "Processing",
-              "Statistical",
               "Analysis",
               "Ensure",
-              "equations",
-              "bc",
               "deviation",
               "mean",
               "standard",
@@ -33449,10 +32617,9 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Design of Experiments and Hypothesis Testing",
+              "Hypothesis Testing",
               "Design",
-              "Experiments",
-              "Hypothesis Testing"
+              "Experiments"
             ],
             "topic_keywords": [
               "Design",
@@ -33461,7 +32628,6 @@
               "Testing",
               "Ensure",
               "data",
-              "all",
               "experiment",
               "Conditions",
               "experimental",
@@ -33469,7 +32635,6 @@
               "test",
               "type",
               "Coordinate",
-              "statistical",
               "sample",
               "size"
             ],
@@ -33652,14 +32817,7 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Dimensional Analysis and Scaling",
-              "Dimensional Analysis",
-              "Scaling",
-              "颗粒材料强度标度律校验",
-              "涉及微观颗粒尺寸（体积/直径）变化对宏观强度（力/压强）的影响时",
-              "涉及微观颗粒尺寸（体积",
-              "直径）变化对宏观强度（力",
-              "压强）的影响时"
+              "Scaling"
             ],
             "topic_keywords": [
               "Dimensional",
@@ -33668,16 +32826,16 @@
               "dimensions",
               "Ensure",
               "derived",
-              "physical",
               "quantities",
-              "all",
               "constants",
               "coordinate",
-              "length",
               "consistency",
-              "terms",
               "Validate",
-              "unit"
+              "unit",
+              "颗粒材料强度标度律校验",
+              "涉及微观颗粒尺寸",
+              "变化对宏观强度",
+              "的影响时"
             ],
             "required_symbols": [
               "F",
@@ -33729,9 +32887,8 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Laboratory Safety and Best Practices",
-              "Laboratory Safety",
-              "Best Practices"
+              "Best Practices",
+              "Laboratory Safety"
             ],
             "topic_keywords": [
               "Laboratory",
@@ -33739,13 +32896,11 @@
               "Best",
               "Practices",
               "Ensure",
-              "all",
               "Equipment",
               "data",
               "analysis",
               "uncertainty",
               "experimental",
-              "Energy",
               "experiment",
               "consistency",
               "measurements",
@@ -33800,16 +32955,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Variables Reproducibility",
+              "Control Variables Reproducibility",
               "Control Variables and Reproducibility",
-              "Control Variables",
-              "Reproducibility"
+              "Reproducibility",
+              "Control Variables"
             ],
             "topic_keywords": [
               "Control",
               "Variables",
               "Reproducibility",
               "experimental",
-              "all",
               "ensure",
               "consistent",
               "consistently",
@@ -33817,7 +32973,6 @@
               "across",
               "data",
               "Constraints",
-              "results",
               "applied",
               "Independent",
               "Replications"
@@ -33868,30 +33023,31 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "multimeter probe",
-              "ammeter connection",
-              "voltmeter reading",
-              "measurement mode",
+              "Circuit Analysis",
+              "Multimeters Circuit",
+              "Circuit Analysis Tools",
+              "Multimeters Circuit Analysis",
+              "Circuit",
+              "Multimeters Circuit Analysis Tools",
               "Use of Multimeters and Circuit Analysis Tools",
-              "Multimeters",
-              "Circuit Analysis Tools"
+              "Multimeters"
             ],
             "topic_keywords": [
-              "multimeter",
-              "ammeter",
-              "voltmeter",
-              "ohmmeter",
-              "probe",
-              "measurement mode",
               "Multimeters",
+              "Circuit",
               "Analysis",
               "Tools",
+              "multimeter",
               "mode",
               "Ensure",
               "measurement",
               "voltage",
+              "component",
+              "connected",
+              "set",
               "measured",
               "Confirm",
+              "resistance",
               "proper",
               "incorrect",
               "expected"
@@ -33941,25 +33097,20 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Spectroscopy and Light Measurement",
-              "Spectroscopy",
-              "Light Measurement"
+              "Light Measurement",
+              "Spectroscopy"
             ],
             "topic_keywords": [
               "Spectroscopy",
-              "Light",
               "Measurement",
               "wavelength",
               "Ensure",
-              "law",
               "units",
               "Planck",
               "frequency",
-              "used",
               "speed",
               "consistent",
               "applied",
-              "energy",
               "diffraction",
               "Beer",
               "Lambert"
@@ -34011,8 +33162,6 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Thermal Measurements and Calorimetry",
-              "Thermal Measurements",
               "Calorimetry"
             ],
             "topic_keywords": [
@@ -34022,17 +33171,12 @@
               "heat",
               "Ensure",
               "phase",
-              "temperature",
               "Specific",
-              "transfer",
-              "system",
-              "all",
               "lost",
               "capacity",
               "during",
               "calculations",
               "Conditions",
-              "mc",
               "change"
             ],
             "required_symbols": []
@@ -34080,9 +33224,14 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
+              "Techniques Pressure",
+              "Pressure Measurement",
+              "Vacuum Techniques Pressure",
+              "Techniques Pressure Measurement",
+              "Pressure",
+              "Vacuum Techniques Pressure Measurement",
               "Vacuum Techniques and Pressure Measurement",
-              "Vacuum Techniques",
-              "Pressure Measurement"
+              "Vacuum Techniques"
             ],
             "topic_keywords": [
               "Vacuum",
@@ -34092,14 +33241,10 @@
               "Gas",
               "Ensure",
               "units",
-              "System",
               "flow",
               "regime",
               "pressures",
               "consistent",
-              "equations",
-              "volume",
-              "temperature",
               "Confirm",
               "calculations",
               "calculated"
@@ -34151,23 +33296,17 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "Cryogenics and Low-Temperature Physics",
-              "Cryogenics",
-              "Low-Temperature Physics"
+              "Cryogenics"
             ],
             "topic_keywords": [
               "Cryogenics",
               "Low",
-              "Temperature",
               "Ensure",
               "cryogenic",
               "heat",
-              "systems",
               "entropy",
-              "equations",
               "flow",
               "decreases",
-              "system",
               "specific",
               "thermal",
               "temperatures",
@@ -34222,24 +33361,19 @@
           },
           "retrieval_hints": {
             "scene_keywords": [
-              "High-Speed Imaging and Motion Analysis",
-              "High-Speed Imaging",
-              "Motion Analysis"
+              "Motion Analysis",
+              "High-Speed Imaging"
             ],
             "topic_keywords": [
               "High",
               "Speed",
               "Imaging",
-              "Motion",
               "Analysis",
               "Ensure",
               "data",
-              "system",
               "acceleration",
-              "all",
               "frame",
               "consistency",
-              "equations",
               "velocity",
               "quantities",
               "have"

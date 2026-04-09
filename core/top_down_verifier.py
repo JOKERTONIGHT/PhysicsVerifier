@@ -11,6 +11,7 @@ from core.unified_retrieval import (
     norm_text,
     rule_topic_context,
     rule_sort_key,
+    select_topic_matches_with_rule_fallback,
     select_rules_with_topic_priority,
     score_rule_candidate,
     score_topic_candidate,
@@ -318,7 +319,7 @@ class TopDownVerifier:
             )
         ]
         scored.sort(key=lambda item: topic_sort_key({"score": item["score"], "domain": item["domain"], "topic": item["name"]}))
-        return scored[:top_k]
+        return select_topic_matches_with_rule_fallback(scored, top_k=top_k)
 
     def _score_unified_v2_rule(self, rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
         payload = score_rule_candidate(rule, text_for_rule)
