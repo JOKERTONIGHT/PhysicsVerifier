@@ -1,9 +1,21 @@
 import json
 import datetime
 import re
-from typing import List, Dict, Any, Optional
+import math
+from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
+from core.unified_retrieval import (
+    build_signal_document_frequency,
+    build_topic_candidates,
+    norm_text,
+    rule_topic_context,
+    rule_sort_key,
+    select_rules_with_topic_priority,
+    score_rule_candidate,
+    score_topic_candidate,
+    topic_sort_key,
+)
 from core.rule_based_verifier import RuleBasedVerifier, RuleContext
 from rules.symbolic_checks import (
     GeneratedSymbolicCheckExecutor,
@@ -43,7 +55,15 @@ class TopDownVerifier:
             self.rules_catalog_path = rules_catalog_path
 
         self.catalog = self._load_catalog()
+        meta = self.catalog.get("metadata") if isinstance(self.catalog, dict) else {}
+        self._unified_v2_mode = bool(
+            self._unified_mode and isinstance(meta, dict) and meta.get("catalog_type") == "unified_rules_v2"
+        )
         self.topics = self._flatten_topics()
+        self._unified_v2_topic_candidates = build_topic_candidates(self.catalog) if self._unified_v2_mode else []
+        self._unified_v2_signal_df = (
+            build_signal_document_frequency(self._unified_v2_topic_candidates) if self._unified_v2_topic_candidates else {}
+        )
         
         # Initialize the base verifiers
         # We will dynamically update rules for the rule-based verifier
@@ -213,6 +233,183 @@ class TopDownVerifier:
                 topics.append(t)
         return topics
 
+    @staticmethod
+    def _ordered_unique(values: List[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for value in values:
+            item = str(value or "").strip()
+            if not item:
+                continue
+            key = item.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    @staticmethod
+    def _match_phrase_or_symbol(needle: str, haystack: str) -> bool:
+        target = str(needle or "").strip()
+        text = str(haystack or "")
+        if not target or not text:
+            return False
+        if len(target) == 1 and re.fullmatch(r"[A-Za-z]", target):
+            pat = re.compile(rf"(^|[^A-Za-z0-9_]){re.escape(target)}([^A-Za-z0-9_]|$)", re.I)
+            return bool(pat.search(text))
+        return target.casefold() in text.casefold()
+
+    def _prepare_unified_v2_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = dict(rule)
+        rid = str(rule.get("rule_id") or rule.get("id") or "").strip()
+        prepared["id"] = rid
+        if not prepared.get("description"):
+            parts = []
+            if rule.get("trigger"):
+                parts.append(f"Trigger: {rule.get('trigger')}")
+            if rule.get("check_logic"):
+                parts.append(f"Check Logic: {rule.get('check_logic')}")
+            prepared["description"] = "\n".join(parts)
+        return prepared
+
+    def _score_unified_v2_topic(self, topic: Dict[str, Any], text_for_topic: str) -> Dict[str, Any]:
+        candidate = {
+            "domain": str(topic.get("domain") or "Unknown"),
+            "topic": str(topic.get("name") or "Unknown"),
+            "topic_obj": topic,
+            "aliases": [],
+            "scene_keywords": [],
+            "topic_keywords": [],
+            "knowledge_keywords": [],
+            "required_symbols": [],
+        }
+        for item in self._unified_v2_topic_candidates:
+            if item.get("topic_obj") is topic:
+                candidate = item
+                break
+
+        payload = score_topic_candidate(candidate, text_for_topic, signal_df=self._unified_v2_signal_df)
+        return {
+            "domain": payload["domain"],
+            "name": payload["topic"],
+            "score": payload["score"],
+            "evidence": payload["evidence"],
+            "topic": payload["topic_obj"],
+        }
+
+    def _retrieve_unified_v2_topics(self, sample: Dict[str, Any], top_k: int = 3) -> List[Dict[str, Any]]:
+        text_for_topic = "\n".join(
+            [
+                str(sample.get("question") or ""),
+                str(sample.get("context") or ""),
+            ]
+        )
+        scored = [
+            {
+                "domain": payload["domain"],
+                "name": payload["topic"],
+                "score": payload["score"],
+                "evidence": payload["evidence"],
+                "topic": payload["topic_obj"],
+            }
+            for payload in (
+                score_topic_candidate(candidate, text_for_topic, signal_df=self._unified_v2_signal_df)
+                for candidate in self._unified_v2_topic_candidates
+            )
+        ]
+        scored.sort(key=lambda item: topic_sort_key({"score": item["score"], "domain": item["domain"], "topic": item["name"]}))
+        return scored[:top_k]
+
+    def _score_unified_v2_rule(self, rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
+        payload = score_rule_candidate(rule, text_for_rule)
+        return {
+            "rule_id": payload["rule_id"],
+            "title": payload["title"],
+            "score": payload["score"],
+            "scope": payload["scope"],
+            "evidence": payload["evidence"],
+        }
+
+    def _retrieve_unified_v2_rules(self, topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], top_n: int = 6) -> List[Dict[str, Any]]:
+        text_for_rule = "\n".join(
+            [
+                str(sample.get("question") or ""),
+                str(sample.get("context") or ""),
+                str(sample.get("prediction") or ""),
+            ]
+        )
+        scored: List[Dict[str, Any]] = []
+        top1_score = float(topic_matches[0]["score"]) if topic_matches else 0.0
+        top1_margin = top1_score - float(topic_matches[1]["score"]) if len(topic_matches) > 1 else top1_score
+        top1_key = None
+        if topic_matches:
+            top1_key = (str(topic_matches[0].get("domain") or ""), str(topic_matches[0].get("name") or ""))
+
+        for topic_rank, item in enumerate(topic_matches):
+            topic = item.get("topic") if isinstance(item.get("topic"), dict) else {}
+            domain_name = str(item.get("domain") or topic.get("domain") or "Unknown")
+            topic_name = str(item.get("name") or topic.get("name") or "Unknown")
+            for raw_rule in topic.get("rules", []) or []:
+                if not isinstance(raw_rule, dict):
+                    continue
+                prepared_rule = self._prepare_unified_v2_rule(raw_rule)
+                score_payload = self._score_unified_v2_rule(prepared_rule, text_for_rule)
+                topic_ctx = rule_topic_context(
+                    raw_score=float(score_payload["score"] or 0.0),
+                    topic_rank=topic_rank,
+                    topic_score=float(item.get("score") or 0.0),
+                    top1_topic_score=top1_score,
+                    scope=str(score_payload.get("scope") or "domain"),
+                    rule_evidence=score_payload.get("evidence") or {},
+                    topic_evidence=item.get("evidence") or {},
+                )
+                scored.append(
+                    {
+                        "domain": domain_name,
+                        "topic_name": topic_name,
+                        "topic": topic,
+                        "rule": prepared_rule,
+                        "score": score_payload["score"],
+                        "adjusted_score": topic_ctx["adjusted_score"],
+                        "topic_gap": topic_ctx["topic_gap"],
+                        "min_score": topic_ctx["min_score"],
+                        "scope": score_payload.get("scope") or "domain",
+                        "evidence": score_payload["evidence"],
+                        "manual_override_reason": (score_payload.get("evidence") or {}).get("manual_override_reason") or "",
+                    }
+                )
+
+        scored.sort(
+            key=lambda item: rule_sort_key(
+                {
+                    "scope": item.get("scope") or "domain",
+                    "score": item["score"],
+                    "domain": item["domain"],
+                    "topic": item["topic_name"],
+                    "rule_id": str(item["rule"].get("id") or ""),
+                }
+            )
+        )
+        return select_rules_with_topic_priority(
+            [
+                {
+                    **item,
+                    "topic": item["topic_name"],
+                    "rule_id": str(item["rule"].get("id") or ""),
+                }
+                for item in scored
+                if item["score"] > 0
+            ],
+            top_n=top_n,
+            top1_key=top1_key,
+            top1_margin=float(top1_margin or 0.0),
+        )
+
+    def _build_unified_v2_topic_for_synthesis(self, topic: Dict[str, Any]) -> Dict[str, Any]:
+        adapted = dict(topic)
+        adapted["rules"] = [self._prepare_unified_v2_rule(rule) for rule in (topic.get("rules") or []) if isinstance(rule, dict)]
+        return adapted
+
     # ---- Unified-mode SRD helpers ----
 
     @staticmethod
@@ -231,6 +428,17 @@ class TopDownVerifier:
                 parts.append(f"Trigger: {r['trigger']}")
             if r.get("check_logic"):
                 parts.append(f"Check Logic: {r['check_logic']}")
+            return "\n".join(parts)
+        elif r.get("rule_id") or (r.get("id") and not r.get("source")):
+            parts = []
+            if r.get("title"):
+                parts.append(f"Title: {r['title']}")
+            if r.get("trigger"):
+                parts.append(f"Trigger: {r['trigger']}")
+            if r.get("check_logic"):
+                parts.append(f"Check Logic: {r['check_logic']}")
+            if r.get("description") and not parts:
+                parts.append(str(r.get("description") or ""))
             return "\n".join(parts)
         else:
             # Knowledge rules: classic Title + Description + Check Logic
@@ -277,10 +485,8 @@ JSON Output:
 
     def verify(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         question = sample.get("question", "")
-        
-        # 1. Classify
-        topic = self.classify_topic(question)
-        
+
+        topic: Optional[Dict[str, Any]] = None
         diagnostics: List[Dict[str, Any]] = []
         used_rules: List[str] = []
         verifier_used = "top_down_rule_based"
@@ -293,37 +499,111 @@ JSON Output:
         experience_post_diagnostics: List[Dict[str, Any]] = []
         experience_symbolic_post_diagnostics: List[Dict[str, Any]] = []
         experience_actions: List[Dict[str, Any]] = []
-        
-        if topic:
-            print(f"Classified into: {topic['domain']} - {topic['name']}")
-            rules = topic.get("rules", [])
-            topic_synthesized_specs = self.spec_synthesizer.synthesize_topic(topic.get("domain", "Unknown"), topic)
-            
-            if rules:
-                # 2. Prepare Rule Verifier
-                # Convert catalog rules to the format expected by RuleBasedVerifier
-                # We use source-aware SRD construction
-                current_translations = {}
-                rule_ids = []
-                for r in rules:
-                    rid = r.get("id")
-                    if not rid: continue
-                    rule_ids.append(rid)
-                    current_translations[rid] = {
-                        "srd": self._build_srd_for_rule(r)
-                    }
-                
+
+        selected_rule_records: List[Dict[str, Any]] = []
+        retrieved_topics_payload: List[Dict[str, Any]] = []
+        retrieved_rules_payload: List[Dict[str, Any]] = []
+
+        if self._unified_v2_mode:
+            topic_matches = self._retrieve_unified_v2_topics(sample, top_k=3)
+            retrieved_topics_payload = [
+                {
+                    "domain": str(item.get("domain") or "Unknown"),
+                    "topic": str(item.get("name") or "Unknown"),
+                    "score": float(item.get("score") or 0.0),
+                    "evidence": item.get("evidence") or {},
+                }
+                for item in topic_matches
+            ]
+
+            if topic_matches:
+                topic = topic_matches[0].get("topic") if isinstance(topic_matches[0].get("topic"), dict) else None
+                if topic:
+                    print(f"Retrieved primary topic: {topic['domain']} - {topic['name']}")
+
+            selected_rule_records = self._retrieve_unified_v2_rules(topic_matches, sample, top_n=6)
+            retrieved_rules_payload = [
+                {
+                    "rule_id": str(item["rule"].get("id") or ""),
+                    "domain": str(item.get("domain") or "Unknown"),
+                    "topic": str(item.get("topic_name") or "Unknown"),
+                    "title": str(item["rule"].get("title") or ""),
+                    "scope": str(item.get("scope") or item["rule"].get("scope") or "domain"),
+                    "score": float(item.get("score") or 0.0),
+                    "manual_override_reason": str(item.get("manual_override_reason") or ""),
+                    "evidence": item.get("evidence") or {},
+                }
+                for item in selected_rule_records
+            ]
+
+            current_translations: Dict[str, Dict[str, str]] = {}
+            rule_ids: List[str] = []
+            for item in selected_rule_records:
+                rule = item["rule"]
+                rid = str(rule.get("id") or "").strip()
+                if not rid:
+                    continue
+                rule_ids.append(rid)
+                current_translations[rid] = {"srd": self._build_srd_for_rule(rule)}
+
+            topic_synthesized_specs = {}
+            seen_topic_keys = set()
+            for item in topic_matches:
+                topic_obj = item.get("topic") if isinstance(item.get("topic"), dict) else None
+                if not topic_obj:
+                    continue
+                topic_key = self._normalize_topic_key(topic_obj.get("domain"), topic_obj.get("name"))
+                if topic_key in seen_topic_keys:
+                    continue
+                seen_topic_keys.add(topic_key)
+                adapted_topic = self._build_unified_v2_topic_for_synthesis(topic_obj)
+                topic_synthesized_specs.update(
+                    self.spec_synthesizer.synthesize_topic(topic_obj.get("domain", "Unknown"), adapted_topic)
+                )
+
+            if rule_ids:
                 self.rule_verifier.rules_to_check = rule_ids
                 self.rule_verifier.rule_translations = current_translations
-                
-                # 3. Run Rule Check
-                print(f"Running rule check with {len(rule_ids)} rules...")
+                print(f"Running unified v2 rule check with {len(rule_ids)} rules...")
                 result = self.rule_verifier.analyze(sample)
                 diagnostics = result.get("diagnostics", [])
                 used_rules = rule_ids
-                verifier_used = "top_down_rule_based" if not self._unified_mode else "unified_rule_based"
+                verifier_used = "unified_v2_rule_based"
         else:
-            print("Could not classify topic or no topic found.")
+            # 1. Classify
+            topic = self.classify_topic(question)
+
+            if topic:
+                print(f"Classified into: {topic['domain']} - {topic['name']}")
+                rules = topic.get("rules", [])
+                topic_synthesized_specs = self.spec_synthesizer.synthesize_topic(topic.get("domain", "Unknown"), topic)
+
+                if rules:
+                    # 2. Prepare Rule Verifier
+                    # Convert catalog rules to the format expected by RuleBasedVerifier
+                    # We use source-aware SRD construction
+                    current_translations = {}
+                    rule_ids = []
+                    for r in rules:
+                        rid = r.get("id")
+                        if not rid:
+                            continue
+                        rule_ids.append(rid)
+                        current_translations[rid] = {
+                            "srd": self._build_srd_for_rule(r)
+                        }
+
+                    self.rule_verifier.rules_to_check = rule_ids
+                    self.rule_verifier.rule_translations = current_translations
+
+                    # 3. Run Rule Check
+                    print(f"Running rule check with {len(rule_ids)} rules...")
+                    result = self.rule_verifier.analyze(sample)
+                    diagnostics = result.get("diagnostics", [])
+                    used_rules = rule_ids
+                    verifier_used = "top_down_rule_based" if not self._unified_mode else "unified_rule_based"
+            else:
+                print("Could not classify topic or no topic found.")
 
         ctx: Optional[RuleContext] = None
         if (self.enable_agentic_postcheck and diagnostics) or (self.enable_experience_pipeline and topic):
@@ -332,11 +612,29 @@ JSON Output:
         # 4. Agentic post-check: for each diagnostic, decide whether to build a symbolic cross-check spec.
         # Build a lookup from rule id -> rule dict for symbolic_hint access (unified mode)
         _rule_by_id: Dict[str, Dict[str, Any]] = {}
-        if topic:
+        _rule_topic_by_id: Dict[str, Dict[str, Any]] = {}
+        if self._unified_v2_mode:
+            for item in selected_rule_records:
+                rule = item.get("rule") if isinstance(item.get("rule"), dict) else None
+                if not rule:
+                    continue
+                rid = rule.get("id")
+                if not rid:
+                    continue
+                _rule_by_id[str(rid)] = rule
+                _rule_topic_by_id[str(rid)] = {
+                    "domain": str(item.get("domain") or "Unknown"),
+                    "name": str(item.get("topic_name") or "Unknown"),
+                }
+        elif topic:
             for _r in (topic.get("rules") or []):
                 _rid = _r.get("id")
                 if _rid:
                     _rule_by_id[_rid] = _r
+                    _rule_topic_by_id[_rid] = {
+                        "domain": str(topic.get("domain") or "Unknown"),
+                        "name": str(topic.get("name") or "Unknown"),
+                    }
 
         if self.enable_agentic_postcheck and diagnostics and ctx is not None:
 
@@ -349,8 +647,9 @@ JSON Output:
                     continue
 
                 # 4.1 Try to find an existing symbolic check from catalog first.
-                domain_name = topic.get("domain") if topic else "Unknown"
-                topic_name = topic.get("name") if topic else "Unknown"
+                matched_topic = _rule_topic_by_id.get(str(rid), topic or {"domain": "Unknown", "name": "Unknown"})
+                domain_name = matched_topic.get("domain") if isinstance(matched_topic, dict) else "Unknown"
+                topic_name = matched_topic.get("name") if isinstance(matched_topic, dict) else "Unknown"
                 existing = self.symbolic_catalog.find_applicable(domain=domain_name, topic=topic_name, diagnostic=d)
                 promoted = self.symbolic_experience_bank.get_promoted_specs(domain=domain_name, topic=topic_name, rule_id=rid)
                 synthesized = list(topic_synthesized_specs.get(rid, []))
@@ -406,11 +705,9 @@ JSON Output:
                     continue
 
                 srd = None
-                if topic:
-                    for r in (topic.get("rules", []) or []):
-                        if r.get("id") == rid:
-                            srd = f"Title: {r.get('title')}\nDescription: {r.get('description')}\nCheck Logic: {r.get('check_logic')}"
-                            break
+                rule_obj = _rule_by_id.get(str(rid))
+                if rule_obj:
+                    srd = self._build_srd_for_rule(rule_obj)
                 if not srd:
                     continue
 
@@ -484,7 +781,7 @@ JSON Output:
                     reconciled.append(d)
                     self._record_symbolic_experience(
                         sample=sample,
-                        topic=topic,
+                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
                         diagnostic=d,
                         outcome="no_symbolic_match",
                         proposed_specs=experience_candidates.get(id(d), []),
@@ -503,7 +800,7 @@ JSON Output:
                     reconciled.append(d)
                     self._record_symbolic_experience(
                         sample=sample,
-                        topic=topic,
+                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
                         diagnostic=d,
                         outcome="supported",
                         proposed_specs=experience_candidates.get(id(d), []),
@@ -513,7 +810,7 @@ JSON Output:
                     reconciled.append(d)
                     self._record_symbolic_experience(
                         sample=sample,
-                        topic=topic,
+                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
                         diagnostic=d,
                         outcome="inconclusive",
                         proposed_specs=experience_candidates.get(id(d), []),
@@ -528,7 +825,7 @@ JSON Output:
                     )
                     self._record_symbolic_experience(
                         sample=sample,
-                        topic=topic,
+                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
                         diagnostic=d,
                         outcome="suppressed",
                         proposed_specs=experience_candidates.get(id(d), []),
@@ -605,6 +902,8 @@ JSON Output:
             "topic": topic.get("name") if topic else None,
             "verifier": verifier_used,
             "unified_mode": self._unified_mode,
+            "retrieved_topics": retrieved_topics_payload,
+            "retrieved_rules": retrieved_rules_payload,
             "diagnostics": diagnostics,
             "symbolic_post_diagnostics": symbolic_post_diagnostics,
             "experience_post_diagnostics": experience_post_diagnostics,
