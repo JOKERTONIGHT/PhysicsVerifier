@@ -40,6 +40,8 @@ class TopDownVerifier:
         enable_experience_pipeline: bool = True,
         experience_rules_path: str = "results/semantic_experience_distilled_300.json",
         unified_rules_path: Optional[str] = None,
+        experience_code_manifest_path: str = "results/experience_symbolic_program_manifest_300.json",
+        experience_code_module: str = "symbolic.generated_experience_checks",
     ):
         self.llm_model = llm_model
         self.log_dir = Path(log_dir)
@@ -82,6 +84,9 @@ class TopDownVerifier:
         # the separate experience pipeline is only needed when NOT using unified catalog.
         self.enable_experience_pipeline = bool(enable_experience_pipeline) and not self._unified_mode
         self.experience_rules_path = str(experience_rules_path)
+        # Keep compatibility with run_top_down.py arguments.
+        self.experience_code_manifest_path = str(experience_code_manifest_path)
+        self.experience_code_module = str(experience_code_module)
         # Backward compatible registry (results/*) is kept for audit logs, but the source of truth is catalogs/symbolic_catalog.json
         self.symbolic_registry = GeneratedSymbolicCheckRegistry(path=str(self.results_dir / "agentic_symbolic_checks.json"))
         self.symbolic_catalog = SymbolicCatalog(path="catalogs/symbolic_catalog.json")
