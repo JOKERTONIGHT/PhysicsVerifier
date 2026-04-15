@@ -156,6 +156,18 @@ class RuleBasedVerifier:
         self.llm_symbol_extraction = bool(llm_symbol_extraction)
         self.use_symbol_graph = bool(use_symbol_graph)
         self.rule_mode = rule_mode
+        self.llm_trace_path = str(os.getenv("PHYSICSVERIFIER_LLM_TRACE_PATH") or "").strip()
+        self.llm_trace_include_prompts = str(os.getenv("PHYSICSVERIFIER_LLM_TRACE_INCLUDE_PROMPTS") or "").strip().lower() in {"1", "true", "yes"}
+        _timeout_env = str(os.getenv("PHYSICSVERIFIER_LLM_TIMEOUT_SEC") or "").strip()
+        try:
+            self.llm_timeout_sec = float(_timeout_env) if _timeout_env else None
+        except Exception:
+            self.llm_timeout_sec = None
+        _retries_env = str(os.getenv("PHYSICSVERIFIER_LLM_MAX_RETRIES") or "").strip()
+        try:
+            self.llm_max_retries = int(_retries_env) if _retries_env else None
+        except Exception:
+            self.llm_max_retries = None
         
         if rules is None:
             self.rules_to_check = list(_BUILTIN_RULES_MAP.keys())
@@ -184,7 +196,10 @@ class RuleBasedVerifier:
                 load_dotenv()
             try:
                 base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-                self._llm = openai.OpenAI(base_url=base_url)
+                client_kwargs: Dict[str, Any] = {"base_url": base_url}
+                if self.llm_max_retries is not None:
+                    client_kwargs["max_retries"] = self.llm_max_retries
+                self._llm = openai.OpenAI(**client_kwargs)
                 if not getattr(self._llm, "api_key", None):
                     raise ValueError("OPENAI_API_KEY is not set")
                 self._log(f"OpenAI client enabled for model: {self.llm_model}")
@@ -255,7 +270,18 @@ class RuleBasedVerifier:
             return True
         return self._llm_calls_used < self.max_llm_calls
 
-    def _llm_json(self, system_prompt: str, user_prompt: str, fallback=None) -> Any:
+    def _append_llm_trace(self, record: Dict[str, Any]) -> None:
+        if not self.llm_trace_path:
+            return
+        try:
+            trace_path = Path(self.llm_trace_path)
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            with trace_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _llm_json(self, system_prompt: str, user_prompt: str, fallback=None, trace_meta: Optional[Dict[str, Any]] = None) -> Any:
         if not self._llm_available():
             return fallback if fallback is not None else []
         
@@ -277,26 +303,53 @@ class RuleBasedVerifier:
                 max_tokens=self.llm_max_output_tokens,
                 # Request JSON output from models that support it
                 response_format={"type": "json_object"},
+                timeout=self.llm_timeout_sec,
             )
             resp = response.choices[0].message.content
             self._llm_calls_used += 1
+
+            trace_record = {
+                "ts": datetime.datetime.now().isoformat(),
+                "model": self.llm_model,
+                "trace_meta": trace_meta or {},
+                "raw_response": resp,
+                "raw_len": len(str(resp or "")),
+            }
+            if self.llm_trace_include_prompts:
+                trace_record["system_prompt"] = system_prompt
+                trace_record["user_prompt"] = user_prompt
             
             # The model should return a JSON string. We'll try to parse it directly.
             # A regex search is kept as a fallback for models that might wrap the JSON in text.
             try:
                 data = json.loads(resp)
+                trace_record["parse_status"] = "json.loads_ok"
+                self._append_llm_trace(trace_record)
                 self._cache_set("llm_json", payload, data)
                 return data
             except json.JSONDecodeError:
                 match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", resp)
                 if match:
                     data = json.loads(match.group(1))
+                    trace_record["parse_status"] = "regex_extract_ok"
+                    self._append_llm_trace(trace_record)
                     self._cache_set("llm_json", payload, data)
                     return data
             
+            trace_record["parse_status"] = "parse_failed"
+            self._append_llm_trace(trace_record)
             self._log(f"LLM response could not be parsed as JSON: {resp}")
             return fallback if fallback is not None else []
         except Exception as e:
+            self._append_llm_trace(
+                {
+                    "ts": datetime.datetime.now().isoformat(),
+                    "model": self.llm_model,
+                    "trace_meta": trace_meta or {},
+                    "parse_status": "exception",
+                    "exception": f"{type(e).__name__}: {e}",
+                }
+            )
             self._log(f"LLM call failed: {e}")
             return fallback if fallback is not None else []
 
@@ -544,7 +597,15 @@ Respond with only the JSON output (array or empty array).
                         rule_id=rule_id,
                     )
                 
-                diagnostics = self._llm_json(system_prompt, user_prompt, fallback=[])
+                diagnostics = self._llm_json(
+                    system_prompt,
+                    user_prompt,
+                    fallback=[],
+                    trace_meta={
+                        "sample_id": sample.get("id"),
+                        "rule_id": rule_id,
+                    },
+                )
                 if isinstance(diagnostics, dict):
                     diagnostics = [diagnostics]
                 elif isinstance(diagnostics, str):

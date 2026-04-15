@@ -151,6 +151,12 @@ def main() -> None:
         default="results/symbolic_audit.json",
         help="Write symbolic cross-check audit (checked diagnostics + symbolic results) to this file.",
     )
+    parser.add_argument(
+        "--full-output",
+        type=str,
+        default="",
+        help="Optional path to write full raw verifier outputs (includes retrieved topics/rules and agentic payload).",
+    )
     parser.add_argument("--catalog", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
     parser.add_argument("--no-agentic", action="store_true")
@@ -225,8 +231,15 @@ def main() -> None:
     sym_path.parent.mkdir(parents=True, exist_ok=True)
     sym_path.write_text(json.dumps(symbolic_audit, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    if args.full_output:
+        full_path = Path(args.full_output)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
+
     print(f"Done. Results saved to {out_path}")
     print(f"Done. Symbolic audit saved to {sym_path}")
+    if args.full_output:
+        print(f"Done. Full raw results saved to {args.full_output}")
 
 
 if __name__ == "__main__":

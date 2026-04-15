@@ -277,7 +277,8 @@ def _strong_model_generation(
     system_prompt = (
         "You are a strict physics evaluator for building a recall benchmark for a rule checker. "
         "Extract concise, physics-rule-grounded errors from the student answer. "
-        "Each error should be rewritable as a rule and align with checkable physics constraints. "
+        "Each error must represent a GENERALIZABLE experience rule, not a one-off case detail. "
+        "Each error should be directly mappable to a checkable rule condition. "
         "Use English only. No rubric references."
     )
     user_prompt = (
@@ -291,11 +292,14 @@ def _strong_model_generation(
         "  ]\n"
         "}\n\n"
         "Style requirements for each item:\n"
-        "1) Must state a condition/context (e.g., In small-angle approximation..., For energy conservation...).\n"
-        "2) Must state what should hold (expression/constraint/formula).\n"
-        "3) Must state how the answer violates it.\n"
-        "4) Should be directly mappable to a checker rule.\n"
-        "5) Keep one rule violation per item.\n\n"
+        "1) Must use a 3-part rule form: CONDITION -> SHOULD RULE -> VIOLATION.\n"
+        "2) CONDITION should be a reusable scenario (e.g., uniform acceleration, conservation law, boundary condition, symmetry), not a sample-specific sentence.\n"
+        "3) SHOULD RULE should be a general physics relation/constraint (formula family, sign/monotonicity, conservation, dimensional consistency).\n"
+        "4) VIOLATION should describe how the answer conflicts with that rule.\n"
+        "5) Keep one rule violation per item.\n"
+        "6) Avoid over-specific details: do NOT depend on sample id, exact numeric substitution, or one-time constants unless strictly necessary. Prefer variable-based wording.\n"
+        "7) Prefer naming the rule family when possible (e.g., Newton's second law, energy conservation, continuity, boundary matching, unit consistency).\n"
+        "8) Each item should be reusable as an experience rule template for similar problems.\n\n"
         "Examples (do not copy, adapt to this sample):\n"
         "- In uniform acceleration, displacement should satisfy s=v0 t+1/2 a t^2, but the answer uses a constant-velocity form s=vt.\n"
         "- For ideal gas at fixed n and T, pressure-volume should satisfy PV=const, but the answer treats P as independent of V.\n"
@@ -310,7 +314,8 @@ def _strong_model_generation(
         repair_prompt = (
             "The previous model output may be truncated or malformed JSON. "
             "Rewrite it into valid JSON only with schema: {\"errors\":[{\"error\":\"...\"}]}. "
-            "Keep only complete, meaningful, rule-like physics errors. "
+            "Keep only complete, meaningful, generalized rule-like physics errors. "
+            "Each item must follow CONDITION -> SHOULD RULE -> VIOLATION and be reusable as an experience rule. "
             f"Limit to at most {max_errors} items.\n\n"
             f"Raw output:\n{raw_text}"
         )
