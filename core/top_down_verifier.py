@@ -5,18 +5,8 @@ import math
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
-from core.unified_retrieval import (
-    build_signal_document_frequency,
-    build_topic_candidates,
-    norm_text,
-    rule_topic_context,
-    rule_sort_key,
-    select_topic_matches_with_rule_fallback,
-    select_rules_with_topic_priority,
-    score_rule_candidate,
-    score_topic_candidate,
-    topic_sort_key,
-)
+from core.unified_semantic_matcher import UnifiedSemanticMatcher
+from core.unified_retrieval import norm_text
 from core.rule_based_verifier import RuleBasedVerifier, RuleContext
 from rules.symbolic_checks import (
     GeneratedSymbolicCheckExecutor,
@@ -63,9 +53,10 @@ class TopDownVerifier:
             self._unified_mode and isinstance(meta, dict) and meta.get("catalog_type") == "unified_rules_v2"
         )
         self.topics = self._flatten_topics()
-        self._unified_v2_topic_candidates = build_topic_candidates(self.catalog) if self._unified_v2_mode else []
-        self._unified_v2_signal_df = (
-            build_signal_document_frequency(self._unified_v2_topic_candidates) if self._unified_v2_topic_candidates else {}
+        self.semantic_matcher = (
+            UnifiedSemanticMatcher(model=str(self.llm_model or ""))
+            if self._unified_v2_mode
+            else None
         )
         
         # Initialize the base verifiers
@@ -239,32 +230,6 @@ class TopDownVerifier:
                 topics.append(t)
         return topics
 
-    @staticmethod
-    def _ordered_unique(values: List[str]) -> List[str]:
-        out: List[str] = []
-        seen = set()
-        for value in values:
-            item = str(value or "").strip()
-            if not item:
-                continue
-            key = item.casefold()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(item)
-        return out
-
-    @staticmethod
-    def _match_phrase_or_symbol(needle: str, haystack: str) -> bool:
-        target = str(needle or "").strip()
-        text = str(haystack or "")
-        if not target or not text:
-            return False
-        if len(target) == 1 and re.fullmatch(r"[A-Za-z]", target):
-            pat = re.compile(rf"(^|[^A-Za-z0-9_]){re.escape(target)}([^A-Za-z0-9_]|$)", re.I)
-            return bool(pat.search(text))
-        return target.casefold() in text.casefold()
-
     def _prepare_unified_v2_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
         prepared = dict(rule)
         rid = str(rule.get("rule_id") or rule.get("id") or "").strip()
@@ -277,139 +242,6 @@ class TopDownVerifier:
                 parts.append(f"Check Logic: {rule.get('check_logic')}")
             prepared["description"] = "\n".join(parts)
         return prepared
-
-    def _score_unified_v2_topic(self, topic: Dict[str, Any], text_for_topic: str) -> Dict[str, Any]:
-        candidate = {
-            "domain": str(topic.get("domain") or "Unknown"),
-            "topic": str(topic.get("name") or "Unknown"),
-            "topic_obj": topic,
-            "aliases": [],
-            "scene_keywords": [],
-            "topic_keywords": [],
-            "knowledge_keywords": [],
-            "required_symbols": [],
-        }
-        for item in self._unified_v2_topic_candidates:
-            if item.get("topic_obj") is topic:
-                candidate = item
-                break
-
-        payload = score_topic_candidate(candidate, text_for_topic, signal_df=self._unified_v2_signal_df)
-        return {
-            "domain": payload["domain"],
-            "name": payload["topic"],
-            "score": payload["score"],
-            "evidence": payload["evidence"],
-            "topic": payload["topic_obj"],
-        }
-
-    def _retrieve_unified_v2_topics(self, sample: Dict[str, Any], top_k: int = 3) -> List[Dict[str, Any]]:
-        text_for_topic = "\n".join(
-            [
-                str(sample.get("question") or ""),
-                str(sample.get("context") or ""),
-            ]
-        )
-        scored = [
-            {
-                "domain": payload["domain"],
-                "name": payload["topic"],
-                "score": payload["score"],
-                "evidence": payload["evidence"],
-                "topic": payload["topic_obj"],
-            }
-            for payload in (
-                score_topic_candidate(candidate, text_for_topic, signal_df=self._unified_v2_signal_df)
-                for candidate in self._unified_v2_topic_candidates
-            )
-        ]
-        scored.sort(key=lambda item: topic_sort_key({"score": item["score"], "domain": item["domain"], "topic": item["name"]}))
-        return select_topic_matches_with_rule_fallback(scored, top_k=top_k)
-
-    def _score_unified_v2_rule(self, rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
-        payload = score_rule_candidate(rule, text_for_rule)
-        return {
-            "rule_id": payload["rule_id"],
-            "title": payload["title"],
-            "score": payload["score"],
-            "scope": payload["scope"],
-            "evidence": payload["evidence"],
-        }
-
-    def _retrieve_unified_v2_rules(self, topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], top_n: int = 6) -> List[Dict[str, Any]]:
-        text_for_rule = "\n".join(
-            [
-                str(sample.get("question") or ""),
-                str(sample.get("context") or ""),
-                str(sample.get("prediction") or ""),
-            ]
-        )
-        scored: List[Dict[str, Any]] = []
-        top1_score = float(topic_matches[0]["score"]) if topic_matches else 0.0
-        top1_margin = top1_score - float(topic_matches[1]["score"]) if len(topic_matches) > 1 else top1_score
-        top1_key = None
-        if topic_matches:
-            top1_key = (str(topic_matches[0].get("domain") or ""), str(topic_matches[0].get("name") or ""))
-
-        for topic_rank, item in enumerate(topic_matches):
-            topic = item.get("topic") if isinstance(item.get("topic"), dict) else {}
-            domain_name = str(item.get("domain") or topic.get("domain") or "Unknown")
-            topic_name = str(item.get("name") or topic.get("name") or "Unknown")
-            for raw_rule in topic.get("rules", []) or []:
-                if not isinstance(raw_rule, dict):
-                    continue
-                prepared_rule = self._prepare_unified_v2_rule(raw_rule)
-                score_payload = self._score_unified_v2_rule(prepared_rule, text_for_rule)
-                topic_ctx = rule_topic_context(
-                    raw_score=float(score_payload["score"] or 0.0),
-                    topic_rank=topic_rank,
-                    topic_score=float(item.get("score") or 0.0),
-                    top1_topic_score=top1_score,
-                    scope=str(score_payload.get("scope") or "domain"),
-                    rule_evidence=score_payload.get("evidence") or {},
-                    topic_evidence=item.get("evidence") or {},
-                )
-                scored.append(
-                    {
-                        "domain": domain_name,
-                        "topic_name": topic_name,
-                        "topic": topic,
-                        "rule": prepared_rule,
-                        "score": score_payload["score"],
-                        "adjusted_score": topic_ctx["adjusted_score"],
-                        "topic_gap": topic_ctx["topic_gap"],
-                        "min_score": topic_ctx["min_score"],
-                        "scope": score_payload.get("scope") or "domain",
-                        "evidence": score_payload["evidence"],
-                        "manual_override_reason": (score_payload.get("evidence") or {}).get("manual_override_reason") or "",
-                    }
-                )
-
-        scored.sort(
-            key=lambda item: rule_sort_key(
-                {
-                    "scope": item.get("scope") or "domain",
-                    "score": item["score"],
-                    "domain": item["domain"],
-                    "topic": item["topic_name"],
-                    "rule_id": str(item["rule"].get("id") or ""),
-                }
-            )
-        )
-        return select_rules_with_topic_priority(
-            [
-                {
-                    **item,
-                    "topic": item["topic_name"],
-                    "rule_id": str(item["rule"].get("id") or ""),
-                }
-                for item in scored
-                if item["score"] > 0
-            ],
-            top_n=top_n,
-            top1_key=top1_key,
-            top1_margin=float(top1_margin or 0.0),
-        )
 
     def _build_unified_v2_topic_for_synthesis(self, topic: Dict[str, Any]) -> Dict[str, Any]:
         adapted = dict(topic)
@@ -508,39 +340,104 @@ JSON Output:
 
         selected_rule_records: List[Dict[str, Any]] = []
         retrieved_topics_payload: List[Dict[str, Any]] = []
+        retrieved_clusters_payload: List[Dict[str, Any]] = []
         retrieved_rules_payload: List[Dict[str, Any]] = []
+        semantic_selection_error = ""
+        selection_strategy = "semantic_unavailable"
+        topic_matches: List[Dict[str, Any]] = []
 
         if self._unified_v2_mode:
-            topic_matches = self._retrieve_unified_v2_topics(sample, top_k=3)
-            retrieved_topics_payload = [
-                {
-                    "domain": str(item.get("domain") or "Unknown"),
-                    "topic": str(item.get("name") or "Unknown"),
-                    "score": float(item.get("score") or 0.0),
-                    "evidence": item.get("evidence") or {},
-                }
-                for item in topic_matches
-            ]
+            semantic_result: Optional[Dict[str, Any]] = None
+            if self.semantic_matcher is not None and self.semantic_matcher.available:
+                try:
+                    semantic_result = self.semantic_matcher.select_tree_semantically(sample, self.catalog)
+                    selection_strategy = "semantic_tree_selection"
+                except Exception as exc:
+                    semantic_selection_error = f"{type(exc).__name__}: {exc}"
+            else:
+                semantic_selection_error = "Semantic matcher is not available."
 
-            if topic_matches:
-                topic = topic_matches[0].get("topic") if isinstance(topic_matches[0].get("topic"), dict) else None
-                if topic:
-                    print(f"Retrieved primary topic: {topic['domain']} - {topic['name']}")
-
-            selected_rule_records = self._retrieve_unified_v2_rules(topic_matches, sample, top_n=6)
-            retrieved_rules_payload = [
-                {
-                    "rule_id": str(item["rule"].get("id") or ""),
-                    "domain": str(item.get("domain") or "Unknown"),
-                    "topic": str(item.get("topic_name") or "Unknown"),
-                    "title": str(item["rule"].get("title") or ""),
-                    "scope": str(item.get("scope") or item["rule"].get("scope") or "domain"),
-                    "score": float(item.get("score") or 0.0),
-                    "manual_override_reason": str(item.get("manual_override_reason") or ""),
-                    "evidence": item.get("evidence") or {},
+            if semantic_result is not None:
+                verifier_used = "unified_v2_semantic_rule_based"
+                topic_matches = list(semantic_result.get("selected_topics") or [])
+                semantic_topic_index = {
+                    (str(item.get("domain") or "Unknown"), str(item.get("topic") or "Unknown")): item
+                    for item in topic_matches
+                    if isinstance(item, dict)
                 }
-                for item in selected_rule_records
-            ]
+                retrieved_topics_payload = [
+                    {
+                        "domain": str(item.get("domain") or "Unknown"),
+                        "topic": str(item.get("topic") or "Unknown"),
+                        "score": float(item.get("score") or 0.0),
+                        "evidence": {"reason": str(item.get("reason") or "")},
+                    }
+                    for item in topic_matches
+                ]
+                retrieved_clusters_payload = [
+                    {
+                        "domain": str(item.get("domain") or "Unknown"),
+                        "topic": str(item.get("topic") or "Unknown"),
+                        "cluster_id": str(item.get("cluster_id") or ""),
+                        "cluster": str(item.get("cluster") or ""),
+                        "score": float(item.get("score") or 0.0),
+                        "reason": str(item.get("reason") or ""),
+                    }
+                    for item in (semantic_result.get("selected_clusters") or [])
+                    if isinstance(item, dict)
+                ]
+                if topic_matches:
+                    raw_topic = topic_matches[0].get("topic_obj") if isinstance(topic_matches[0].get("topic_obj"), dict) else None
+                    topic = dict(raw_topic) if isinstance(raw_topic, dict) else None
+                    if topic is not None and not topic.get("domain"):
+                        topic["domain"] = str(topic_matches[0].get("domain") or "Unknown")
+                    if topic:
+                        print(f"Retrieved primary topic: {topic['domain']} - {topic['name']}")
+                selected_rule_records = []
+                for item in (semantic_result.get("selected_rules") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    raw_rule = item.get("rule_obj") if isinstance(item.get("rule_obj"), dict) else None
+                    if not raw_rule:
+                        continue
+                    rule = self._prepare_unified_v2_rule(raw_rule)
+                    topic_obj = None
+                    topic_key = (str(item.get("domain") or "Unknown"), str(item.get("topic") or "Unknown"))
+                    topic_match = semantic_topic_index.get(topic_key)
+                    raw_topic_obj = topic_match.get("topic_obj") if isinstance(topic_match, dict) and isinstance(topic_match.get("topic_obj"), dict) else None
+                    if isinstance(raw_topic_obj, dict):
+                        topic_obj = dict(raw_topic_obj)
+                        if not topic_obj.get("domain"):
+                            topic_obj["domain"] = topic_key[0]
+                    selected_rule_records.append(
+                        {
+                            "domain": str(item.get("domain") or "Unknown"),
+                            "topic_name": str(item.get("topic") or "Unknown"),
+                            "topic": topic_obj,
+                            "cluster_id": str(item.get("cluster_id") or ""),
+                            "cluster": str(item.get("cluster") or ""),
+                            "rule": rule,
+                            "score": float(item.get("score") or 0.0),
+                            "scope": str(rule.get("scope") or "domain"),
+                            "evidence": {"reason": str(item.get("reason") or "")},
+                            "manual_override_reason": "",
+                        }
+                    )
+                retrieved_rules_payload = [
+                    {
+                        "rule_id": str(item["rule"].get("id") or ""),
+                        "domain": str(item.get("domain") or "Unknown"),
+                        "topic": str(item.get("topic_name") or "Unknown"),
+                        "cluster_id": str(item.get("cluster_id") or ""),
+                        "cluster": str(item.get("cluster") or ""),
+                        "title": str(item["rule"].get("title") or ""),
+                        "scope": str(item.get("scope") or item["rule"].get("scope") or "domain"),
+                        "score": float(item.get("score") or 0.0),
+                        "manual_override_reason": "",
+                        "evidence": item.get("evidence") or {},
+                    }
+                    for item in selected_rule_records
+                ]
 
             current_translations: Dict[str, Dict[str, str]] = {}
             rule_ids: List[str] = []
@@ -555,7 +452,13 @@ JSON Output:
             topic_synthesized_specs = {}
             seen_topic_keys = set()
             for item in topic_matches:
-                topic_obj = item.get("topic") if isinstance(item.get("topic"), dict) else None
+                topic_obj = None
+                if isinstance(item.get("topic_obj"), dict):
+                    topic_obj = dict(item.get("topic_obj"))
+                    if not topic_obj.get("domain"):
+                        topic_obj["domain"] = str(item.get("domain") or "Unknown")
+                elif isinstance(item.get("topic"), dict):
+                    topic_obj = item.get("topic")
                 if not topic_obj:
                     continue
                 topic_key = self._normalize_topic_key(topic_obj.get("domain"), topic_obj.get("name"))
@@ -574,7 +477,9 @@ JSON Output:
                 result = self.rule_verifier.analyze(sample)
                 diagnostics = result.get("diagnostics", [])
                 used_rules = rule_ids
-                verifier_used = "unified_v2_rule_based"
+            else:
+                self.rule_verifier.rules_to_check = []
+                self.rule_verifier.rule_translations = {}
         else:
             # 1. Classify
             topic = self.classify_topic(question)
@@ -908,7 +813,10 @@ JSON Output:
             "topic": topic.get("name") if topic else None,
             "verifier": verifier_used,
             "unified_mode": self._unified_mode,
+            "selection_strategy": selection_strategy,
+            "semantic_selection_error": semantic_selection_error,
             "retrieved_topics": retrieved_topics_payload,
+            "retrieved_clusters": retrieved_clusters_payload,
             "retrieved_rules": retrieved_rules_payload,
             "diagnostics": diagnostics,
             "symbolic_post_diagnostics": symbolic_post_diagnostics,

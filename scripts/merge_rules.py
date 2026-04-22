@@ -13,7 +13,7 @@ still inspect the catalog shape, but the internal semantics are different:
 - topic.rules contains only distilled experience rule leaves
 - knowledge rules are moved to topic.knowledge_reference
 - tagged experience rules are moved to topic.tagged_reference
-- retrieval_hints and clusters are added for offline matching analysis
+- retrieval_hints and scenario_clusters are added for semantic tree matching
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import datetime as _dt
 import json
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -32,18 +31,308 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.unified_retrieval import (
+    PHYSICAL_CONTEXT_HINTS,
     build_scene_keywords,
     build_topic_required_symbols,
     classify_rule_scope,
     extract_keywords,
+    is_strong_symbol,
     norm_text,
     ordered_unique,
     normalize_rule_for_retrieval,
     refine_topic_hints,
 )
 
-CLUSTER_TOPIC_THRESHOLD = 12
-CLUSTER_BUCKET_THRESHOLD = 3
+DOMAIN_SEMANTIC_PROFILES: Dict[str, Dict[str, Any]] = {
+    "Mechanics": {
+        "description": "Covers motion, forces, energy, momentum, gravity, fluids, and mechanical systems under classical mechanics assumptions.",
+        "includes": ["motion and trajectory", "force balance", "energy and momentum", "orbital and rotational dynamics"],
+        "excludes": ["field propagation as the primary object", "microscopic quantum-state reasoning"],
+    },
+    "Electromagnetism": {
+        "description": "Covers electric and magnetic fields, circuits, induction, charge transport, and electromagnetic interactions.",
+        "includes": ["circuits and current", "electric or magnetic fields", "induction and flux change", "Lorentz-force effects"],
+        "excludes": ["pure geometric optics without field dynamics", "thermodynamic state reasoning as the main mechanism"],
+    },
+    "Optics": {
+        "description": "Covers propagation of light, refraction, reflection, interference, coherence, and optical measurement settings.",
+        "includes": ["light propagation", "refraction and reflection", "interference and coherence", "optical imaging"],
+        "excludes": ["general electromagnetic circuit behavior", "matter-wave or particle-physics reasoning"],
+    },
+    "Modern Physics": {
+        "description": "Covers relativity, quantum ideas, particle and nuclear physics, and modern spacetime or microscopic frameworks.",
+        "includes": ["special or general relativity", "quantum and particle effects", "modern spacetime models"],
+        "excludes": ["purely classical mechanics unless used as comparison baseline", "standard lab measurement workflow only"],
+    },
+    "Thermodynamics & Statistical Physics": {
+        "description": "Covers heat, thermal transport, thermodynamic processes, gases, entropy, and statistical macroscopic behavior.",
+        "includes": ["heat transfer", "state variables", "gases and kinetic theory", "entropy and equilibrium"],
+        "excludes": ["field or circuit dynamics as the dominant mechanism", "purely geometric optical paths"],
+    },
+    "Experimental Physics": {
+        "description": "Covers measurement, uncertainty, graph reading, instrument usage, and data interpretation in physics experiments.",
+        "includes": ["uncertainty and significant figures", "graph or table interpretation", "instrument reading and setup"],
+        "excludes": ["domain-specific physical mechanism derivation unless explicitly experimental"],
+    },
+}
+
+FOCUS_TOPIC_STRUCTURE: Dict[str, Dict[str, Any]] = {
+    "mechanics::kinematics in 1d/2d/3d": {
+        "description": "Classical kinematics expressed through position, velocity, acceleration, timing, trajectory constraints, and geometric motion relations.",
+        "includes": ["timing and displacement relations", "trajectory or projection geometry", "average or instantaneous speed checks", "constraint-based kinematics"],
+        "excludes": ["force-balance-first modeling", "energy conservation as the main organizing principle"],
+        "related_topics": [
+            "Mechanics::Relative Motion",
+            "Mechanics::Newton's Laws and Free Body Diagrams",
+        ],
+    },
+    "mechanics::newton's laws and free body diagrams": {
+        "description": "Force decomposition, equation-of-motion setup, drag or contact modeling, and free-body consistency checks.",
+        "includes": ["force balance", "free-body diagrams", "drag-force equations", "parameter simplification in Newtonian setups"],
+        "excludes": ["pure kinematic timing relations", "energy-only reasoning without force modeling"],
+        "related_topics": [
+            "Mechanics::Friction and Contact Forces",
+            "Mechanics::Kinematics in 1D/2D/3D",
+        ],
+    },
+    "mechanics::friction and contact forces": {
+        "description": "Friction-state judgment, contact constraints, rolling conditions, and anisotropic or path-dependent work from contact forces.",
+        "includes": ["rolling and slipping states", "friction projection", "contact-work consistency", "anisotropic friction modeling"],
+        "excludes": ["force-free kinematics", "global energy bookkeeping without contact specifics"],
+        "related_topics": [
+            "Mechanics::Newton's Laws and Free Body Diagrams",
+            "Mechanics::Work-Energy Theorem and Conservation of Energy",
+        ],
+    },
+    "mechanics::work-energy theorem and conservation of energy": {
+        "description": "Energy baselines, work-sign conventions, constrained motion energy transfer, and kinetic-energy stitching across piecewise fields.",
+        "includes": ["energy conservation", "work sign consistency", "constrained-surface kinetic checks", "piecewise-field energy matching"],
+        "excludes": ["force-diagram-first derivations", "pure timing or projection kinematics", "orbital decay or celestial mechanics already governed by a more specific gravity topic"],
+        "related_topics": [
+            "Mechanics::Friction and Contact Forces",
+            "Mechanics::Gravitation and Kepler's Laws",
+        ],
+    },
+    "mechanics::oscillations and simple harmonic motion": {
+        "description": "Simple harmonic motion, damped or forced oscillations, effective stiffness and mass reduction, and mode-identification in oscillatory systems.",
+        "includes": ["SHM parameterization", "forced vs free vibration", "damping and stopping criteria", "equivalent stiffness or mass"],
+        "excludes": ["general wave optics without oscillator dynamics", "multi-body mode structure as the only focus"],
+        "related_topics": [
+            "Mechanics::Normal Modes and Coupled Oscillations",
+            "Mechanics::Waves on a String and Sound Waves",
+        ],
+    },
+    "mechanics::normal modes and coupled oscillations": {
+        "description": "Coupled oscillators, normal modes, boundary-coupling conditions, and reduced-coordinate derivations for multi-body vibration systems.",
+        "includes": ["normal-mode frequency structure", "coupled-system periods", "boundary-force coupling", "small-angle reduced-coordinate derivations"],
+        "excludes": ["single-oscillator SHM only", "generic rigid-body rotation without mode structure"],
+        "related_topics": [
+            "Mechanics::Oscillations and Simple Harmonic Motion",
+            "Mechanics::Rotational Kinematics and Dynamics",
+        ],
+    },
+    "electromagnetism::current, resistance, and ohm's law": {
+        "description": "Ohmic conduction, resistance construction, microscopic transport relations, and boundary-conditioned current-distribution reasoning.",
+        "includes": ["distributed resistance", "microscopic carrier relations", "superconducting or decay-current modeling", "boundary-driven current paths", "ohmic parameter identification"],
+        "excludes": ["induction-dominated emf generation", "wave propagation without circuit transport", "Kirchhoff loop solving as the primary task", "reactance-dominated AC behavior"],
+        "related_topics": [
+            "Electromagnetism::RL, RC, and RLC Circuits",
+            "Electromagnetism::Self-Inductance and Mutual Inductance",
+            "Electromagnetism::DC Circuits and Kirchhoff's Laws",
+        ],
+    },
+    "electromagnetism::self-inductance and mutual inductance": {
+        "description": "Inductive coupling, self-inductance, mutual-inductance constraints, and circuit-state reasoning where inductive terms are the dominant mechanism.",
+        "includes": ["self inductance", "mutual inductance", "open-circuit inductive voltage", "coupled-coil transient reasoning"],
+        "excludes": ["static resistance-only geometry", "pure Faraday flux construction without inductive coupling", "generic RLC bookkeeping when inductive coupling is not central"],
+        "related_topics": [
+            "Electromagnetism::Electromagnetic Induction and Faraday's Law",
+            "Electromagnetism::RL, RC, and RLC Circuits",
+            "Electromagnetism::Current, Resistance, and Ohm's Law",
+        ],
+    },
+    "electromagnetism::electric potential and potential energy": {
+        "description": "Electrostatic potential, potential difference, reference choice, path independence, and field-potential relations in conservative electric systems.",
+        "includes": ["potential difference", "potential superposition", "zero-reference choice", "electric field from potential"],
+        "excludes": ["dipole far-field multipole expansion as the primary object", "Coulomb-force vector balance without potential reasoning"],
+        "related_topics": [
+            "Electromagnetism::Coulomb's Law and Electric Fields",
+            "Electromagnetism::Electric Dipoles and Multipole Expansion",
+        ],
+    },
+    "modern physics::relativistic energy and momentum": {
+        "description": "Relativistic energy-momentum relations, invariant-mass reasoning, threshold kinematics, and regime checks between classical and relativistic limits.",
+        "includes": ["energy-momentum invariant", "threshold conditions", "relativistic kinetic energy", "classical-vs-relativistic regime checks"],
+        "excludes": ["pure observation geometry under length contraction", "classical collision bookkeeping without relativistic quantities"],
+        "related_topics": [
+            "Mechanics::Linear Momentum and Collisions",
+            "Modern Physics::Special Relativity (Time Dilation, Length Contraction)",
+        ],
+    },
+    "thermodynamics & statistical physics::heat transfer (conduction, convection, radiation)": {
+        "description": "Thermal transport by conduction, convection, or radiation, including flux balance, thermal resistance, and heating/cooling evolution models.",
+        "includes": ["dominant heat-transfer mode", "heat flux balance", "thermal resistance", "heating or cooling time evolution"],
+        "excludes": ["state-equation-only gas-process classification", "first-law bookkeeping when transport mode is not central"],
+        "related_topics": [
+            "Thermodynamics & Statistical Physics::First Law of Thermodynamics",
+            "Thermodynamics & Statistical Physics::Ideal Gas Law and Real Gas Behavior",
+            "Thermodynamics & Statistical Physics::Specific Heat and Heat Capacities",
+        ],
+    },
+    "thermodynamics & statistical physics::ideal gas law and real gas behavior": {
+        "description": "Gas state equations, process identification, parameter mapping, and boundaries between idealized gas models and neighboring thermal mechanisms.",
+        "includes": ["ideal-gas state equation", "process classification", "gas parameter mapping", "model-boundary checks"],
+        "excludes": ["transport-mode-dominated heat transfer", "pure calorimetry without gas-state relations"],
+        "related_topics": [
+            "Thermodynamics & Statistical Physics::First Law of Thermodynamics",
+            "Thermodynamics & Statistical Physics::Heat Transfer (Conduction, Convection, Radiation)",
+            "Thermodynamics & Statistical Physics::Specific Heat and Heat Capacities",
+        ],
+    },
+    "thermodynamics & statistical physics::first law of thermodynamics": {
+        "description": "Energy bookkeeping for thermodynamic systems, with explicit heat-work-internal-energy sign conventions and system-boundary validity checks.",
+        "includes": ["delta U = Q - W style bookkeeping", "sign convention", "closed-system boundary", "heat-work balance"],
+        "excludes": ["transport-mode-first heat-transfer reasoning", "gas-state-equation classification when bookkeeping is secondary"],
+        "related_topics": [
+            "Thermodynamics & Statistical Physics::Heat Transfer (Conduction, Convection, Radiation)",
+            "Thermodynamics & Statistical Physics::Ideal Gas Law and Real Gas Behavior",
+            "Thermodynamics & Statistical Physics::Specific Heat and Heat Capacities",
+        ],
+    },
+    "mechanics::circular motion and centripetal force": {
+        "description": "Circular-motion constraints, centripetal-force balance, contact-force support conditions, and threshold-speed reasoning in curved trajectories.",
+        "includes": ["centripetal-force balance", "normal-force conditions", "critical speed", "banked or constrained circular motion"],
+        "excludes": ["generic rotational-energy bookkeeping", "Lorentz-force motion when magnetic dynamics are primary"],
+        "related_topics": [
+            "Mechanics::Newton's Laws and Free Body Diagrams",
+            "Mechanics::Friction and Contact Forces",
+            "Electromagnetism::Magnetic Fields and Lorentz Force",
+        ],
+    },
+    "mechanics::rotational kinematics and dynamics": {
+        "description": "Rigid-body rotational motion, torque balance, rolling rotation, and moment-relationship modeling where angular acceleration or torque transmission is central.",
+        "includes": ["torque balance", "angular acceleration", "rolling rotation", "rotational inertia relations"],
+        "excludes": ["pure orbit-like circular motion threshold checks", "angular-momentum conservation without torque modeling"],
+        "related_topics": [
+            "Mechanics::Angular Momentum Conservation",
+            "Mechanics::Circular Motion and Centripetal Force",
+            "Mechanics::Newton's Laws and Free Body Diagrams",
+        ],
+    },
+    "mechanics::angular momentum conservation": {
+        "description": "Angular-momentum conservation, external-torque validity checks, and impulse-transfer reasoning in rotational or collision-like systems.",
+        "includes": ["angular momentum conservation", "external torque validity", "rotational collision transfer", "impulse-to-angular relation"],
+        "excludes": ["continuous torque-balance derivations where equations of motion are primary", "pure moment-of-inertia bookkeeping without conservation logic"],
+        "related_topics": [
+            "Mechanics::Rotational Kinematics and Dynamics",
+            "Mechanics::Linear Momentum and Collisions",
+        ],
+    },
+    "modern physics::cosmology and general relativity (basics)": {
+        "description": "Introductory spacetime and cosmology reasoning, including proper-vs-coordinate time, horizons, FRW evolution, and relativistic correction baselines.",
+        "includes": ["proper and coordinate time", "horizon behavior", "Friedmann evolution", "GR correction signs"],
+        "excludes": ["pure special-relativistic observation geometry", "classical orbital mechanics without spacetime correction"],
+        "related_topics": [
+            "Modern Physics::Special Relativity (Time Dilation, Length Contraction)",
+            "Mechanics::Gravitation and Kepler's Laws",
+        ],
+    },
+    "mechanics::gravitation and kepler's laws": {
+        "description": "Classical orbital motion, gravity-governed trajectories, escape conditions, and geometric relations in celestial mechanics.",
+        "includes": ["Kepler-style orbital geometry", "orbital energy and radius relations", "escape speed and orbital perturbation"],
+        "excludes": ["full GR-only metric derivations", "electromagnetic drag mechanisms as primary topic", "binary-specific modeling unless explicitly stated"],
+        "related_topics": [
+            "Modern Physics::Cosmology and General Relativity (Basics)",
+            "Mechanics::Circular Motion and Centripetal Force",
+        ],
+    },
+    "modern physics::special relativity (time dilation, length contraction)": {
+        "description": "Relativistic kinematics, simultaneity, length and time measurements, non-inertial extensions, and observation-dependent relativistic effects.",
+        "includes": ["length contraction", "time dilation", "frame-dependent observation", "accelerated or rotating relativistic frames"],
+        "excludes": ["general GR metric derivations as the main topic", "ordinary classical optical imaging without relativistic timing"],
+        "related_topics": [
+            "Optics::Laser Principles and Applications",
+            "Modern Physics::Cosmology and General Relativity (Basics)",
+        ],
+    },
+    "electromagnetism::electromagnetic induction and faraday's law": {
+        "description": "Induced emf, flux change, moving conductors, rotating conductors, eddy currents, and induction-circuit coupling under Faraday-type reasoning.",
+        "includes": ["flux change and induced emf", "motional emf", "rotating conductor induction", "induction-circuit coupling"],
+        "excludes": ["static circuit law only", "pure wave propagation without induction"],
+        "related_topics": [
+            "Electromagnetism::Self-Inductance and Mutual Inductance",
+            "Electromagnetism::Current, Resistance, and Ohm's Law",
+        ],
+    },
+    "electromagnetism::dc circuits and kirchhoff's laws": {
+        "description": "Static circuit solving with Kirchhoff constraints, branch-current decomposition, equivalent reduction, and loop/node consistency.",
+        "includes": ["Kirchhoff loop law", "Kirchhoff current law", "branch current solving", "equivalent circuit reduction"],
+        "excludes": ["inductive coupling as the dominant mechanism", "reactive AC impedance or resonance", "distributed resistance geometry without circuit solving"],
+        "related_topics": [
+            "Electromagnetism::Current, Resistance, and Ohm's Law",
+            "Electromagnetism::RL, RC, and RLC Circuits",
+            "Electromagnetism::Self-Inductance and Mutual Inductance",
+        ],
+    },
+    "electromagnetism::biot-savart law and ampere's law": {
+        "description": "Magnetic-field construction from steady currents using symmetry, line integration, and right-hand-rule direction logic.",
+        "includes": ["Ampere loop symmetry", "Biot-Savart field element integration", "steady-current condition", "right-hand-rule direction"],
+        "excludes": ["time-varying induction as the dominant mechanism", "charged-particle trajectory dynamics without field construction"],
+        "related_topics": [
+            "Electromagnetism::Magnetic Fields and Lorentz Force",
+            "Electromagnetism::Electromagnetic Induction and Faraday's Law",
+        ],
+    },
+    "electromagnetism::rl, rc, and rlc circuits": {
+        "description": "Transient or frequency-dependent circuit response involving reactive elements, time constants, and impedance-based reasoning.",
+        "includes": ["transient response", "time constant", "reactive impedance", "RLC resonance or damping"],
+        "excludes": ["static DC branch solving without dynamics", "mutual inductive coupling as the dominant mechanism", "resistance-only geometry construction"],
+        "related_topics": [
+            "Electromagnetism::DC Circuits and Kirchhoff's Laws",
+            "Electromagnetism::Self-Inductance and Mutual Inductance",
+            "Electromagnetism::Current, Resistance, and Ohm's Law",
+        ],
+    },
+    "optics::snell's law and critical angle": {
+        "description": "Refraction, critical-angle behavior, and optical-path reasoning in media with sharp or continuous refractive-index variation.",
+        "includes": ["Snell-like path bending", "critical angle", "gradient index medium", "mirage-like refractive paths"],
+        "excludes": ["generic circuit-wave problems", "laser cavity mode selection"],
+        "related_topics": [
+            "Optics::Interference (Young's Double Slit, Thin Films)",
+            "Mechanics::Fluid Statics (Buoyancy, Pressure in Fluids)",
+        ],
+    },
+    "optics::laser principles and applications": {
+        "description": "Laser operation, resonator conditions, coherent propagation, and optical devices where cavity structure or coherent source behavior is central.",
+        "includes": ["laser cavity", "ring resonator", "mode selection", "coherent optical source behavior"],
+        "excludes": ["generic interference without active cavity", "plain refraction problems"],
+        "related_topics": [
+            "Optics::Interference (Young's Double Slit, Thin Films)",
+            "Modern Physics::Special Relativity (Time Dilation, Length Contraction)",
+        ],
+    },
+}
+
+DEFAULT_SCENARIO_CLUSTER_BLUEPRINTS_PATH = REPO_ROOT / "catalogs/scenario_cluster_blueprints.json"
+
+
+def _load_scenario_cluster_blueprints(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Scenario cluster blueprints must be a dict: {path}")
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for topic_key, cluster_defs in payload.items():
+        norm_topic_key = norm_text(topic_key).casefold()
+        if not norm_topic_key:
+            continue
+        if not isinstance(cluster_defs, list):
+            raise ValueError(f"Scenario cluster blueprints for {topic_key!r} must be a list")
+        cleaned_clusters: List[Dict[str, Any]] = []
+        for cluster_def in cluster_defs:
+            if isinstance(cluster_def, dict):
+                cleaned_clusters.append(cluster_def)
+        out[norm_topic_key] = cleaned_clusters
+    return out
 
 
 def _load_json(path: Path) -> Any:
@@ -55,25 +344,13 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _norm_text(text: Any) -> str:
-    return norm_text(text)
-
-
 def _norm_key(value: Any) -> str:
-    return _norm_text(value).lower()
-
-
-def _ordered_unique(values: Iterable[str]) -> List[str]:
-    return ordered_unique(values)
-
-
-def _extract_keywords(texts: Iterable[str], *, max_keywords: int) -> List[str]:
-    return extract_keywords(texts, max_keywords=max_keywords)
+    return norm_text(value).lower()
 
 
 def _normalize_topic(domain: str, topic: str) -> str:
-    norm_domain = _norm_text(domain)
-    norm_topic = _norm_text(topic)
+    norm_domain = norm_text(domain)
+    norm_topic = norm_text(topic)
     if "/" in norm_topic:
         left, right = [part.strip() for part in norm_topic.split("/", 1)]
         if left.casefold() == norm_domain.casefold():
@@ -87,9 +364,9 @@ def _topic_key(domain: str, topic: str) -> str:
 
 def _safe_symbolic_hint(raw_hint: Any) -> Dict[str, Any]:
     hint = raw_hint if isinstance(raw_hint, dict) else {}
-    primitive = _norm_text(hint.get("primitive") or "none") or "none"
-    canonical = _norm_text(hint.get("canonical") or "")
-    required_symbols = _ordered_unique(str(item) for item in (hint.get("required_symbols") or []))
+    primitive = norm_text(hint.get("primitive") or "none") or "none"
+    canonical = norm_text(hint.get("canonical") or "")
+    required_symbols = ordered_unique(str(item) for item in (hint.get("required_symbols") or []))
     return {
         "primitive": primitive,
         "canonical": canonical,
@@ -98,67 +375,77 @@ def _safe_symbolic_hint(raw_hint: Any) -> Dict[str, Any]:
 
 
 def _build_match_features(title: str, trigger: str, check_logic: str, symbolic_hint: Dict[str, Any]) -> Dict[str, Any]:
-    required_symbols = _ordered_unique(str(item) for item in symbolic_hint.get("required_symbols", []))
-    primitive = _norm_text(symbolic_hint.get("primitive") or "none") or "none"
-    trigger_keywords = _extract_keywords([title, trigger], max_keywords=8)
-    object_keywords = _extract_keywords([check_logic], max_keywords=8)
+    raw_required_symbols = ordered_unique(str(item) for item in symbolic_hint.get("required_symbols", []))
+    primitive = norm_text(symbolic_hint.get("primitive") or "none") or "none"
+
+    def _is_scene_token(token: str) -> bool:
+        lowered = norm_text(token).casefold()
+        if not lowered:
+            return False
+        if lowered in {hint.casefold() for hint in PHYSICAL_CONTEXT_HINTS}:
+            return True
+        return any(lowered in hint or hint in lowered for hint in PHYSICAL_CONTEXT_HINTS if " " not in hint)
+
+    def _keep_keyword(token: str, *, allow_physical_short: bool = False) -> bool:
+        item = norm_text(token)
+        if not item:
+            return False
+        lowered = item.casefold()
+        if lowered in {"or", "and", "with", "when", "where", "very", "short", "opening", "time"}:
+            return False
+        if re.fullmatch(r"[A-Za-z]{1,3}", item):
+            return allow_physical_short and _is_scene_token(item)
+        if item.isalpha() and len(item) < 4:
+            return allow_physical_short and _is_scene_token(item)
+        return True
+
+    trigger_keywords = [
+        item
+        for item in extract_keywords([title, trigger], max_keywords=12)
+        if _keep_keyword(item, allow_physical_short=True)
+    ][:8]
+    object_keywords = [
+        item
+        for item in extract_keywords([check_logic], max_keywords=12)
+        if _keep_keyword(item, allow_physical_short=False)
+    ][:8]
+
+    scene_trigger_terms = build_scene_keywords(
+        topic_name=title,
+        tagged_titles=[trigger],
+        tagged_aliases=[],
+        rule_texts=[check_logic],
+    )[:8]
+    scene_trigger_terms = [
+        item
+        for item in scene_trigger_terms
+        if len(norm_text(item)) >= 4 or _is_scene_token(item)
+    ]
+
+    formula_trigger_terms = []
+    for item in object_keywords + trigger_keywords:
+        value = norm_text(item)
+        if not value:
+            continue
+        if re.search(r"[A-Z]_[A-Z]|[A-Za-z]+/[A-Za-z]+|\d", value):
+            formula_trigger_terms.append(value)
+            continue
+        if len(value) >= 4 and value.casefold() not in {"sqrt", "frac"}:
+            formula_trigger_terms.append(value)
+    formula_trigger_terms = ordered_unique(formula_trigger_terms)[:8]
+
+    required_symbols = [item for item in raw_required_symbols if is_strong_symbol(item)]
+    weak_symbol_terms = [item for item in raw_required_symbols if item not in required_symbols]
+
     return {
-        "trigger_keywords": trigger_keywords,
-        "object_keywords": object_keywords,
+        "trigger_keywords": ordered_unique(trigger_keywords),
+        "object_keywords": ordered_unique(object_keywords),
+        "scene_trigger_terms": ordered_unique(scene_trigger_terms),
+        "formula_trigger_terms": ordered_unique(formula_trigger_terms),
         "required_symbols": required_symbols,
+        "weak_symbol_terms": weak_symbol_terms,
         "primitive": primitive,
     }
-
-
-def _cluster_keywords(rules: List[Dict[str, Any]], *, max_keywords: int = 8) -> List[str]:
-    counter: Counter[str] = Counter()
-    display: Dict[str, str] = {}
-    order: Dict[str, int] = {}
-
-    for rule in rules:
-        features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
-        tokens = list(features.get("trigger_keywords") or []) + list(features.get("object_keywords") or [])
-        for token in tokens:
-            item = _norm_text(token)
-            if not item:
-                continue
-            key = item.casefold()
-            counter[key] += 1
-            display.setdefault(key, item)
-            order.setdefault(key, len(order))
-
-    ranked = sorted(counter.items(), key=lambda item: (-item[1], order[item[0]], item[0]))
-    return [display[key] for key, _ in ranked[:max_keywords]]
-
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", _norm_text(value).lower()).strip("_")
-    return slug or "unknown"
-
-
-def _build_clusters(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if len(rules) < CLUSTER_TOPIC_THRESHOLD:
-        return []
-
-    buckets: Dict[str, List[Dict[str, Any]]] = {}
-    for rule in rules:
-        error_type = _norm_text(rule.get("error_type") or "unknown") or "unknown"
-        buckets.setdefault(error_type, []).append(rule)
-
-    clusters: List[Dict[str, Any]] = []
-    for error_type, members in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0])):
-        if len(members) < CLUSTER_BUCKET_THRESHOLD:
-            continue
-        clusters.append(
-            {
-                "cluster_id": f"cluster_{_slugify(error_type)}",
-                "label": error_type,
-                "error_type": error_type,
-                "keywords": _cluster_keywords(members),
-                "rule_ids": [str(rule["rule_id"]) for rule in members],
-            }
-        )
-    return clusters
 
 
 def _build_topic_skeleton(knowledge_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
@@ -166,13 +453,27 @@ def _build_topic_skeleton(knowledge_data: Dict[str, Any]) -> Tuple[List[Dict[str
     states: Dict[str, Dict[str, Any]] = {}
 
     for domain in knowledge_data.get("domains", []) or []:
-        domain_name = _norm_text(domain.get("name") or "Unknown")
-        domain_out = {"name": domain_name, "topics": []}
+        domain_name = norm_text(domain.get("name") or "Unknown")
+        semantic_profile = DOMAIN_SEMANTIC_PROFILES.get(
+            domain_name,
+            {
+                "description": f"Physics domain covering {domain_name.lower()} topics.",
+                "includes": [],
+                "excludes": [],
+            },
+        )
+        domain_out = {
+            "name": domain_name,
+            "description": semantic_profile["description"],
+            "includes": ordered_unique(semantic_profile.get("includes") or []),
+            "excludes": ordered_unique(semantic_profile.get("excludes") or []),
+            "topics": [],
+        }
 
         for topic in domain.get("topics", []) or []:
-            topic_name = _norm_text(topic.get("name") or "Unknown")
+            topic_name = norm_text(topic.get("name") or "Unknown")
             knowledge_rules = [item for item in (topic.get("rules") or []) if isinstance(item, dict)]
-            knowledge_rule_ids = _ordered_unique(str(item.get("id") or "") for item in knowledge_rules)
+            knowledge_rule_ids = ordered_unique(str(item.get("id") or "") for item in knowledge_rules)
             knowledge_texts: List[str] = [topic_name]
             for item in knowledge_rules:
                 knowledge_texts.extend(
@@ -185,10 +486,14 @@ def _build_topic_skeleton(knowledge_data: Dict[str, Any]) -> Tuple[List[Dict[str
 
             entry = {
                 "name": topic_name,
+                "description": "",
+                "includes": [],
+                "excludes": [],
+                "related_topics": [],
                 "rules": [],
                 "knowledge_reference": {
                     "rule_ids": knowledge_rule_ids,
-                    "keywords": _extract_keywords(knowledge_texts, max_keywords=16),
+                    "keywords": extract_keywords(knowledge_texts, max_keywords=16),
                 },
                 "tagged_reference": {
                     "source_ids": [],
@@ -200,7 +505,7 @@ def _build_topic_skeleton(knowledge_data: Dict[str, Any]) -> Tuple[List[Dict[str
                     "topic_keywords": [],
                     "required_symbols": [],
                 },
-                "clusters": [],
+                "scenario_clusters": [],
             }
             domain_out["topics"].append(entry)
 
@@ -227,7 +532,7 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
         if not isinstance(raw_rule, dict):
             continue
 
-        domain = _norm_text(raw_rule.get("domain") or "Unknown")
+        domain = norm_text(raw_rule.get("domain") or "Unknown")
         topic = _normalize_topic(domain, str(raw_rule.get("topic") or "Unknown"))
         key = _topic_key(domain, topic)
         state = states.get(key)
@@ -236,32 +541,33 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
             continue
 
         symbolic_hint = _safe_symbolic_hint(raw_rule.get("symbolic_hint"))
-        title = _norm_text(raw_rule.get("title") or "")
-        trigger = _norm_text(raw_rule.get("trigger") or "")
-        check_logic = _norm_text(raw_rule.get("check_logic") or "")
+        title = norm_text(raw_rule.get("title") or "")
+        trigger = norm_text(raw_rule.get("trigger") or "")
+        check_logic = norm_text(raw_rule.get("check_logic") or "")
         rule_leaf = {
-            "rule_id": _norm_text(raw_rule.get("rule_id") or ""),
+            "rule_id": norm_text(raw_rule.get("rule_id") or ""),
             "title": title,
             "trigger": trigger,
             "check_logic": check_logic,
-            "error_type": _norm_text(raw_rule.get("error_type") or "logic") or "logic",
+            "error_type": norm_text(raw_rule.get("error_type") or "logic") or "logic",
             "scope": classify_rule_scope(
                 title=title,
                 trigger=trigger,
                 check_logic=check_logic,
             ),
             "symbolic_hint": symbolic_hint,
-            "support": {
-                "count": int(raw_rule.get("count") or 0),
-                "sample_ids": _ordered_unique(str(item) for item in (raw_rule.get("sample_ids") or [])),
-            },
+                "support": {
+                    "count": int(raw_rule.get("count") or 0),
+                    "sample_ids": ordered_unique(str(item) for item in (raw_rule.get("sample_ids") or [])),
+                },
             "match_features": _build_match_features(title, trigger, check_logic, symbolic_hint),
+            "retrieval_flags": {},
         }
         rule_leaf = normalize_rule_for_retrieval(rule_leaf)
         state["entry"]["rules"].append(rule_leaf)
 
     if unmatched:
-        uniq = _ordered_unique(unmatched)
+        uniq = ordered_unique(unmatched)
         preview = "\n".join(f"- {item}" for item in uniq[:10])
         raise ValueError(
             "Distilled rules contain topics that do not map to the knowledge skeleton.\n"
@@ -278,16 +584,16 @@ def _attach_tagged_reference(states: Dict[str, Dict[str, Any]], tagged_data: Any
         if not isinstance(raw_rule, dict):
             continue
         tags = raw_rule.get("tags") if isinstance(raw_rule.get("tags"), dict) else {}
-        domain = _norm_text(tags.get("domain") or "Unknown")
+        domain = norm_text(tags.get("domain") or "Unknown")
         topic = _normalize_topic(domain, str(tags.get("topic") or "Unknown"))
         key = _topic_key(domain, topic)
         state = states.get(key)
         if state is None:
             continue
 
-        title = _norm_text(raw_rule.get("title") or "")
-        description = _norm_text(raw_rule.get("description") or "")
-        source_id = _norm_text(raw_rule.get("id") or "")
+        title = norm_text(raw_rule.get("title") or "")
+        description = norm_text(raw_rule.get("description") or "")
+        source_id = norm_text(raw_rule.get("id") or "")
 
         ref = state["entry"]["tagged_reference"]
         ref["source_ids"].append(source_id)
@@ -298,15 +604,104 @@ def _attach_tagged_reference(states: Dict[str, Dict[str, Any]], tagged_data: Any
 
     for state in states.values():
         ref = state["entry"]["tagged_reference"]
-        ref["source_ids"] = _ordered_unique(ref["source_ids"])
-        ref["titles"] = _ordered_unique(ref["titles"])
-        ref["aliases"] = _ordered_unique(ref["aliases"])
-        ref["keywords"] = _extract_keywords(state["tagged_keyword_texts"], max_keywords=16)
+        ref["source_ids"] = ordered_unique(ref["source_ids"])
+        ref["titles"] = ordered_unique(ref["titles"])
+        ref["aliases"] = ordered_unique(ref["aliases"])
+        ref["keywords"] = extract_keywords(state["tagged_keyword_texts"], max_keywords=16)
 
     return mapped_rules
 
 
-def _finalize_topics(states: Dict[str, Dict[str, Any]]) -> None:
+def _rule_text_for_cluster(rule: Dict[str, Any]) -> str:
+    return " ".join(
+        [
+            norm_text(rule.get("title") or ""),
+            norm_text(rule.get("trigger") or ""),
+            norm_text(rule.get("check_logic") or ""),
+        ]
+    ).casefold()
+
+
+def _build_scenario_clusters(rules: List[Dict[str, Any]], cluster_blueprints: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rule_texts = {str(rule.get("rule_id") or ""): _rule_text_for_cluster(rule) for rule in rules}
+    assigned_rule_ids: set[str] = set()
+    clusters: List[Dict[str, Any]] = []
+
+    for blueprint in cluster_blueprints:
+        group_defs = blueprint.get("rule_groups") if isinstance(blueprint.get("rule_groups"), list) else []
+        built_groups: List[Dict[str, Any]] = []
+        cluster_rule_ids: List[str] = []
+        for group_def in group_defs:
+            if not isinstance(group_def, dict):
+                continue
+            match_any = [norm_text(item).casefold() for item in (group_def.get("match_any") or []) if norm_text(item)]
+            matched_ids: List[str] = []
+            for rule in rules:
+                rule_id = str(rule.get("rule_id") or "")
+                if not rule_id or rule_id in assigned_rule_ids:
+                    continue
+                haystack = rule_texts.get(rule_id, "")
+                if any(token in haystack for token in match_any):
+                    matched_ids.append(rule_id)
+            if not matched_ids:
+                continue
+            built_groups.append(
+                {
+                    "group_id": norm_text(group_def.get("group_id") or ""),
+                    "name": norm_text(group_def.get("name") or ""),
+                    "summary": norm_text(group_def.get("summary") or ""),
+                    "activation_condition": norm_text(group_def.get("activation_condition") or ""),
+                    "rule_ids": matched_ids,
+                }
+            )
+            cluster_rule_ids.extend(matched_ids)
+            assigned_rule_ids.update(matched_ids)
+        if not built_groups and rules:
+            continue
+        clusters.append(
+            {
+                "cluster_id": norm_text(blueprint.get("cluster_id") or ""),
+                "name": norm_text(blueprint.get("name") or ""),
+                "description": norm_text(blueprint.get("description") or ""),
+                "includes": ordered_unique(blueprint.get("includes") or []),
+                "excludes": ordered_unique(blueprint.get("excludes") or []),
+                "entry_cues": ordered_unique(blueprint.get("entry_cues") or []),
+                "related_clusters": ordered_unique(blueprint.get("related_clusters") or []),
+                "rule_groups": built_groups,
+                "rule_ids": ordered_unique(cluster_rule_ids),
+            }
+        )
+
+    remaining_rule_ids = [str(rule.get("rule_id") or "") for rule in rules if str(rule.get("rule_id") or "") not in assigned_rule_ids]
+    if remaining_rule_ids:
+        clusters.append(
+            {
+                "cluster_id": "general_reasoning",
+                "name": "General Topic Reasoning",
+                "description": "Fallback cluster for rules that belong to the topic but do not fit the first-pass scenario-specific buckets.",
+                "includes": ["topic-specific residual checks"],
+                "excludes": [],
+                "entry_cues": [],
+                "related_clusters": [],
+                "rule_groups": [
+                    {
+                        "group_id": "general_reasoning_checks",
+                        "name": "General Topic Reasoning Checks",
+                        "summary": "Residual topic-specific checks kept outside the first-pass scenario clusters.",
+                        "activation_condition": "Use only if the problem is clearly in this topic but not in a more specific scenario cluster.",
+                        "rule_ids": remaining_rule_ids,
+                    }
+                ],
+                "rule_ids": remaining_rule_ids,
+            }
+        )
+    return clusters
+
+
+def _finalize_topics(
+    states: Dict[str, Dict[str, Any]],
+    scenario_cluster_blueprints: Dict[str, List[Dict[str, Any]]],
+) -> None:
     for state in states.values():
         entry = state["entry"]
         rules = entry["rules"]
@@ -319,17 +714,17 @@ def _finalize_topics(states: Dict[str, Dict[str, Any]]) -> None:
 
         domain_rule_texts: List[str] = []
         for rule in rules:
-            if _norm_text(rule.get("scope") or "domain") != "domain":
+            if norm_text(rule.get("scope") or "domain") != "domain":
                 continue
             domain_rule_texts.extend(
                 [
-                    _norm_text(rule.get("title") or ""),
-                    _norm_text(rule.get("trigger") or ""),
+                    norm_text(rule.get("title") or ""),
+                    norm_text(rule.get("trigger") or ""),
                 ]
             )
 
-        topic_keywords = _ordered_unique(
-            list(_extract_keywords([state["topic"]], max_keywords=8))
+        topic_keywords = ordered_unique(
+            list(extract_keywords([state["topic"]], max_keywords=8))
             + list(entry["knowledge_reference"].get("keywords") or [])
             + list(entry["tagged_reference"].get("keywords") or [])
         )[:20]
@@ -350,24 +745,41 @@ def _finalize_topics(states: Dict[str, Dict[str, Any]]) -> None:
             "topic_keywords": topic_keywords,
             "required_symbols": build_topic_required_symbols(rules),
         }
-        entry["clusters"] = _build_clusters(rules)
+        structure_override = FOCUS_TOPIC_STRUCTURE.get(_topic_key(state["domain"], state["topic"]), {})
+        if structure_override:
+            entry["description"] = norm_text(structure_override.get("description") or "")
+            entry["includes"] = ordered_unique(structure_override.get("includes") or [])
+            entry["excludes"] = ordered_unique(structure_override.get("excludes") or [])
+            entry["related_topics"] = ordered_unique(structure_override.get("related_topics") or [])
+            entry["scenario_clusters"] = _build_scenario_clusters(
+                rules,
+                scenario_cluster_blueprints.get(_topic_key(state["domain"], state["topic"]), []),
+            )
+        else:
+            entry["description"] = f"Topic for {state['topic']} under {state['domain']}."
+            entry["includes"] = ordered_unique((entry["retrieval_hints"].get("scene_keywords") or [])[:4] + topic_keywords[:4])
+            entry["excludes"] = []
+            entry["related_topics"] = []
+            entry["scenario_clusters"] = []
 
 
 def build_unified_catalog_from_data(
     knowledge_data: Dict[str, Any],
     distilled_data: Dict[str, Any],
     tagged_data: Any,
+    scenario_cluster_blueprints: Dict[str, List[Dict[str, Any]]] | None = None,
 ) -> Dict[str, Any]:
+    scenario_cluster_blueprints = scenario_cluster_blueprints or {}
     domains_out, states = _build_topic_skeleton(knowledge_data)
     _attach_distilled_rules(states, distilled_data)
     mapped_tagged_rules = _attach_tagged_reference(states, tagged_data)
-    _finalize_topics(states)
+    _finalize_topics(states, scenario_cluster_blueprints)
 
     total_topics = sum(len(domain["topics"]) for domain in domains_out)
     total_rules = sum(len(topic["rules"]) for domain in domains_out for topic in domain["topics"])
     topics_with_rules = sum(1 for domain in domains_out for topic in domain["topics"] if topic["rules"])
-    total_clusters = sum(len(topic["clusters"]) for domain in domains_out for topic in domain["topics"])
-    clustered_topics = sum(1 for domain in domains_out for topic in domain["topics"] if topic["clusters"])
+    total_scenario_clusters = sum(len(topic["scenario_clusters"]) for domain in domains_out for topic in domain["topics"])
+    scenario_clustered_topics = sum(1 for domain in domains_out for topic in domain["topics"] if topic["scenario_clusters"])
     knowledge_rule_references = sum(
         len(topic["knowledge_reference"]["rule_ids"]) for domain in domains_out for topic in domain["topics"]
     )
@@ -383,20 +795,24 @@ def build_unified_catalog_from_data(
             "total_executable_rules": total_rules,
             "knowledge_rule_references": knowledge_rule_references,
             "mapped_tagged_reference_rules": mapped_tagged_rules,
-            "clustered_topics": clustered_topics,
-            "total_clusters": total_clusters,
-            "cluster_topic_threshold": CLUSTER_TOPIC_THRESHOLD,
-            "cluster_bucket_threshold": CLUSTER_BUCKET_THRESHOLD,
+            "scenario_clustered_topics": scenario_clustered_topics,
+            "total_scenario_clusters": total_scenario_clusters,
         },
         "domains": domains_out,
     }
 
 
-def build_unified_catalog(knowledge_path: Path, distilled_path: Path, tagged_path: Path) -> Dict[str, Any]:
+def build_unified_catalog(
+    knowledge_path: Path,
+    distilled_path: Path,
+    tagged_path: Path,
+    scenario_cluster_blueprints_path: Path = DEFAULT_SCENARIO_CLUSTER_BLUEPRINTS_PATH,
+) -> Dict[str, Any]:
     knowledge_data = _load_json(knowledge_path)
     distilled_data = _load_json(distilled_path)
     tagged_data = _load_json(tagged_path)
-    return build_unified_catalog_from_data(knowledge_data, distilled_data, tagged_data)
+    scenario_cluster_blueprints = _load_scenario_cluster_blueprints(scenario_cluster_blueprints_path)
+    return build_unified_catalog_from_data(knowledge_data, distilled_data, tagged_data, scenario_cluster_blueprints)
 
 
 def main() -> None:
@@ -404,6 +820,7 @@ def main() -> None:
     parser.add_argument("--knowledge", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--experience-tagged", type=str, default="catalogs/rules_300_tagged.json")
     parser.add_argument("--experience-distilled", type=str, default="catalogs/semantic_experience_distilled_300.json")
+    parser.add_argument("--scenario-cluster-blueprints", type=str, default="catalogs/scenario_cluster_blueprints.json")
     parser.add_argument("--output", "-o", type=str, default="catalogs/rules_unified.json")
     args = parser.parse_args()
 
@@ -411,6 +828,7 @@ def main() -> None:
         knowledge_path=Path(args.knowledge),
         distilled_path=Path(args.experience_distilled),
         tagged_path=Path(args.experience_tagged),
+        scenario_cluster_blueprints_path=Path(args.scenario_cluster_blueprints),
     )
     output_path = Path(args.output)
     _write_json(output_path, catalog)
@@ -422,8 +840,8 @@ def main() -> None:
     print(f"  Topics with rules:   {meta['topics_with_rules']}")
     print(f"  Executable rules:    {meta['total_executable_rules']}")
     print(f"  Tagged refs mapped:  {meta['mapped_tagged_reference_rules']}")
-    print(f"  Clustered topics:    {meta['clustered_topics']}")
-    print(f"  Total clusters:      {meta['total_clusters']}")
+    print(f"  Scenario topics:     {meta['scenario_clustered_topics']}")
+    print(f"  Scenario clusters:   {meta['total_scenario_clusters']}")
 
 
 if __name__ == "__main__":

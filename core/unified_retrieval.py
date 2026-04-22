@@ -437,6 +437,30 @@ GENERIC_SYMBOLS = {
     "Z",
 }
 
+NARROW_RULE_HINT_GROUPS = (
+    ("binary system", "双星"),
+    ("gravitational scattering", "引力散射", "impact parameter", "偏转角", "掠过"),
+    ("collision orbit", "碰撞后", "变轨", "近地点", "r_p"),
+    ("cherenkov", "切伦科夫"),
+    ("mirage", "蜃景", "虚幻湖面", "maupertuis", "fermat"),
+)
+
+STRONG_SYMBOL_ALLOWLIST = {
+    "R_E",
+    "r_p",
+    "dE",
+    "dr",
+    "dx",
+    "dt",
+    "EMF",
+    "ISS",
+}
+
+SHORT_TOKEN_ALLOWLIST = {
+    "ISS",
+    "EMF",
+}
+
 
 def norm_text(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
@@ -463,7 +487,7 @@ def match_phrase_or_symbol(needle: str, haystack: str) -> bool:
     if not target or not text:
         return False
 
-    if len(target) == 1 and re.fullmatch(r"[A-Za-z]", target):
+    if re.fullmatch(r"[A-Za-z0-9_]+", target):
         pat = re.compile(rf"(^|[^A-Za-z0-9_]){re.escape(target)}([^A-Za-z0-9_]|$)", re.I)
         return bool(pat.search(text))
 
@@ -499,9 +523,38 @@ def extract_keywords(texts: Iterable[str], *, max_keywords: int) -> List[str]:
     return [first_seen[key] for key, _ in ranked[:max_keywords]]
 
 
+def is_low_signal_term(value: str) -> bool:
+    return norm_text(value).casefold() in LOW_SIGNAL_KEYWORDS
+
+
+def is_generic_scene_term(value: str) -> bool:
+    return norm_text(value).casefold() in GENERIC_SCENE_TERMS
+
+
+def is_generic_scene_part(value: str) -> bool:
+    return norm_text(value).casefold() in GENERIC_SCENE_PARTS
+
+
+def is_generic_rule_signal(value: str) -> bool:
+    normalized = norm_text(value).casefold()
+    if not normalized:
+        return False
+    if normalized in GENERIC_RULE_SIGNAL_TERMS:
+        return True
+    return any(term in normalized for term in GENERIC_RULE_SIGNAL_TERMS)
+
+
+def is_short_token_allowed(value: str) -> bool:
+    return norm_text(value).upper() in SHORT_TOKEN_ALLOWLIST
+
+
 def _remove_keywords(values: Iterable[str], blocked: Iterable[str]) -> List[str]:
     blocked_keys = {norm_text(item).casefold() for item in blocked if norm_text(item)}
     return [item for item in ordered_unique(values) if norm_text(item).casefold() not in blocked_keys]
+
+
+def remove_generic_rule_keywords(values: Iterable[str]) -> List[str]:
+    return _remove_keywords(values, GENERIC_RULE_SIGNAL_TERMS)
 
 
 def _count_hint_hits(text: str, hints: Iterable[str]) -> int:
@@ -509,8 +562,12 @@ def _count_hint_hits(text: str, hints: Iterable[str]) -> int:
     return sum(1 for hint in hints if hint in lowered)
 
 
+def _rule_text(*, title: str, trigger: str, check_logic: str) -> str:
+    return " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)]).strip()
+
+
 def is_generic_math_rule(*, title: str, trigger: str, check_logic: str) -> bool:
-    text = " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)])
+    text = _rule_text(title=title, trigger=trigger, check_logic=check_logic)
     if not text:
         return False
     math_hits = _count_hint_hits(text, GENERIC_MATH_RULE_HINTS)
@@ -518,48 +575,127 @@ def is_generic_math_rule(*, title: str, trigger: str, check_logic: str) -> bool:
     return math_hits >= 2 and physical_hits == 0
 
 
+def is_narrow_applicability_rule(*, title: str, trigger: str, check_logic: str) -> bool:
+    text = _rule_text(title=title, trigger=trigger, check_logic=check_logic).casefold()
+    if not text:
+        return False
+    for hints in NARROW_RULE_HINT_GROUPS:
+        if all(hint.casefold() in text for hint in hints):
+            return True
+    # Accept partial matches for longer narrow phrases.
+    return any(
+        sum(1 for hint in hints if hint.casefold() in text) >= 2
+        for hints in NARROW_RULE_HINT_GROUPS
+        if len(hints) >= 2
+    )
+
+
+def is_strong_symbol(value: str) -> bool:
+    item = norm_text(value)
+    if not item:
+        return False
+    if item in STRONG_SYMBOL_ALLOWLIST:
+        return True
+    if len(item) == 1 and item in GENERIC_SYMBOLS:
+        return False
+    if re.fullmatch(r"[A-Za-z]{1,2}", item) and not is_short_token_allowed(item):
+        return False
+    if any(ch in item for ch in ("_", "/", "\\", "(", ")", "^")):
+        return True
+    if re.search(r"\d", item):
+        return True
+    if len(item) >= 4:
+        return True
+    return item.isupper() and len(item) >= 3
+
+
+def _keep_rule_keyword(token: str, *, allow_short: bool = False) -> bool:
+    item = norm_text(token)
+    if not keep_token(item):
+        return False
+    if is_low_signal_term(item) or is_generic_rule_signal(item):
+        return False
+    if re.fullmatch(r"[A-Za-z]{1,3}", item) and not is_short_token_allowed(item) and not allow_short:
+        return False
+    if len(item) < 4 and re.fullmatch(r"[A-Za-z]+", item) and not is_short_token_allowed(item):
+        return False
+    return True
+
+
+def classify_rule_retrieval_profile(*, title: str, trigger: str, check_logic: str) -> Dict[str, Any]:
+    text = _rule_text(title=title, trigger=trigger, check_logic=check_logic)
+    lowered = text.casefold()
+    generic_math_rule = is_generic_math_rule(title=title, trigger=trigger, check_logic=check_logic)
+    narrow_rule = is_narrow_applicability_rule(title=title, trigger=trigger, check_logic=check_logic)
+    meta_hint_rule = bool(lowered) and any(hint.casefold() in lowered for hint in META_RULE_HINTS)
+    return {
+        "text": text,
+        "generic_math_rule": generic_math_rule,
+        "narrow_rule": narrow_rule,
+        "meta_hint_rule": meta_hint_rule,
+    }
+
+
+def classify_rule_match_source(evidence: Dict[str, Any]) -> str:
+    scene_hits = evidence.get("scene_trigger_hits") or []
+    formula_hits = evidence.get("formula_trigger_hits") or []
+    strong_symbol_hits = evidence.get("required_symbol_hits") or []
+    weak_symbol_hits = evidence.get("weak_symbol_hits") or []
+    if scene_hits:
+        return "scene"
+    if formula_hits:
+        return "object"
+    if strong_symbol_hits:
+        return "symbol"
+    if weak_symbol_hits:
+        return "weak-only"
+    return "none"
+
+
+def classify_blocked_rule_reason(
+    *,
+    evidence: Dict[str, Any],
+) -> str:
+    if bool(evidence.get("weak_signal_only")):
+        return "weak_only"
+    if bool(evidence.get("narrow_rule")) and not bool(evidence.get("scene_trigger_hits")):
+        return "narrow_no_scene"
+    if bool(evidence.get("generic_signal_only")):
+        return "generic_only"
+    return "insufficient_topic_support"
+
+
 def normalize_rule_for_retrieval(rule: Dict[str, Any]) -> Dict[str, Any]:
     patched = dict(rule)
-    if not is_generic_math_rule(
+    profile = classify_rule_retrieval_profile(
         title=str(rule.get("title") or ""),
         trigger=str(rule.get("trigger") or ""),
         check_logic=str(rule.get("check_logic") or ""),
-    ):
-        return patched
+    )
+    generic_math_rule = bool(profile["generic_math_rule"])
+    narrow_rule = bool(profile["narrow_rule"])
 
-    patched["scope"] = "meta"
+    retrieval_flags = dict(patched.get("retrieval_flags") or {})
+    retrieval_flags["generic_math_rule"] = bool(generic_math_rule)
+    retrieval_flags["narrow_rule"] = bool(narrow_rule)
+    patched["retrieval_flags"] = retrieval_flags
+
     match_features = dict(patched.get("match_features") or {})
     if match_features:
-        trigger_keywords = _remove_keywords(match_features.get("trigger_keywords") or [], GENERIC_RULE_SIGNAL_TERMS)
-        object_keywords = _remove_keywords(match_features.get("object_keywords") or [], GENERIC_RULE_SIGNAL_TERMS)
-        normalized_text = " ".join(
-            [
-                norm_text(rule.get("title") or ""),
-                norm_text(rule.get("trigger") or ""),
-                norm_text(rule.get("check_logic") or ""),
-            ]
-        ).casefold()
-        prepend_trigger: List[str] = []
-        prepend_object: List[str] = []
-        if "substitution" in normalized_text or "代换" in normalized_text:
-            prepend_trigger.append("trig substitution")
-        if "root" in normalized_text or "根式" in normalized_text:
-            prepend_object.append("root equation")
-        match_features["trigger_keywords"] = ordered_unique(prepend_trigger + trigger_keywords)
-        match_features["object_keywords"] = ordered_unique(prepend_object + object_keywords)
+        match_features["trigger_keywords"] = remove_generic_rule_keywords(match_features.get("trigger_keywords") or [])
+        match_features["object_keywords"] = remove_generic_rule_keywords(match_features.get("object_keywords") or [])
         patched["match_features"] = match_features
+    if generic_math_rule or narrow_rule:
+        patched["scope"] = "meta"
     return patched
 
 
 def classify_rule_scope(*, title: str, trigger: str, check_logic: str) -> str:
-    if is_generic_math_rule(title=title, trigger=trigger, check_logic=check_logic):
+    profile = classify_rule_retrieval_profile(title=title, trigger=trigger, check_logic=check_logic)
+    if bool(profile["generic_math_rule"]) or bool(profile["narrow_rule"]) or bool(profile["meta_hint_rule"]):
         return "meta"
-    text = " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)]).casefold()
-    if not text:
+    if not str(profile["text"]):
         return "domain"
-    for hint in META_RULE_HINTS:
-        if hint.casefold() in text:
-            return "meta"
     return "domain"
 
 
@@ -577,16 +713,15 @@ def _scene_anchor_candidates(text: str) -> List[str]:
         tok
         for tok in TOKEN_RE.findall(norm_text(text))
         if keep_token(tok)
-        and (tok.casefold() not in LOW_SIGNAL_KEYWORDS or _is_physical_context_token(tok))
-        and tok.casefold() not in GENERIC_SCENE_PARTS
+        and (not is_low_signal_term(tok) or _is_physical_context_token(tok))
+        and not is_generic_scene_part(tok)
     ]
     if not tokens:
         return []
 
     anchors: List[str] = []
     for token in tokens:
-        lowered = token.casefold()
-        if _is_physical_context_token(token) and lowered not in GENERIC_SCENE_TERMS and len(token) >= 5:
+        if _is_physical_context_token(token) and not is_generic_scene_term(token) and len(token) >= 5:
             anchors.append(token)
 
     for size in range(2, min(4, len(tokens)) + 1):
@@ -601,7 +736,7 @@ def _scene_anchor_candidates(text: str) -> List[str]:
             content_tokens = [
                 item
                 for item in lowered
-                if item not in GENERIC_SCENE_TERMS and item not in GENERIC_SCENE_PARTS and item not in LOW_SIGNAL_KEYWORDS
+                if not is_generic_scene_term(item) and not is_generic_scene_part(item) and not is_low_signal_term(item)
             ]
             if len(content_tokens) <= 0:
                 continue
@@ -628,8 +763,7 @@ def build_scene_keywords(
         item = norm_text(text)
         if not item:
             return False
-        lowered = item.casefold()
-        if lowered in GENERIC_SCENE_TERMS or lowered in GENERIC_SCENE_PARTS or lowered in LOW_SIGNAL_KEYWORDS:
+        if is_generic_scene_term(item) or is_generic_scene_part(item) or is_low_signal_term(item):
             return False
         if item.isalpha() and item.upper() == item and len(item) <= 2:
             return False
@@ -700,14 +834,14 @@ def refine_topic_hints(
     keywords = [
         item
         for item in keywords
-        if norm_text(item).casefold() not in LOW_SIGNAL_KEYWORDS
-        and norm_text(item).casefold() not in GENERIC_SCENE_TERMS
+        if not is_low_signal_term(item)
+        and not is_generic_scene_term(item)
         and not (norm_text(item).isalpha() and len(norm_text(item)) <= 2)
     ]
     scene = [
         item
         for item in ordered_unique(scene_keywords)
-        if norm_text(item).casefold() not in LOW_SIGNAL_KEYWORDS
+        if not is_low_signal_term(item)
         and not (norm_text(item).casefold() in {"resistance", "length", "time", "mass", "current"})
     ]
     filtered_scene: List[str] = []
@@ -865,7 +999,7 @@ def score_topic_candidate(
         normalized = norm_text(kw).casefold()
         if normalized.isalpha() and len(normalized) <= 2:
             continue
-        if normalized in LOW_SIGNAL_KEYWORDS:
+        if is_low_signal_term(kw):
             continue
         if signal_df["keyword_df"].get(normalized, 0) > 18 and len(normalized) <= 8:
             continue
@@ -1002,62 +1136,109 @@ def select_topic_matches_with_rule_fallback(
 
 def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
     match_features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
-    trigger_hits = [
-        kw for kw in ordered_unique(match_features.get("trigger_keywords") or []) if match_phrase_or_symbol(kw, text_for_rule)
-    ]
-    object_hits = [
-        kw for kw in ordered_unique(match_features.get("object_keywords") or []) if match_phrase_or_symbol(kw, text_for_rule)
-    ]
-    symbol_hits = [
-        sym for sym in ordered_unique(match_features.get("required_symbols") or []) if match_phrase_or_symbol(sym, text_for_rule)
-    ]
-    lexical_hits = len(trigger_hits) + len(object_hits) + len(symbol_hits)
+    scene_terms = ordered_unique(match_features.get("scene_trigger_terms") or match_features.get("trigger_keywords") or [])
+    formula_terms = ordered_unique(match_features.get("formula_trigger_terms") or match_features.get("object_keywords") or [])
+    strong_symbol_terms = ordered_unique(match_features.get("required_symbols") or [])
+    weak_symbol_terms = ordered_unique(match_features.get("weak_symbol_terms") or [])
+
+    scene_hits = [kw for kw in scene_terms if match_phrase_or_symbol(kw, text_for_rule)]
+    formula_hits = [kw for kw in formula_terms if match_phrase_or_symbol(kw, text_for_rule)]
+    symbol_hits = [sym for sym in strong_symbol_terms if match_phrase_or_symbol(sym, text_for_rule)]
+    weak_symbol_hits = [sym for sym in weak_symbol_terms if match_phrase_or_symbol(sym, text_for_rule)]
+
+    trigger_hits = scene_hits
+    object_hits = formula_hits
+    lexical_hits = len(scene_hits) + len(formula_hits) + len(symbol_hits)
 
     support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
     count = int(support.get("count") or 0)
     support_prior = min(math.log2(count + 1), 3.0) if lexical_hits > 0 else 0.0
     scope = norm_text(rule.get("scope") or "domain") or "domain"
     manual_override_reason = norm_text(rule.get("manual_override_reason") or "")
+    retrieval_flags = rule.get("retrieval_flags") if isinstance(rule.get("retrieval_flags"), dict) else {}
+    narrow_rule = bool(retrieval_flags.get("narrow_rule"))
 
-    def _is_generic_signal(value: str) -> bool:
-        normalized = norm_text(value).casefold()
-        if not normalized:
-            return False
-        if normalized in GENERIC_RULE_SIGNAL_TERMS:
-            return True
-        return any(term in normalized for term in GENERIC_RULE_SIGNAL_TERMS)
+    generic_trigger_hits = [hit for hit in scene_hits if is_generic_rule_signal(hit)]
+    generic_object_hits = [hit for hit in formula_hits if is_generic_rule_signal(hit)]
+    non_generic_formula_hits = [
+        hit
+        for hit in formula_hits
+        if hit not in generic_object_hits and not is_low_signal_term(hit)
+    ]
+    generic_signal_only = bool(
+        (len(scene_hits) + len(formula_hits) + len(symbol_hits) + len(weak_symbol_hits)) > 0
+        and not set(scene_hits).difference(generic_trigger_hits)
+        and not set(formula_hits).difference(generic_object_hits)
+        and not symbol_hits
+    )
 
-    generic_trigger_hits = [hit for hit in trigger_hits if _is_generic_signal(hit)]
-    generic_object_hits = [hit for hit in object_hits if _is_generic_signal(hit)]
-    generic_signal_only = bool(lexical_hits > 0 and not set(trigger_hits).difference(generic_trigger_hits) and not set(object_hits).difference(generic_object_hits))
+    has_scene_trigger = bool(scene_hits)
+    has_formula_trigger = bool(formula_hits)
+    has_non_generic_formula = bool(non_generic_formula_hits)
+    has_strong_symbol = bool(symbol_hits)
+    has_weak_symbol = bool(weak_symbol_hits)
+    hard_gate_passed = bool(has_scene_trigger or (has_formula_trigger and has_strong_symbol))
+    soft_gate_eligible = bool(
+        not hard_gate_passed
+        and has_non_generic_formula
+        and not generic_signal_only
+        and not narrow_rule
+        and (scope != "meta" or not has_weak_symbol)
+    )
+    applicability_gate_passed = hard_gate_passed
+    gate_level = "hard" if hard_gate_passed else ("soft" if soft_gate_eligible else "fail")
+    soft_pass_reason = "formula_topic_anchor" if soft_gate_eligible else ""
+    weak_signal_only = bool(
+        gate_level == "fail"
+        and not has_scene_trigger
+        and not has_formula_trigger
+        and (has_strong_symbol or has_weak_symbol)
+    )
 
     score = (
-        min(len(trigger_hits) * 3, 9)
-        + min(len(object_hits) * 2, 6)
-        + min(len(symbol_hits) * 2, 4)
+        min(len(scene_hits) * 4, 12)
+        + min(len(formula_hits) * 2, 6)
+        + min(len(symbol_hits) * 1.5, 3)
+        + min(len(weak_symbol_hits) * 0.25, 0.5)
         + support_prior
     )
     if scope == "meta":
         score = max(score - 1.5, 0.0)
-        if not trigger_hits and not object_hits:
+        if not scene_hits and not formula_hits:
             score = max(score - 0.5, 0.0)
+    if narrow_rule:
+        score = max(score - 1.0, 0.0)
+    if weak_signal_only:
+        score = max(score - 2.0, 0.0)
 
+    evidence = {
+        "trigger_hits": trigger_hits,
+        "object_hits": object_hits,
+        "scene_trigger_hits": scene_hits,
+        "formula_trigger_hits": formula_hits,
+        "required_symbol_hits": symbol_hits,
+        "weak_symbol_hits": weak_symbol_hits,
+        "generic_trigger_hits": generic_trigger_hits,
+        "generic_object_hits": generic_object_hits,
+        "non_generic_formula_hits": non_generic_formula_hits,
+        "generic_signal_only": generic_signal_only,
+        "weak_signal_only": weak_signal_only,
+        "hard_gate_passed": hard_gate_passed,
+        "soft_gate_eligible": soft_gate_eligible,
+        "applicability_gate_passed": applicability_gate_passed,
+        "gate_level": gate_level,
+        "soft_pass_reason": soft_pass_reason,
+        "narrow_rule": narrow_rule,
+        "support_count": count,
+        "support_prior": round(support_prior, 4),
+        "manual_override_reason": manual_override_reason,
+    }
     return {
         "rule_id": norm_text(rule.get("rule_id") or ""),
         "title": norm_text(rule.get("title") or ""),
         "score": float(score),
         "scope": scope,
-        "evidence": {
-            "trigger_hits": trigger_hits,
-            "object_hits": object_hits,
-            "required_symbol_hits": symbol_hits,
-            "generic_trigger_hits": generic_trigger_hits,
-            "generic_object_hits": generic_object_hits,
-            "generic_signal_only": generic_signal_only,
-            "support_count": count,
-            "support_prior": round(support_prior, 4),
-            "manual_override_reason": manual_override_reason,
-        },
+        "evidence": evidence,
     }
 
 
@@ -1076,12 +1257,75 @@ def rule_sort_key(item: Dict[str, Any]) -> Tuple[Any, ...]:
     )
 
 
+def _base_rule_context(*, topic_rank: int, topic_gap: float, scope: str) -> Tuple[float, float]:
+    if topic_rank <= 0:
+        min_score, bonus = 3.0, 0.5
+    elif topic_gap <= 0.5:
+        min_score, bonus = 4.0, 0.0
+    elif topic_gap <= 1.5:
+        min_score, bonus = 6.0, -0.75
+    elif topic_gap <= 3.0:
+        min_score, bonus = 7.0, -1.75
+    else:
+        min_score, bonus = 8.0, -2.5
+
+    if norm_text(scope or "domain") == "meta":
+        min_score += 0.5
+        bonus -= 0.75
+    return min_score, bonus
+
+
+def _soft_gate_active(
+    *,
+    gate_level: str,
+    topic_rank: int,
+    top1_margin: float,
+    has_topic_anchor: bool,
+    generic_signal_only: bool,
+    weak_signal_only: bool,
+    narrow_rule: bool,
+) -> bool:
+    return bool(
+        gate_level == "soft"
+        and topic_rank <= 0
+        and (has_topic_anchor or top1_margin >= 2.0)
+        and not generic_signal_only
+        and not weak_signal_only
+        and not narrow_rule
+    )
+
+
+def _apply_signal_penalties(
+    *,
+    min_score: float,
+    bonus: float,
+    generic_signal_only: bool,
+    weak_signal_only: bool,
+    narrow_rule: bool,
+    has_topic_anchor: bool,
+) -> Tuple[float, float]:
+    if generic_signal_only:
+        min_score += 1.0
+        bonus -= 1.0
+        if not has_topic_anchor:
+            min_score += 2.0
+            bonus -= 1.5
+    if weak_signal_only:
+        min_score += 2.0
+        bonus -= 2.0
+    if narrow_rule:
+        min_score += 1.0
+        bonus -= 1.0
+    return min_score, bonus
+
+
 def rule_topic_context(
     *,
     raw_score: float,
     topic_rank: int,
     topic_score: float,
     top1_topic_score: float,
+    top1_margin: float = 0.0,
     scope: str,
     rule_evidence: Dict[str, Any] | None = None,
     topic_evidence: Dict[str, Any] | None = None,
@@ -1090,40 +1334,56 @@ def rule_topic_context(
     evidence = rule_evidence if isinstance(rule_evidence, dict) else {}
     topic_hits = topic_evidence if isinstance(topic_evidence, dict) else {}
     generic_signal_only = bool(evidence.get("generic_signal_only"))
+    weak_signal_only = bool(evidence.get("weak_signal_only"))
+    narrow_rule = bool(evidence.get("narrow_rule"))
+    applicability_gate_passed = bool(evidence.get("applicability_gate_passed"))
+    gate_level = str(evidence.get("gate_level") or "fail")
     has_topic_anchor = bool(topic_hits.get("name_or_alias_hits") or topic_hits.get("scene_keyword_hits"))
-    normalized_scope = norm_text(scope or "domain") or "domain"
+    soft_gate_active = _soft_gate_active(
+        gate_level=gate_level,
+        topic_rank=topic_rank,
+        top1_margin=float(top1_margin or 0.0),
+        has_topic_anchor=has_topic_anchor,
+        generic_signal_only=generic_signal_only,
+        weak_signal_only=weak_signal_only,
+        narrow_rule=narrow_rule,
+    )
+    blocked_reason = ""
+    min_score, bonus = _base_rule_context(topic_rank=topic_rank, topic_gap=gap, scope=scope)
 
-    if topic_rank <= 0:
-        min_score = 1.0
-        bonus = 1.5
-    elif gap <= 0.5:
-        min_score = 4.0
-        bonus = 0.0
-    elif gap <= 1.5:
-        min_score = 6.0
-        bonus = -0.75
-    elif gap <= 3.0:
-        min_score = 7.0
-        bonus = -1.75
+    if applicability_gate_passed:
+        pass
+    elif soft_gate_active:
+        if has_topic_anchor:
+            min_score = min(min_score, 1.5 if float(raw_score or 0.0) <= 1.5 else 2.0)
+            bonus = max(bonus, 0.25)
+        else:
+            min_score = min(min_score, 3.0)
+            bonus = max(bonus, 0.0)
     else:
-        min_score = 8.0
-        bonus = -2.5
+        min_score = max(min_score, 99.0)
+        bonus = -10.0
+        blocked_reason = classify_blocked_rule_reason(
+            evidence=evidence,
+        )
 
-    if normalized_scope == "meta":
-        min_score += 0.5
-        bonus -= 0.75
-
-    if generic_signal_only:
-        min_score += 1.0
-        bonus -= 1.0
-        if not has_topic_anchor:
-            min_score += 2.0
-            bonus -= 1.5
+    min_score, bonus = _apply_signal_penalties(
+        min_score=min_score,
+        bonus=bonus,
+        generic_signal_only=generic_signal_only,
+        weak_signal_only=weak_signal_only,
+        narrow_rule=narrow_rule,
+        has_topic_anchor=has_topic_anchor,
+    )
 
     return {
         "topic_gap": gap,
         "min_score": min_score,
         "adjusted_score": float(raw_score + bonus),
+        "gate_level": gate_level,
+        "soft_gate_active": soft_gate_active,
+        "has_topic_anchor": has_topic_anchor,
+        "blocked_reason": blocked_reason,
     }
 
 
