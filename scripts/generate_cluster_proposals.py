@@ -207,15 +207,15 @@ def _build_topic_prompt_payload(topic_match: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "domain": topic_match["domain"],
         "topic": topic_match["topic"],
-        "topic_description": _norm_text(topic.get("description") or ""),
+        "topic_summary": _norm_text(topic.get("summary") or topic.get("description") or ""),
         "topic_includes": _ordered_unique(topic.get("includes") or []),
         "topic_excludes": _ordered_unique(topic.get("excludes") or []),
         "related_topics": _ordered_unique(topic.get("related_topics") or []),
         "existing_scenario_clusters": [
             {
-                "cluster_id": _norm_text(cluster.get("cluster_id") or ""),
+                "cluster_id": _norm_text(cluster.get("id") or cluster.get("cluster_id") or ""),
                 "name": _norm_text(cluster.get("name") or ""),
-                "description": _norm_text(cluster.get("description") or ""),
+                "summary": _norm_text(cluster.get("summary") or cluster.get("description") or ""),
                 "rule_ids": _ordered_unique(cluster.get("rule_ids") or []),
             }
             for cluster in (topic.get("scenario_clusters") or [])

@@ -8,12 +8,10 @@ Inputs:
 Output:
 - catalogs/rules_unified.json
 
-The v2 catalog keeps the outer domain/topic/rules skeleton so downstream code can
-still inspect the catalog shape, but the internal semantics are different:
-- topic.rules contains only distilled experience rule leaves
-- knowledge rules are moved to topic.knowledge_reference
-- tagged experience rules are moved to topic.tagged_reference
-- retrieval_hints and scenario_clusters are added for semantic tree matching
+The persisted v2 catalog is a compact semantic navigation tree:
+- Domain -> Topic -> Scenario Cluster -> Rule
+- rule_groups are optional inside scenario clusters
+- old retrieval/debug fields are used only while building and are not stored
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -335,6 +333,20 @@ def _load_scenario_cluster_blueprints(path: Path) -> Dict[str, List[Dict[str, An
     return out
 
 
+def merge_scenario_cluster_blueprints(*sources: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+    merged: Dict[str, List[Dict[str, Any]]] = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for topic_key, cluster_defs in source.items():
+            norm_topic_key = norm_text(topic_key).casefold()
+            if not norm_topic_key:
+                continue
+            cleaned_clusters = [cluster for cluster in (cluster_defs or []) if isinstance(cluster, dict)]
+            merged.setdefault(norm_topic_key, []).extend(cleaned_clusters)
+    return merged
+
+
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -346,6 +358,13 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
 
 def _norm_key(value: Any) -> str:
     return norm_text(value).lower()
+
+
+def _slug(value: Any) -> str:
+    text = norm_text(value).casefold()
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "unknown"
 
 
 def _normalize_topic(domain: str, topic: str) -> str:
@@ -634,15 +653,25 @@ def _build_scenario_clusters(rules: List[Dict[str, Any]], cluster_blueprints: Li
         for group_def in group_defs:
             if not isinstance(group_def, dict):
                 continue
-            match_any = [norm_text(item).casefold() for item in (group_def.get("match_any") or []) if norm_text(item)]
+            explicit_rule_ids = [
+                norm_text(item) for item in (group_def.get("rule_ids") or []) if norm_text(item)
+            ]
             matched_ids: List[str] = []
-            for rule in rules:
-                rule_id = str(rule.get("rule_id") or "")
-                if not rule_id or rule_id in assigned_rule_ids:
-                    continue
-                haystack = rule_texts.get(rule_id, "")
-                if any(token in haystack for token in match_any):
-                    matched_ids.append(rule_id)
+            if explicit_rule_ids:
+                matched_ids = [
+                    rule_id
+                    for rule_id in explicit_rule_ids
+                    if rule_id in rule_texts and rule_id not in assigned_rule_ids
+                ]
+            else:
+                match_any = [norm_text(item).casefold() for item in (group_def.get("match_any") or []) if norm_text(item)]
+                for rule in rules:
+                    rule_id = str(rule.get("rule_id") or "")
+                    if not rule_id or rule_id in assigned_rule_ids:
+                        continue
+                    haystack = rule_texts.get(rule_id, "")
+                    if any(token in haystack for token in match_any):
+                        matched_ids.append(rule_id)
             if not matched_ids:
                 continue
             built_groups.append(
@@ -698,6 +727,112 @@ def _build_scenario_clusters(rules: List[Dict[str, Any]], cluster_blueprints: Li
     return clusters
 
 
+def _summarize_rule(rule: Dict[str, Any]) -> str:
+    title = norm_text(rule.get("title") or "")
+    trigger = norm_text(rule.get("trigger") or "")
+    if title and trigger:
+        return f"{title}: {trigger}"
+    return title or trigger or norm_text(rule.get("check_logic") or "")
+
+
+def _project_navigation_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+    trigger = norm_text(rule.get("trigger") or "")
+    return {
+        "rule_id": norm_text(rule.get("rule_id") or ""),
+        "title": norm_text(rule.get("title") or ""),
+        "summary": _summarize_rule(rule),
+        "trigger": trigger,
+        "applicability": trigger,
+        "negative_cues": [],
+        "check_logic": norm_text(rule.get("check_logic") or ""),
+        "error_type": norm_text(rule.get("error_type") or "logic") or "logic",
+        "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
+    }
+
+
+def _project_navigation_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": norm_text(group.get("group_id") or ""),
+        "name": norm_text(group.get("name") or ""),
+        "summary": norm_text(group.get("summary") or ""),
+        "activation_condition": norm_text(group.get("activation_condition") or ""),
+        "rule_ids": ordered_unique(group.get("rule_ids") or []),
+    }
+
+
+def _project_navigation_cluster(cluster: Dict[str, Any]) -> Dict[str, Any]:
+    projected: Dict[str, Any] = {
+        "id": norm_text(cluster.get("cluster_id") or ""),
+        "name": norm_text(cluster.get("name") or ""),
+        "summary": norm_text(cluster.get("description") or cluster.get("name") or ""),
+        "includes": ordered_unique(cluster.get("includes") or [])[:4],
+        "excludes": ordered_unique(cluster.get("excludes") or [])[:4],
+        "rule_ids": ordered_unique(cluster.get("rule_ids") or []),
+    }
+    entry_cues = ordered_unique(cluster.get("entry_cues") or [])[:5]
+    related_clusters = ordered_unique(cluster.get("related_clusters") or [])
+    rule_groups = [
+        _project_navigation_group(group)
+        for group in (cluster.get("rule_groups") or [])
+        if isinstance(group, dict)
+    ]
+    if entry_cues:
+        projected["entry_cues"] = entry_cues
+    if related_clusters:
+        projected["related_clusters"] = related_clusters
+    if rule_groups:
+        projected["rule_groups"] = rule_groups
+    return projected
+
+
+def _project_navigation_topic(domain_id: str, domain_name: str, topic: Dict[str, Any]) -> Dict[str, Any]:
+    topic_name = norm_text(topic.get("name") or "Unknown")
+    projected: Dict[str, Any] = {
+        "id": f"{domain_id}.{_slug(topic_name)}",
+        "name": topic_name,
+        "summary": norm_text(topic.get("description") or f"Topic for {topic_name} under {domain_name}."),
+        "includes": ordered_unique(topic.get("includes") or [])[:5],
+        "excludes": ordered_unique(topic.get("excludes") or [])[:5],
+        "scenario_clusters": [
+            _project_navigation_cluster(cluster)
+            for cluster in (topic.get("scenario_clusters") or [])
+            if isinstance(cluster, dict)
+        ],
+        "rules": [
+            _project_navigation_rule(rule)
+            for rule in (topic.get("rules") or [])
+            if isinstance(rule, dict)
+        ],
+    }
+    related_topics = ordered_unique(topic.get("related_topics") or [])
+    if related_topics:
+        projected["related_topics"] = related_topics
+    return projected
+
+
+def _project_navigation_domains(domains: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    projected_domains: List[Dict[str, Any]] = []
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        domain_name = norm_text(domain.get("name") or "Unknown")
+        domain_id = _slug(domain_name)
+        projected_domains.append(
+            {
+                "id": domain_id,
+                "name": domain_name,
+                "summary": norm_text(domain.get("description") or f"Physics domain covering {domain_name}."),
+                "excludes": ordered_unique(domain.get("excludes") or [])[:5],
+                "topics": [
+                    _project_navigation_topic(domain_id, domain_name, topic)
+                    for topic in (domain.get("topics") or [])
+                    if isinstance(topic, dict)
+                ],
+            }
+        )
+    return projected_domains
+
+
 def _finalize_topics(
     states: Dict[str, Dict[str, Any]],
     scenario_cluster_blueprints: Dict[str, List[Dict[str, Any]]],
@@ -745,7 +880,9 @@ def _finalize_topics(
             "topic_keywords": topic_keywords,
             "required_symbols": build_topic_required_symbols(rules),
         }
-        structure_override = FOCUS_TOPIC_STRUCTURE.get(_topic_key(state["domain"], state["topic"]), {})
+        topic_key = _topic_key(state["domain"], state["topic"])
+        structure_override = FOCUS_TOPIC_STRUCTURE.get(topic_key, {})
+        blueprint_clusters = scenario_cluster_blueprints.get(topic_key, [])
         if structure_override:
             entry["description"] = norm_text(structure_override.get("description") or "")
             entry["includes"] = ordered_unique(structure_override.get("includes") or [])
@@ -753,8 +890,14 @@ def _finalize_topics(
             entry["related_topics"] = ordered_unique(structure_override.get("related_topics") or [])
             entry["scenario_clusters"] = _build_scenario_clusters(
                 rules,
-                scenario_cluster_blueprints.get(_topic_key(state["domain"], state["topic"]), []),
+                blueprint_clusters,
             )
+        elif blueprint_clusters:
+            entry["description"] = f"Topic for {state['topic']} under {state['domain']}."
+            entry["includes"] = ordered_unique((entry["retrieval_hints"].get("scene_keywords") or [])[:4] + topic_keywords[:4])
+            entry["excludes"] = []
+            entry["related_topics"] = []
+            entry["scenario_clusters"] = _build_scenario_clusters(rules, blueprint_clusters)
         else:
             entry["description"] = f"Topic for {state['topic']} under {state['domain']}."
             entry["includes"] = ordered_unique((entry["retrieval_hints"].get("scene_keywords") or [])[:4] + topic_keywords[:4])
@@ -783,11 +926,13 @@ def build_unified_catalog_from_data(
     knowledge_rule_references = sum(
         len(topic["knowledge_reference"]["rule_ids"]) for domain in domains_out for topic in domain["topics"]
     )
+    navigation_domains = _project_navigation_domains(domains_out)
 
     return {
         "metadata": {
             "version": "2.0",
             "catalog_type": "unified_rules_v2",
+            "schema_profile": "semantic_navigation_tree",
             "generated_at": _dt.datetime.now().isoformat(),
             "total_domains": len(domains_out),
             "total_topics": total_topics,
@@ -798,7 +943,7 @@ def build_unified_catalog_from_data(
             "scenario_clustered_topics": scenario_clustered_topics,
             "total_scenario_clusters": total_scenario_clusters,
         },
-        "domains": domains_out,
+        "domains": navigation_domains,
     }
 
 
@@ -807,11 +952,15 @@ def build_unified_catalog(
     distilled_path: Path,
     tagged_path: Path,
     scenario_cluster_blueprints_path: Path = DEFAULT_SCENARIO_CLUSTER_BLUEPRINTS_PATH,
+    scenario_cluster_blueprints_paths: Sequence[Path] | None = None,
 ) -> Dict[str, Any]:
     knowledge_data = _load_json(knowledge_path)
     distilled_data = _load_json(distilled_path)
     tagged_data = _load_json(tagged_path)
-    scenario_cluster_blueprints = _load_scenario_cluster_blueprints(scenario_cluster_blueprints_path)
+    blueprint_paths = list(scenario_cluster_blueprints_paths or [scenario_cluster_blueprints_path])
+    scenario_cluster_blueprints = merge_scenario_cluster_blueprints(
+        *[_load_scenario_cluster_blueprints(path) for path in blueprint_paths]
+    )
     return build_unified_catalog_from_data(knowledge_data, distilled_data, tagged_data, scenario_cluster_blueprints)
 
 
@@ -820,7 +969,12 @@ def main() -> None:
     parser.add_argument("--knowledge", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--experience-tagged", type=str, default="catalogs/rules_300_tagged.json")
     parser.add_argument("--experience-distilled", type=str, default="catalogs/semantic_experience_distilled_300.json")
-    parser.add_argument("--scenario-cluster-blueprints", type=str, default="catalogs/scenario_cluster_blueprints.json")
+    parser.add_argument(
+        "--scenario-cluster-blueprints",
+        action="append",
+        default=[],
+        help="Repeat to merge multiple blueprint sources. First source is typically the seed blueprint; later sources can be generated blueprints.",
+    )
     parser.add_argument("--output", "-o", type=str, default="catalogs/rules_unified.json")
     args = parser.parse_args()
 
@@ -828,7 +982,9 @@ def main() -> None:
         knowledge_path=Path(args.knowledge),
         distilled_path=Path(args.experience_distilled),
         tagged_path=Path(args.experience_tagged),
-        scenario_cluster_blueprints_path=Path(args.scenario_cluster_blueprints),
+        scenario_cluster_blueprints_paths=[
+            Path(item) for item in (args.scenario_cluster_blueprints or ["catalogs/scenario_cluster_blueprints.json"])
+        ],
     )
     output_path = Path(args.output)
     _write_json(output_path, catalog)

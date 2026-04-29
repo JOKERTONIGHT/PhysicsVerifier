@@ -97,6 +97,8 @@ class UnifiedSemanticMatcher:
             out.append(
                 {
                     "domain": norm_text(domain.get("name") or "Unknown"),
+                    "summary": norm_text(domain.get("summary") or ""),
+                    "excludes": ordered_unique(domain.get("excludes") or [])[:4],
                     "topic_count": len(topics),
                     "sample_topics": topic_names[:5],
                 }
@@ -116,20 +118,15 @@ class UnifiedSemanticMatcher:
             for topic in domain.get("topics", []) or []:
                 if not isinstance(topic, dict):
                     continue
-                retrieval_hints = topic.get("retrieval_hints") if isinstance(topic.get("retrieval_hints"), dict) else {}
-                topic_keywords = ordered_unique(retrieval_hints.get("topic_keywords") or [])[:5]
-                scene_keywords = ordered_unique(retrieval_hints.get("scene_keywords") or [])[:4]
                 out.append(
                     {
                         "domain": domain_name,
                         "topic": norm_text(topic.get("name") or "Unknown"),
-                        "description": norm_text(topic.get("description") or ""),
+                        "summary": norm_text(topic.get("summary") or ""),
                         "includes": ordered_unique(topic.get("includes") or [])[:5],
                         "excludes": ordered_unique(topic.get("excludes") or [])[:5],
                         "related_topics": ordered_unique(topic.get("related_topics") or [])[:5],
                         "rule_count": len(topic.get("rules") or []),
-                        "topic_keywords": topic_keywords,
-                        "scene_keywords": scene_keywords,
                         "topic_obj": topic,
                     }
                 )
@@ -142,15 +139,16 @@ class UnifiedSemanticMatcher:
         for rule in topic_obj.get("rules", []) or []:
             if not isinstance(rule, dict):
                 continue
-            support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
             out.append(
                 {
                     "rule_id": norm_text(rule.get("rule_id") or ""),
                     "title": norm_text(rule.get("title") or ""),
+                    "summary": norm_text(rule.get("summary") or ""),
                     "trigger": norm_text(rule.get("trigger") or ""),
+                    "applicability": norm_text(rule.get("applicability") or ""),
+                    "negative_cues": ordered_unique(rule.get("negative_cues") or [])[:4],
                     "check_logic": norm_text(rule.get("check_logic") or ""),
                     "scope": norm_text(rule.get("scope") or "domain") or "domain",
-                    "support_count": int(support.get("count") or 0),
                     "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
                     "rule_obj": rule,
                 }
@@ -176,7 +174,7 @@ class UnifiedSemanticMatcher:
                     continue
                 rule_groups.append(
                     {
-                        "group_id": norm_text(group.get("group_id") or ""),
+                        "group_id": norm_text(group.get("id") or group.get("group_id") or ""),
                         "name": norm_text(group.get("name") or ""),
                         "summary": norm_text(group.get("summary") or ""),
                         "activation_condition": norm_text(group.get("activation_condition") or ""),
@@ -187,9 +185,9 @@ class UnifiedSemanticMatcher:
                 {
                     "domain": topic_match["domain"],
                     "topic": topic_match["topic"],
-                    "cluster_id": norm_text(cluster.get("cluster_id") or ""),
+                    "cluster_id": norm_text(cluster.get("id") or cluster.get("cluster_id") or ""),
                     "cluster": norm_text(cluster.get("name") or "Unknown"),
-                    "description": norm_text(cluster.get("description") or ""),
+                    "summary": norm_text(cluster.get("summary") or ""),
                     "includes": ordered_unique(cluster.get("includes") or []),
                     "excludes": ordered_unique(cluster.get("excludes") or []),
                     "entry_cues": ordered_unique(cluster.get("entry_cues") or []),
@@ -259,13 +257,11 @@ class UnifiedSemanticMatcher:
                 {
                     "domain": item["domain"],
                     "topic": item["topic"],
-                    "description": item["description"],
+                    "summary": item["summary"],
                     "includes": item["includes"],
                     "excludes": item["excludes"],
                     "related_topics": item["related_topics"],
                     "rule_count": item["rule_count"],
-                    "topic_keywords": item["topic_keywords"],
-                    "scene_keywords": item["scene_keywords"],
                 }
                 for item in topic_candidates
             ],
@@ -290,7 +286,7 @@ class UnifiedSemanticMatcher:
                 "knowledge, downstream consequences, or weakly related by shared symbols or vocabulary. When one "
                 "topic is mechanism-specific and another is only a generic bookkeeping lens such as energy/accounting/"
                 "consistency, keep the mechanism-specific topic and reject the generic one unless it contributes an "
-                "independent error mode. Use the topic description, includes, and excludes as hard semantic "
+                "independent error mode. Use the topic summary, includes, and excludes as hard semantic "
                 "boundaries. If uncertain, exclude rather than include. Return JSON only."
             ),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
@@ -330,12 +326,12 @@ class UnifiedSemanticMatcher:
                 "sample": self._sample_text(sample),
                 "domain": topic_match["domain"],
                 "topic": topic_match["topic"],
-                "topic_description": norm_text(topic_match.get("topic_obj", {}).get("description") or ""),
+                "topic_summary": norm_text(topic_match.get("topic_obj", {}).get("summary") or ""),
                 "candidate_clusters": [
                     {
                         "cluster_id": item["cluster_id"],
                         "cluster": item["cluster"],
-                        "description": item["description"],
+                        "summary": item["summary"],
                         "includes": item["includes"],
                         "excludes": item["excludes"],
                         "entry_cues": item["entry_cues"],
@@ -429,12 +425,12 @@ class UnifiedSemanticMatcher:
             "sample": self._sample_text(sample),
             "domain": context_domain,
             "topic": context_topic,
-            "topic_description": norm_text(topic_obj.get("description") or ""),
+            "topic_summary": norm_text(topic_obj.get("summary") or ""),
             "topic_includes": ordered_unique(topic_obj.get("includes") or []),
             "topic_excludes": ordered_unique(topic_obj.get("excludes") or []),
             "cluster_id": cluster_id,
             "cluster": cluster_name,
-            "cluster_description": cluster_description,
+            "cluster_summary": cluster_description,
             "cluster_includes": ordered_unique(cluster_includes or []),
             "cluster_excludes": ordered_unique(cluster_excludes or []),
             "rule_group_summaries": rule_group_summaries or [],
@@ -442,10 +438,12 @@ class UnifiedSemanticMatcher:
                 {
                     "rule_id": item["rule_id"],
                     "title": item["title"],
+                    "summary": item["summary"],
                     "trigger": item["trigger"],
+                    "applicability": item["applicability"],
+                    "negative_cues": item["negative_cues"],
                     "check_logic": item["check_logic"],
                     "scope": item["scope"],
-                    "support_count": item["support_count"],
                     "symbolic_hint": item["symbolic_hint"],
                 }
                 for item in rule_candidates
@@ -520,15 +518,16 @@ class UnifiedSemanticMatcher:
                 rule = topic_rules.get(rule_id)
                 if not isinstance(rule, dict):
                     continue
-                support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
                 rule_candidates.append(
                     {
                         "rule_id": norm_text(rule.get("rule_id") or ""),
                         "title": norm_text(rule.get("title") or ""),
+                        "summary": norm_text(rule.get("summary") or ""),
                         "trigger": norm_text(rule.get("trigger") or ""),
+                        "applicability": norm_text(rule.get("applicability") or ""),
+                        "negative_cues": ordered_unique(rule.get("negative_cues") or [])[:4],
                         "check_logic": norm_text(rule.get("check_logic") or ""),
                         "scope": norm_text(rule.get("scope") or "domain") or "domain",
-                        "support_count": int(support.get("count") or 0),
                         "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
                         "rule_obj": rule,
                     }
@@ -544,7 +543,7 @@ class UnifiedSemanticMatcher:
                 rule_candidates=rule_candidates,
                 cluster_id=item["cluster_id"],
                 cluster_name=item["cluster"],
-                cluster_description=norm_text(item.get("cluster_obj", {}).get("description") or ""),
+                cluster_description=norm_text(item.get("cluster_obj", {}).get("summary") or ""),
                 cluster_includes=item.get("cluster_obj", {}).get("includes") or [],
                 cluster_excludes=item.get("cluster_obj", {}).get("excludes") or [],
                 rule_group_summaries=[
