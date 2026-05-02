@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.unified_retrieval import (
+from core.rule_catalog_retrieval import (
     build_signal_document_frequency,
     build_topic_candidates,
     norm_text,
@@ -20,6 +20,7 @@ from core.unified_retrieval import (
     select_rules_with_topic_priority,
     score_rule_candidate,
     score_topic_candidate,
+    topic_rule_leaves,
     topic_sort_key,
 )
 
@@ -97,7 +98,7 @@ def retrieve_rules(topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], 
         top1_key = (str(topic_matches[0]["domain"] or ""), str(topic_matches[0]["topic"] or ""))
     for topic_rank, topic_match in enumerate(topic_matches):
         topic_obj = topic_match.get("topic_obj") if isinstance(topic_match.get("topic_obj"), dict) else {}
-        for rule in topic_obj.get("rules", []) or []:
+        for rule in topic_rule_leaves(topic_obj):
             if not isinstance(rule, dict):
                 continue
             payload = score_rule_candidate(rule, text_for_rule)

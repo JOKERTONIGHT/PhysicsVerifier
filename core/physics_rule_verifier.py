@@ -1,3 +1,8 @@
+"""层次化规则检查主流程：规则匹配 → 语义检查 → 符号核查 → 结果合并。
+
+实现类 `PhysicsRuleVerifier` 串联 `core/rule_catalog_retrieval.py`（候选主题/规则检索）、
+`core/semantic_rule_checker.py`（LLM+SRD 语义检查）、`rules/symbolic_checks.py` 与
+`symbolic/`（符号执行与目录）。"""
 import json
 import datetime
 import re
@@ -5,7 +10,7 @@ import math
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
-from core.unified_retrieval import (
+from core.rule_catalog_retrieval import (
     build_signal_document_frequency,
     build_topic_candidates,
     norm_text,
@@ -14,9 +19,11 @@ from core.unified_retrieval import (
     select_rules_with_topic_priority,
     score_rule_candidate,
     score_topic_candidate,
+    topic_rule_leaves,
     topic_sort_key,
 )
-from core.rule_based_verifier import RuleBasedVerifier, RuleContext
+from core.semantic_rule_checker import SemanticRuleChecker
+from rules.base import RuleContext
 from rules.symbolic_checks import (
     GeneratedSymbolicCheckExecutor,
     GeneratedSymbolicCheckRegistry,
@@ -27,7 +34,7 @@ from symbolic.symbolic_catalog import SymbolicCatalog, SymbolicCheckSpec
 from symbolic.experience_bank import SymbolicExperienceBank
 from symbolic.spec_synthesis import RuleSymbolicSpecSynthesizer
 
-class TopDownVerifier:
+class PhysicsRuleVerifier:
     def __init__(
         self,
         rules_catalog_path: str = "catalogs/rules_catalog_top_down.json",
@@ -69,13 +76,13 @@ class TopDownVerifier:
         
         # Initialize the base verifiers
         # We will dynamically update rules for the rule-based verifier
-        self.rule_verifier = RuleBasedVerifier(
+        self.semantic_checker = SemanticRuleChecker(
             llm_model=self.llm_model,
             rule_mode='srd', # We will inject SRDs dynamically
             rule_translations_path="rule_translations.json" # Dummy path, we'll overwrite
         )
         # Clear initial translations as we will set them per request
-        self.rule_verifier.rule_translations = {} 
+        self.semantic_checker.rule_translations = {} 
         
         self.enable_agentic_postcheck = bool(enable_agentic_postcheck)
         self.agentic_max_checks_per_sample = int(agentic_max_checks_per_sample)
@@ -209,8 +216,8 @@ class TopDownVerifier:
             sample.get("prediction", ""),
             sample.get("answer", ""),
         ])
-        parsed = self.rule_verifier._extract_symbols_and_formulas(text_all)
-        graph = self.rule_verifier._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
+        parsed = self.semantic_checker._extract_symbols_and_formulas(text_all)
+        graph = self.semantic_checker._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
         return RuleContext(
             sample_id=str(sample.get("id")),
             dataset_key=None,
@@ -354,7 +361,7 @@ class TopDownVerifier:
             topic = item.get("topic") if isinstance(item.get("topic"), dict) else {}
             domain_name = str(item.get("domain") or topic.get("domain") or "Unknown")
             topic_name = str(item.get("name") or topic.get("name") or "Unknown")
-            for raw_rule in topic.get("rules", []) or []:
+            for raw_rule in topic_rule_leaves(topic):
                 if not isinstance(raw_rule, dict):
                     continue
                 prepared_rule = self._prepare_unified_v2_rule(raw_rule)
@@ -412,7 +419,7 @@ class TopDownVerifier:
 
     def _build_unified_v2_topic_for_synthesis(self, topic: Dict[str, Any]) -> Dict[str, Any]:
         adapted = dict(topic)
-        adapted["rules"] = [self._prepare_unified_v2_rule(rule) for rule in (topic.get("rules") or []) if isinstance(rule, dict)]
+        adapted["rules"] = [self._prepare_unified_v2_rule(rule) for rule in topic_rule_leaves(topic) if isinstance(rule, dict)]
         return adapted
 
     # ---- Unified-mode SRD helpers ----
@@ -465,8 +472,8 @@ Available Topics:
 
 JSON Output:
 """
-        # We can use the rule_verifier's LLM method for this
-        response = self.rule_verifier._llm_json(
+        # We can use the semantic checker's LLM method for this
+        response = self.semantic_checker._llm_json(
             system_prompt="You are a classifier.",
             user_prompt=prompt
         )
@@ -567,10 +574,10 @@ JSON Output:
                 )
 
             if rule_ids:
-                self.rule_verifier.rules_to_check = rule_ids
-                self.rule_verifier.rule_translations = current_translations
+                self.semantic_checker.rules_to_check = rule_ids
+                self.semantic_checker.rule_translations = current_translations
                 print(f"Running unified v2 rule check with {len(rule_ids)} rules...")
-                result = self.rule_verifier.analyze(sample)
+                result = self.semantic_checker.analyze(sample)
                 diagnostics = result.get("diagnostics", [])
                 used_rules = rule_ids
                 verifier_used = "unified_v2_rule_based"
@@ -585,7 +592,7 @@ JSON Output:
 
                 if rules:
                     # 2. Prepare Rule Verifier
-                    # Convert catalog rules to the format expected by RuleBasedVerifier
+                    # Convert catalog rules to the format expected by SemanticRuleChecker
                     # We use source-aware SRD construction
                     current_translations = {}
                     rule_ids = []
@@ -598,12 +605,12 @@ JSON Output:
                             "srd": self._build_srd_for_rule(r)
                         }
 
-                    self.rule_verifier.rules_to_check = rule_ids
-                    self.rule_verifier.rule_translations = current_translations
+                    self.semantic_checker.rules_to_check = rule_ids
+                    self.semantic_checker.rule_translations = current_translations
 
                     # 3. Run Rule Check
                     print(f"Running rule check with {len(rule_ids)} rules...")
-                    result = self.rule_verifier.analyze(sample)
+                    result = self.semantic_checker.analyze(sample)
                     diagnostics = result.get("diagnostics", [])
                     used_rules = rule_ids
                     verifier_used = "top_down_rule_based" if not self._unified_mode else "unified_rule_based"
@@ -706,7 +713,7 @@ JSON Output:
                     if any(r.get("symbolic_result") in {"pass", "fail"} for r in run_result if isinstance(r, dict)):
                         continue
 
-                if checks_used >= self.agentic_max_checks_per_sample or not self.rule_verifier._llm_available():
+                if checks_used >= self.agentic_max_checks_per_sample or not self.semantic_checker._llm_available():
                     continue
 
                 srd = None
@@ -1110,7 +1117,7 @@ JSON Output:
             "}\n"
         )
 
-        resp = self.rule_verifier._llm_json(system_prompt=system_prompt, user_prompt=user_prompt, fallback={"need": False, "reason": "llm_unavailable", "spec": None})
+        resp = self.semantic_checker._llm_json(system_prompt=system_prompt, user_prompt=user_prompt, fallback={"need": False, "reason": "llm_unavailable", "spec": None})
         if not isinstance(resp, dict):
             return {"need": False, "reason": "invalid_llm_response", "spec": None}
         return resp
@@ -1168,7 +1175,7 @@ if __name__ == "__main__":
     # Limit to first few for testing if needed, or run all
     # samples = samples[:1] 
 
-    verifier = TopDownVerifier()
+    verifier = PhysicsRuleVerifier()
     results = verifier.run_batch(samples)
     
     # Save results

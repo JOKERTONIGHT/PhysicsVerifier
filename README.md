@@ -132,8 +132,13 @@ PhysicsVerifier 是一个面向物理解题诊断的混合框架，核心目标�
 │   ├── rules_catalog_top_down.json
 │   └── symbolic_catalog.json
 ├── core/
-│   ├── top_down_verifier.py
-│   └── rule_based_verifier.py
+│   ├── physics_rule_verifier.py   # 主检查流程（匹配→语义→符号→合并）
+│   ├── semantic_rule_checker.py   # LLM+SRD 语义规则检查
+│   └── rule_catalog_retrieval.py  # 层次化目录上的主题/规则检索
+├── rule_framework/
+│   ├── builder.py                 # 规则库从头构建
+│   ├── maintenance.py             # 增量添加/删除/重聚类/符号绑定
+│   └── validation.py              # 规则库结构校验
 ├── rules/
 │   ├── llm_rules.py
 │   └── base.py
@@ -145,6 +150,8 @@ PhysicsVerifier 是一个面向物理解题诊断的混合框架，核心目标�
 │   └── __init__.py
 ├── scripts/
 │   ├── run_top_down.py
+│   ├── manage_rule_library.py
+│   ├── merge_rules.py
 │   └── analyze_symbolic_audit.py
 ├── tests/
 │   ├── test_symbolic_pipeline.py

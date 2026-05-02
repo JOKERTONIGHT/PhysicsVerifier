@@ -11,7 +11,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from core.top_down_verifier import TopDownVerifier
+from core.physics_rule_verifier import PhysicsRuleVerifier
 
 
 def _strip_symbolic_fields_from_diagnostic(d: Dict[str, Any]) -> Dict[str, Any]:
@@ -193,7 +193,7 @@ def main() -> None:
     with open(args.input, "r", encoding="utf-8") as f:
         samples = json.load(f)
 
-    verifier = TopDownVerifier(
+    verifier = PhysicsRuleVerifier(
         rules_catalog_path=args.catalog,
         llm_model=args.model,
         enable_agentic_postcheck=not args.no_agentic,

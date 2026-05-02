@@ -5,7 +5,7 @@ import shutil
 import unittest
 from pathlib import Path
 
-from core.top_down_verifier import TopDownVerifier
+from core.physics_rule_verifier import PhysicsRuleVerifier
 from scripts.analyze_unified_matching import analyze_matching
 from scripts.merge_rules import (
     CLUSTER_BUCKET_THRESHOLD,
@@ -526,7 +526,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             catalog_path = test_dir / "rules_unified.json"
             catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
 
-            verifier = TopDownVerifier(
+            verifier = PhysicsRuleVerifier(
                 llm_model=None,
                 unified_rules_path=str(catalog_path),
                 log_dir=str(test_dir),
@@ -540,7 +540,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             self.assertEqual(result["verifier"], "unified_v2_rule_based")
             self.assertLessEqual(len(result["retrieved_topics"]), 3)
             self.assertLessEqual(len(result["retrieved_rules"]), 6)
-            self.assertEqual(len(verifier.rule_verifier.rules_to_check), len(result["retrieved_rules"]))
+            self.assertEqual(len(verifier.semantic_checker.rules_to_check), len(result["retrieved_rules"]))
             self.assertTrue(result["retrieved_topics"])
             self.assertTrue(result["retrieved_rules"])
             self.assertEqual(result["topic"], "Kinematics")

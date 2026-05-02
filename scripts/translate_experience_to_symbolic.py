@@ -6,8 +6,15 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.rule_catalog_retrieval import iter_rule_leaves
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -43,6 +50,33 @@ def _safe_func_name(raw: str) -> str:
     if raw[0].isdigit():
         raw = f"r_{raw}"
     return f"check_{raw}"[:72]
+
+
+def _extract_rules(data: Any) -> List[Dict[str, Any]]:
+    if isinstance(data, dict) and isinstance(data.get("rules"), list):
+        return [rule for rule in data["rules"] if isinstance(rule, dict)]
+    if not isinstance(data, dict) or not isinstance(data.get("domains"), list):
+        return []
+
+    rules: List[Dict[str, Any]] = []
+    for domain in data.get("domains") or []:
+        if not isinstance(domain, dict):
+            continue
+        domain_name = str(domain.get("name") or "Unknown")
+        for topic in domain.get("topics") or []:
+            if not isinstance(topic, dict):
+                continue
+            topic_name = str(topic.get("name") or "Unknown")
+            for rule in iter_rule_leaves(topic):
+                enriched = dict(rule)
+                path = dict(enriched.get("path") or {})
+                path.setdefault("domain", domain_name)
+                path.setdefault("topic", topic_name)
+                enriched["path"] = path
+                enriched.setdefault("domain", path.get("domain") or domain_name)
+                enriched.setdefault("topic", path.get("topic") or topic_name)
+                rules.append(enriched)
+    return rules
 
 
 def _build_prompt(rule: Dict[str, Any], function_name: str) -> tuple[str, str]:
@@ -302,7 +336,7 @@ def _render_module(entries: List[Dict[str, Any]]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Translate distilled experience rules into direct Python symbolic checks.")
+    parser = argparse.ArgumentParser(description="Translate distilled experience rules or unified catalog leaves into direct Python symbolic checks.")
     parser.add_argument("--input", type=str, default="results/semantic_experience_distilled_300.json")
     parser.add_argument("--model", type=str, default="gemini-3-flash-preview-thinking")
     parser.add_argument("--output-module", type=str, default="symbolic/generated_experience_checks.py")
@@ -322,9 +356,9 @@ def main() -> None:
     report_path = Path(args.report)
 
     data = json.loads(in_path.read_text(encoding="utf-8"))
-    rules = data.get("rules", []) if isinstance(data, dict) else []
-    if not isinstance(rules, list):
-        raise SystemExit("Input distilled JSON must contain a list field 'rules'.")
+    rules = _extract_rules(data)
+    if not rules:
+        raise SystemExit("Input must be a distilled JSON with 'rules' or a unified catalog with 'domains'.")
 
     if args.max_rules and args.max_rules > 0:
         rules = rules[: args.max_rules]
@@ -340,8 +374,9 @@ def main() -> None:
 
         rule_id = str(rule.get("rule_id") or "unknown_rule")
         title = str(rule.get("title") or rule_id)
-        domain = str(rule.get("domain") or "Unknown")
-        topic = str(rule.get("topic") or "Unknown")
+        path = dict(rule.get("path") or {})
+        domain = str(rule.get("domain") or path.get("domain") or "Unknown")
+        topic = str(rule.get("topic") or path.get("topic") or "Unknown")
 
         function_name = _safe_func_name(f"{rule_id}_{_slug_hash([title, domain, topic])}")
 
@@ -407,6 +442,8 @@ def main() -> None:
                             "domain": domain,
                             "topic": topic,
                             "title": title,
+                            "path": path,
+                            "symbolic_hint": dict(rule.get("symbolic_hint") or {}),
                             "function_name": function_name,
                             "python_function": fn_code,
                         }
@@ -448,6 +485,8 @@ def main() -> None:
                     "domain": domain,
                     "topic": topic,
                     "title": title,
+                    "path": path,
+                    "symbolic_hint": dict(rule.get("symbolic_hint") or {}),
                     "function_name": function_name,
                     "python_function": fn_code,
                 }
@@ -474,7 +513,10 @@ def main() -> None:
                 "domain": e["domain"],
                 "topic": e["topic"],
                 "title": e["title"],
+                "path": e.get("path") or {},
+                "symbolic_hint": e.get("symbolic_hint") or {},
                 "function_name": e["function_name"],
+                "source": "translated_experience_code",
             }
             for e in successful_entries
         ],

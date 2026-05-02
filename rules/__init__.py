@@ -6,7 +6,7 @@
 - graph_consistency: 纯本地静态图一致性检查，示例如何实现非 LLM 规则。
 
 使用方式：
-- 在 RuleBasedVerifier 中通过规则规范字符串加载（内置别名或模块路径）。
+- 在 `SemanticRuleChecker`（`core/semantic_rule_checker.py`）中通过规则规范字符串加载（内置别名或模块路径）。
 """
 
 from .base import RulePlugin, RuleContext, RuleRuntime  # noqa: F401

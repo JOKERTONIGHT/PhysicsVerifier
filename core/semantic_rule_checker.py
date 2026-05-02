@@ -1,12 +1,11 @@
-"""PhysicsVerifier: LLM 驱动的规则检查核心引擎。
+"""PhysicsVerifier: 基于 LLM 的语义规则检查（SRD）引擎。
 
-本仓库当前的主流程是“自顶向下（Top-Down）规则检查”，由 `top_down_verifier.py`
-根据 `rules_catalog_top_down.json` 动态注入每个 topic 的规则定义，然后调用本模块
-`RuleBasedVerifier` 对样本进行逐条规则检查。
+由 `physics_rule_verifier.py`（`PhysicsRuleVerifier`）从层次化规则库中选出规则并注入 SRD，
+再调用本模块的 `SemanticRuleChecker` 对单条规则逐条做语义级检查。
 
-RuleBasedVerifier 的职责：
+`SemanticRuleChecker` 的职责：
 - 从作答中抽取符号/公式并构建 `SymbolGraph`（可选）
-- 将结构化摘要 + 规则文本（SRD风格）组合成 prompt
+- 将结构化摘要 + 规则文本（SRD）组合成 prompt
 - 调用 LLM 输出结构化 diagnostics
 """
 
@@ -137,7 +136,7 @@ def _load_rule_class(spec: str):
 
 
 # ------------------------- 主检查器实现 (重构) -------------------------
-class RuleBasedVerifier:
+class SemanticRuleChecker:
     def __init__(self, llm_model: Optional[str] = None, max_llm_calls: int = 0, logger=None,
                  enable_cache: bool = True, llm_temperature: float = 0.1,
                  llm_max_output_tokens: int = 2048,
@@ -187,7 +186,7 @@ class RuleBasedVerifier:
             base_dir = Path(__file__).parent
         except Exception:
             base_dir = Path(".").resolve()
-        self._cache_path = (base_dir / ".cache" / "rule_based_llm_cache.json").resolve()
+        self._cache_path = (base_dir / ".cache" / "semantic_llm_cache.json").resolve()
         if self.enable_cache:
             self._load_cache()
 
@@ -494,6 +493,286 @@ class RuleBasedVerifier:
             return False
         return any(ans in normalized_prediction for ans in expected_answers)
 
+    @staticmethod
+    def _safe_int(value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _collapse_text_for_match(text: str) -> tuple[str, List[int]]:
+        src = str(text or "")
+        out: List[str] = []
+        mapping: List[int] = []
+        prev_space = False
+        for i, ch in enumerate(src):
+            c = ch
+            if c in "{}[]()$`":
+                continue
+            if c == "\\":
+                continue
+            if c.isspace():
+                if out and (not prev_space):
+                    out.append(" ")
+                    mapping.append(i)
+                    prev_space = True
+                continue
+            out.append(c.lower())
+            mapping.append(i)
+            prev_space = False
+
+        while out and out[0] == " ":
+            out.pop(0)
+            mapping.pop(0)
+        while out and out[-1] == " ":
+            out.pop()
+            mapping.pop()
+        return "".join(out), mapping
+
+    def _locate_quote_span(self, answer_text: str, quote: str) -> Dict[str, Any]:
+        src = str(answer_text or "")
+        q = str(quote or "").strip()
+        if not src or not q:
+            return {
+                "start_char": -1,
+                "end_char": -1,
+                "line_index": -1,
+                "span_valid": False,
+                "locate_method": "missing_quote",
+                "locate_confidence": 0.0,
+            }
+
+        def _pack(start: int, end: int, method: str, confidence: float, ambiguous: bool) -> Dict[str, Any]:
+            return {
+                "start_char": int(start),
+                "end_char": int(end),
+                "line_index": int(src.count("\n", 0, start) + 1),
+                "span_valid": True,
+                "locate_method": method,
+                "locate_confidence": float(confidence),
+                "span_ambiguous": bool(ambiguous),
+            }
+
+        exact = list(re.finditer(re.escape(q), src))
+        if exact:
+            m0 = exact[0]
+            return _pack(m0.start(), m0.end(), "exact", 1.0, len(exact) > 1)
+
+        ci = list(re.finditer(re.escape(q), src, flags=re.I))
+        if ci:
+            m0 = ci[0]
+            return _pack(m0.start(), m0.end(), "case_insensitive", 0.9, len(ci) > 1)
+
+        parts = [re.escape(x) for x in re.split(r"\s+", q) if x]
+        if parts:
+            pat = r"\s+".join(parts)
+            ws = list(re.finditer(pat, src, flags=re.I))
+            if ws:
+                m0 = ws[0]
+                return _pack(m0.start(), m0.end(), "whitespace_fuzzy", 0.75, len(ws) > 1)
+
+        src_norm, src_map = self._collapse_text_for_match(src)
+        q_norm, _ = self._collapse_text_for_match(q)
+        if src_norm and q_norm:
+            k = src_norm.find(q_norm)
+            if k >= 0:
+                s = src_map[k]
+                e = src_map[min(len(src_map) - 1, k + len(q_norm) - 1)] + 1
+                return _pack(s, e, "normalized_substring", 0.7, False)
+
+        return {
+            "start_char": -1,
+            "end_char": -1,
+            "line_index": -1,
+            "span_valid": False,
+            "locate_method": "not_found",
+            "locate_confidence": 0.0,
+        }
+
+    def _paragraph_ranges(self, answer_text: str) -> List[Dict[str, Any]]:
+        src = str(answer_text or "")
+        if not src:
+            return []
+
+        target_len = 220
+        min_len = 120
+        max_len = 360
+        n = len(src)
+        boundary_set = {0, n}
+        for m in re.finditer(r"[。！？!?；;](?:\s+|$)|\n+", src):
+            boundary_set.add(m.end())
+        boundaries = sorted(boundary_set)
+
+        out: List[Dict[str, Any]] = []
+        start = 0
+        para_idx = 0
+        while start < n:
+            if n - start <= max_len:
+                end = n
+            else:
+                low = min(n, start + min_len)
+                high = min(n, start + max_len)
+                desired = min(n, start + target_len)
+                candidates = [b for b in boundaries if low <= b <= high]
+                if candidates:
+                    end = min(candidates, key=lambda b: abs(b - desired))
+                else:
+                    end = high
+
+            s = start
+            e = max(start, end)
+            while s < e and src[s].isspace():
+                s += 1
+            while e > s and src[e - 1].isspace():
+                e -= 1
+
+            if e > s:
+                para_idx += 1
+                out.append({"paragraph_index": para_idx, "start_char": s, "end_char": e})
+            start = end if end > start else start + 1
+
+        if not out and src.strip():
+            out.append({"paragraph_index": 1, "start_char": 0, "end_char": len(src)})
+        return out
+
+    def _expand_span_to_context_window(
+        self,
+        answer_text: str,
+        start_char: int,
+        end_char: int,
+        *,
+        left_context: int = 90,
+        right_context: int = 120,
+        max_window: int = 320,
+    ) -> Dict[str, int]:
+        src = str(answer_text or "")
+        n = len(src)
+        if n <= 0 or start_char < 0 or end_char <= start_char:
+            return {"start_char": -1, "end_char": -1}
+
+        s = max(0, int(start_char) - left_context)
+        e = min(n, int(end_char) + right_context)
+        while s > 0 and (not src[s - 1].isspace()) and (int(start_char) - s) < (left_context + 50):
+            s -= 1
+        while e < n and (not src[e].isspace()) and (e - int(end_char)) < (right_context + 50):
+            e += 1
+
+        if e - s > max_window:
+            mid = (int(start_char) + int(end_char)) // 2
+            half = max_window // 2
+            s = max(0, mid - half)
+            e = min(n, s + max_window)
+
+        while s < e and src[s].isspace():
+            s += 1
+        while e > s and src[e - 1].isspace():
+            e -= 1
+        return {"start_char": s if e > s else -1, "end_char": e if e > s else -1}
+
+    def _paragraph_from_offset(self, paragraphs: List[Dict[str, Any]], offset: int) -> Optional[Dict[str, Any]]:
+        if offset < 0:
+            return None
+        for p in paragraphs:
+            s = int(p.get("start_char") or -1)
+            e = int(p.get("end_char") or -1)
+            if s <= offset < e:
+                return p
+        return None
+
+    def _paragraph_by_index(self, paragraphs: List[Dict[str, Any]], paragraph_index: int) -> Optional[Dict[str, Any]]:
+        if paragraph_index <= 0:
+            return None
+        for p in paragraphs:
+            if int(p.get("paragraph_index") or -1) == paragraph_index:
+                return p
+        return None
+
+    def _normalize_diagnostic_location(self, diagnostic: Dict[str, Any], answer_text: str) -> Dict[str, Any]:
+        out = dict(diagnostic)
+        paragraphs = self._paragraph_ranges(answer_text)
+
+        ev_raw = out.get("evidence")
+        if isinstance(ev_raw, dict):
+            evidence = dict(ev_raw)
+        elif isinstance(ev_raw, str) and ev_raw.strip():
+            evidence = {"quote": ev_raw.strip()}
+        else:
+            evidence = {}
+
+        quote = str(evidence.get("quote") or "").strip()
+        loc_raw = evidence.get("location") if isinstance(evidence.get("location"), dict) else {}
+
+        start = self._safe_int(loc_raw.get("start_char"))
+        end = self._safe_int(loc_raw.get("end_char"))
+        line_index = self._safe_int(loc_raw.get("line_index"))
+        paragraph_index_raw = self._safe_int(loc_raw.get("paragraph_index"))
+        span_valid = bool(start is not None and end is not None and start >= 0 and end > start)
+
+        loc_obj: Dict[str, Any] = {
+            "start_char": int(start) if start is not None else -1,
+            "end_char": int(end) if end is not None else -1,
+            "line_index": int(line_index) if line_index is not None else -1,
+            "span_valid": span_valid,
+            "locate_method": str(loc_raw.get("locate_method") or "model_provided"),
+            "locate_confidence": float(loc_raw.get("locate_confidence") or (1.0 if span_valid else 0.0)),
+            "paragraph_index": int(paragraph_index_raw) if paragraph_index_raw is not None else -1,
+            "paragraph_start_char": int(self._safe_int(loc_raw.get("paragraph_start_char")) or -1),
+            "paragraph_end_char": int(self._safe_int(loc_raw.get("paragraph_end_char")) or -1),
+            "paragraph_valid": bool(paragraph_index_raw is not None and paragraph_index_raw >= 1),
+            "paragraph_source": str(loc_raw.get("paragraph_source") or "model_provided"),
+        }
+
+        if quote and not span_valid:
+            fallback = self._locate_quote_span(answer_text, quote)
+            if bool(fallback.get("span_valid")):
+                loc_obj = {
+                    "start_char": int(fallback.get("start_char", -1)),
+                    "end_char": int(fallback.get("end_char", -1)),
+                    "line_index": int(fallback.get("line_index", -1)),
+                    "span_valid": True,
+                    "locate_method": f"fallback_{fallback.get('locate_method') or 'quote_match'}",
+                    "locate_confidence": float(fallback.get("locate_confidence") or 0.75),
+                }
+
+        if bool(loc_obj.get("span_valid")) and int(loc_obj.get("line_index") or -1) <= 0:
+            s = int(loc_obj.get("start_char") or -1)
+            if s >= 0:
+                loc_obj["line_index"] = int(str(answer_text).count("\n", 0, s) + 1)
+
+        if bool(loc_obj.get("span_valid")) and (not bool(loc_obj.get("paragraph_valid"))):
+            p = self._paragraph_from_offset(paragraphs, int(loc_obj.get("start_char") or -1))
+            if p is not None:
+                ctx = self._expand_span_to_context_window(
+                    answer_text,
+                    int(loc_obj.get("start_char") or -1),
+                    int(loc_obj.get("end_char") or -1),
+                )
+                loc_obj["paragraph_index"] = int(p.get("paragraph_index") or -1)
+                loc_obj["paragraph_start_char"] = int(ctx.get("start_char") or p.get("start_char") or -1)
+                loc_obj["paragraph_end_char"] = int(ctx.get("end_char") or p.get("end_char") or -1)
+                loc_obj["paragraph_valid"] = True
+                loc_obj["paragraph_source"] = "from_span_context"
+
+        if not bool(loc_obj.get("paragraph_valid")):
+            pidx = int(loc_obj.get("paragraph_index") or -1)
+            p2 = self._paragraph_by_index(paragraphs, pidx)
+            if p2 is not None:
+                loc_obj["paragraph_start_char"] = int(p2.get("start_char") or -1)
+                loc_obj["paragraph_end_char"] = int(p2.get("end_char") or -1)
+                loc_obj["paragraph_valid"] = True
+                if not str(loc_obj.get("paragraph_source") or "").strip():
+                    loc_obj["paragraph_source"] = "model_declared"
+
+        loc_obj["locatable_valid"] = bool(loc_obj.get("span_valid") or loc_obj.get("paragraph_valid"))
+
+        evidence["quote"] = quote
+        evidence["location"] = loc_obj
+        out["evidence"] = evidence
+        return out
+
     # ------------------------- 新的LLM驱动的规则检查 -------------------------
     def _get_check_prompt(self, srd: str, raw_answer: str, context_summary: str, rule_id: str) -> tuple[str, str]:
         system_prompt = (
@@ -545,9 +824,22 @@ JSON Output Schema:
         "rule": "{rule_id}",
         "symbol": "symbol_or_equation_identifier",
         "message": "Short human-readable explanation",
-        "evidence": {{ "quote": "direct quote or formula from student's text" }}
+        "evidence": {{
+            "quote": "direct quote or formula from student's text",
+            "location": {{
+                "start_char": 0,
+                "end_char": 10,
+                "line_index": 1,
+                "paragraph_index": 1
+            }}
+        }}
     }}
 ]
+
+Location requirement:
+- start_char/end_char are 0-based offsets in the student's submission text above.
+- If exact offsets are uncertain, still provide quote; system will fallback-locate by quote.
+- paragraph_index is 1-based approximate paragraph index. If unsure, use -1.
 
 Respond with only the JSON output (array or empty array).
 """
@@ -555,6 +847,7 @@ Respond with only the JSON output (array or empty array).
 
     def analyze(self, sample: Dict[str, Any], dataset_key: Optional[str] = None, export_graph: bool = False) -> Dict[str, Any]:
         # 使用完整回答，不再截断，让 LLM 看到全部作答
+        answer_text = str(sample.get("prediction", ""))
         text_all = "\n".join([
             sample.get("question", ""),
             sample.get("context", ""),
@@ -585,14 +878,14 @@ Respond with only the JSON output (array or empty array).
                 if self.use_symbol_graph and context_summary is not None:
                     system_prompt, user_prompt = self._get_check_prompt(
                         srd=srd,
-                        raw_answer=text_all,
+                        raw_answer=answer_text,
                         context_summary=context_summary,
                         rule_id=rule_id,
                     )
                 else:
                     system_prompt, user_prompt = self._get_check_prompt(
                         srd=srd,
-                        raw_answer=text_all,
+                        raw_answer=answer_text,
                         context_summary="{}",
                         rule_id=rule_id,
                     )
@@ -612,7 +905,14 @@ Respond with only the JSON output (array or empty array).
                     diagnostics = [diagnostics]
                 elif diagnostics is None:
                     diagnostics = []
-                all_diagnostics.extend(diagnostics)
+
+                normalized_diag: List[Any] = []
+                for d in diagnostics:
+                    if isinstance(d, dict):
+                        normalized_diag.append(self._normalize_diagnostic_location(d, answer_text))
+                    else:
+                        normalized_diag.append(d)
+                all_diagnostics.extend(normalized_diag)
 
         # 去重和计分
         seen = set()
@@ -663,7 +963,7 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description="Physics Rule-Based Verifier using LLMs.")
+    parser = argparse.ArgumentParser(description="Physics semantic (LLM+SRD) rule checker.")
     parser.add_argument("--input", "-i", type=str, default="data/evaluation_input.json",
                         help="Path to the input JSON file containing samples to verify.")
     parser.add_argument("--output", "-o", type=str, default="results/rule_check_report.json",
@@ -688,7 +988,7 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         print("No arguments provided, running a simple demonstration.")
         # 示例：演示在无LLM或无翻译文件时如何优雅降级
-        verifier = RuleBasedVerifier(llm_model=None, rules=["var_const_consistency"])
+        verifier = SemanticRuleChecker(llm_model=None, rules=["var_const_consistency"])
         sample = {
             "id": "demo1",
             "prediction": "Let v = 5. Later, v = 10. This is a self-reference v=v+1."
@@ -719,7 +1019,7 @@ if __name__ == "__main__":
         print(f"  - Rules: {args.rules or 'All'}")
         print(f"  - Cache: {'Disabled' if args.no_cache else 'Enabled'}")
 
-        verifier = RuleBasedVerifier(
+        verifier = SemanticRuleChecker(
             llm_model=None if args.no_llm else args.llm_model,
             rules=args.rules,
             enable_cache=not args.no_cache,

@@ -8,7 +8,7 @@ from pathlib import Path
 class SymbolicPipelineTests(unittest.TestCase):
     def test_pipeline_placeholder(self) -> None:
         # Keep a lightweight pipeline-level smoke placeholder in this module.
-        # Runtime behavior is covered by TopDownVerifier + ExperienceCodeEngine tests.
+        # Runtime behavior is covered by PhysicsRuleVerifier + ExperienceCodeEngine tests.
         self.assertTrue(True)
 
 
@@ -66,9 +66,9 @@ class UnifiedCatalogTests(unittest.TestCase):
             }
             catalog_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-            from core.top_down_verifier import TopDownVerifier
+            from core.physics_rule_verifier import PhysicsRuleVerifier
 
-            verifier = TopDownVerifier(
+            verifier = PhysicsRuleVerifier(
                 llm_model=None,
                 unified_rules_path=str(catalog_path),
             )
@@ -85,7 +85,7 @@ class UnifiedCatalogTests(unittest.TestCase):
 
     def test_unified_srd_construction(self) -> None:
         """Verify that _build_srd_for_rule constructs correct SRD for each source type."""
-        from core.top_down_verifier import TopDownVerifier
+        from core.physics_rule_verifier import PhysicsRuleVerifier
 
         # Knowledge rule
         knowledge_rule = {
@@ -94,7 +94,7 @@ class UnifiedCatalogTests(unittest.TestCase):
             "description": "My Description",
             "check_logic": "My Check Logic",
         }
-        srd = TopDownVerifier._build_srd_for_rule(knowledge_rule)
+        srd = PhysicsRuleVerifier._build_srd_for_rule(knowledge_rule)
         self.assertIn("Title: My Title", srd)
         self.assertIn("Description: My Description", srd)
         self.assertIn("Check Logic: My Check Logic", srd)
@@ -106,7 +106,7 @@ class UnifiedCatalogTests(unittest.TestCase):
             "description": "This is a very long detailed SRD that stands alone.",
             "check_logic": "This should not appear in SRD",
         }
-        srd = TopDownVerifier._build_srd_for_rule(tagged_rule)
+        srd = PhysicsRuleVerifier._build_srd_for_rule(tagged_rule)
         self.assertEqual(srd, "This is a very long detailed SRD that stands alone.")
         self.assertNotIn("Title:", srd)
 
@@ -117,17 +117,17 @@ class UnifiedCatalogTests(unittest.TestCase):
             "trigger": "When condition X",
             "check_logic": "Check Y equals Z",
         }
-        srd = TopDownVerifier._build_srd_for_rule(distilled_rule)
+        srd = PhysicsRuleVerifier._build_srd_for_rule(distilled_rule)
         self.assertIn("Title: Distilled Title", srd)
         self.assertIn("Trigger: When condition X", srd)
         self.assertIn("Check Logic: Check Y equals Z", srd)
 
     def test_build_experience_symbolic_spec_from_hint(self) -> None:
         """Verify symbolic_hint conversion to GeneratedSymbolicCheckSpec."""
-        from core.top_down_verifier import TopDownVerifier
+        from core.physics_rule_verifier import PhysicsRuleVerifier
 
         # equation_equivalence with valid hint
-        spec = TopDownVerifier._build_experience_symbolic_spec_from_hint(
+        spec = PhysicsRuleVerifier._build_experience_symbolic_spec_from_hint(
             rule_id="test_001",
             title="Test Rule",
             check_logic="Check something",
@@ -143,7 +143,7 @@ class UnifiedCatalogTests(unittest.TestCase):
         self.assertIn("v = u + at", spec.params["canonical_latex"])
 
         # none primitive should return None
-        spec = TopDownVerifier._build_experience_symbolic_spec_from_hint(
+        spec = PhysicsRuleVerifier._build_experience_symbolic_spec_from_hint(
             rule_id="test_002",
             title="Test Rule 2",
             check_logic="Check other",

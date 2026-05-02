@@ -1,3 +1,7 @@
+"""从统一/层次化规则目录中检索候选主题与规则（规则匹配阶段）。
+
+供 `PhysicsRuleVerifier`（`core/physics_rule_verifier.py`）及离线脚本
+`scripts/analyze_unified_matching.py`、`scripts/merge_rules.py` 使用。"""
 from __future__ import annotations
 
 import math
@@ -440,6 +444,47 @@ def ordered_unique(values: Iterable[str]) -> List[str]:
         seen.add(key)
         out.append(item)
     return out
+
+
+def iter_rule_leaves(topic: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    """Yield executable rule leaves from either flat topic.rules or rule_tree.
+
+    Newer rule catalogs may keep a variable-depth tree for maintenance while
+    preserving topic.rules as the verifier-facing flat view. This helper is the
+    single read path for runtime and analysis code.
+    """
+    if not isinstance(topic, dict):
+        return
+
+    rules = [rule for rule in (topic.get("rules") or []) if isinstance(rule, dict)]
+    if rules:
+        for rule in rules:
+            yield rule
+        return
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for rule in rules:
+        rid = norm_text(rule.get("rule_id") or rule.get("id") or "")
+        if rid:
+            by_id[rid] = rule
+
+    def walk(node: Any) -> Iterable[Dict[str, Any]]:
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get("rule"), dict):
+            yield node["rule"]
+        for rid in node.get("rule_ids") or []:
+            rule = by_id.get(norm_text(rid))
+            if rule:
+                yield rule
+        for child in node.get("children") or []:
+            yield from walk(child)
+
+    yield from walk(topic.get("rule_tree") or {})
+
+
+def topic_rule_leaves(topic: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return list(iter_rule_leaves(topic))
 
 
 def match_phrase_or_symbol(needle: str, haystack: str) -> bool:

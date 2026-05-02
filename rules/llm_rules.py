@@ -31,7 +31,7 @@ class _BaseLLMRule:
     description: str = ""
 
     def run(self, ctx: RuleContext, rt: RuleRuntime) -> List[Dict[str, Any]]:
-        # This is a placeholder now. The main logic is in RuleBasedVerifier,
+        # This is a placeholder now. The main logic is in SemanticRuleChecker,
         # which uses the rule's SRD translation to perform checks.
         # This plugin-based execution can be kept for non-LLM/hybrid rules
         # or completely removed if all rules become LLM-driven via SRDs.
