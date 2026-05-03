@@ -31,7 +31,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
     return [
         f"mkdir -p results/checkpoints/{name} results/scale_curve/{name} catalogs/checkpoints",
         (
-            "./.venv/bin/python scripts/run_semantic_experience.py "
+            "./.venv/bin/python scripts/generate_experience_rules.py "
             f"--input {expansion_input} "
             "--rules-catalog catalogs/rules_catalog_top_down.json "
             f"--model {model} "
@@ -39,7 +39,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
             f"--distilled-output {distilled_output}"
         ),
         (
-            "./.venv/bin/python scripts/translate_experience_to_symbolic.py "
+            "./.venv/bin/python scripts/generate_symbolic_checks.py "
             f"--input {distilled_output} "
             "--model gpt-4.1-mini "
             "--output-module symbolic/generated_experience_checks.py "
@@ -47,12 +47,12 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
             f"--report {translation_report} --repair"
         ),
         (
-            "./.venv/bin/python scripts/build_unified_rule_library.py "
-            f"--experience-distilled {distilled_output} "
-            f"--output {unified_catalog} --rule-source experience-only"
+            "./.venv/bin/python scripts/manage_rule_library.py build "
+            f"--experience {distilled_output} "
+            f"--output {unified_catalog}"
         ),
         (
-            "./.venv/bin/python scripts/run_top_down.py "
+            "./.venv/bin/python scripts/run_verifier.py "
             f"--input {eval100_input} "
             f"--output {eval100_result} "
             f"--symbolic-output {eval100_audit} "

@@ -90,7 +90,7 @@ class PhysicsRuleVerifier:
         # the separate experience pipeline is only needed when NOT using unified catalog.
         self.enable_experience_pipeline = bool(enable_experience_pipeline) and not self._unified_mode
         self.experience_rules_path = str(experience_rules_path)
-        # Keep compatibility with run_top_down.py arguments.
+        # Keep compatibility with run_verifier.py arguments.
         self.experience_code_manifest_path = str(experience_code_manifest_path)
         self.experience_code_module = str(experience_code_module)
         # Backward compatible registry (results/*) is kept for audit logs, but the source of truth is catalogs/symbolic_catalog.json
@@ -1179,7 +1179,7 @@ if __name__ == "__main__":
     results = verifier.run_batch(samples)
     
     # Save results
-    with open("results/top_down_results.json", "w") as f:
+    with open("results/verifier_results.json", "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
-    print(f"Done. Results saved to results/top_down_results.json")
+    print(f"Done. Results saved to results/verifier_results.json")

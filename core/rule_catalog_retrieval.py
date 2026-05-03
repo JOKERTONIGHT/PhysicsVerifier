@@ -1,7 +1,7 @@
 """从统一/层次化规则目录中检索候选主题与规则（规则匹配阶段）。
 
 供 `PhysicsRuleVerifier`（`core/physics_rule_verifier.py`）及离线脚本
-`scripts/analyze_unified_matching.py`、`scripts/merge_rules.py` 使用。"""
+`scripts/analyze_rule_matching.py`、`scripts/manage_rule_library.py` 使用。"""
 from __future__ import annotations
 
 import math
@@ -657,6 +657,21 @@ def build_topic_required_symbols(rules: Iterable[Dict[str, Any]]) -> List[str]:
     return ordered_unique(symbols)
 
 
+def _match_llm_phrase(phrase: str, haystack: str, *, min_word_hits: int = 2, ratio: float = 0.45) -> bool:
+    """Return True when a sufficient fraction of meaningful words in *phrase* appear in *haystack*.
+
+    This provides fuzzy phrase-level matching for LLM-generated scenario sentences and
+    problem phrases stored in ``llm_hints.match_phrases`` / ``retrieval_hints.llm_problem_phrases``.
+    """
+    tokens = [w for w in TOKEN_RE.findall(norm_text(phrase)) if keep_token(w) and len(w) >= 4]
+    if not tokens:
+        return False
+    text_lower = norm_text(haystack).lower()
+    hits = sum(1 for w in tokens if w.lower() in text_lower)
+    threshold = max(min_word_hits, int(len(tokens) * ratio + 0.5))
+    return hits >= threshold
+
+
 def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for domain in catalog.get("domains", []) or []:
@@ -678,6 +693,9 @@ def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "topic_keywords": ordered_unique(retrieval_hints.get("topic_keywords") or []),
                     "knowledge_keywords": ordered_unique(knowledge_reference.get("keywords") or []),
                     "required_symbols": ordered_unique(retrieval_hints.get("required_symbols") or []),
+                    # LLM-enhanced signals (present only in enhanced catalogs)
+                    "llm_problem_phrases": ordered_unique(retrieval_hints.get("llm_problem_phrases") or []),
+                    "llm_discriminative_terms": ordered_unique(retrieval_hints.get("llm_discriminative_terms") or []),
                 }
             )
     return out
@@ -766,6 +784,24 @@ def score_topic_candidate(
             sym for sym in ordered_unique(candidate.get("required_symbols") or []) if match_phrase_or_symbol(sym, text_for_topic)
         ]
 
+    # LLM-enhanced signals (present only in LLM-enhanced catalogs)
+    llm_phrase_hits: List[str] = []
+    llm_term_hits: List[str] = []
+    llm_score = 0.0
+    llm_problem_phrases = candidate.get("llm_problem_phrases") or []
+    llm_discriminative_terms = candidate.get("llm_discriminative_terms") or []
+    if llm_problem_phrases or llm_discriminative_terms:
+        llm_phrase_hits = [
+            p for p in ordered_unique(llm_problem_phrases)
+            if _match_llm_phrase(p, text_for_topic)
+        ]
+        llm_term_hits = [
+            t for t in ordered_unique(llm_discriminative_terms)
+            if match_phrase_or_symbol(t, text_for_topic)
+        ]
+        # LLM signals: phrase hits are high-confidence (cap 6), term hits moderate (cap 5)
+        llm_score = min(len(llm_phrase_hits) * 3.0, 6.0) + min(len(llm_term_hits) * 0.8, 5.0)
+
     phrase_score = 6.0 if phrase_hits else 0.0
     scene_score = min(
         sum(_df_weight(hit, signal_df["scene_df"], strong=3.5, weak=0.75) for hit in scene_hits),
@@ -776,7 +812,7 @@ def score_topic_candidate(
         8.0,
     )
     symbol_score = min(sum(_symbol_df_weight(hit, signal_df["symbol_df"]) for hit in symbol_hits), 3.0)
-    score = float(phrase_score + scene_score + keyword_score + symbol_score)
+    score = float(phrase_score + scene_score + keyword_score + symbol_score + llm_score)
 
     return {
         "domain": candidate["domain"],
@@ -788,6 +824,8 @@ def score_topic_candidate(
             "keyword_hits": keyword_hits,
             "required_symbol_hits": symbol_hits,
             "symbol_gate_open": symbol_gate_open,
+            "llm_phrase_hits": llm_phrase_hits,
+            "llm_term_hits": llm_term_hits,
         },
         "topic_obj": candidate["topic_obj"],
     }
@@ -806,9 +844,28 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
     ]
     lexical_hits = len(trigger_hits) + len(object_hits) + len(symbol_hits)
 
+    # LLM-enhanced signals (present only in enhanced catalogs)
+    llm_hints = rule.get("llm_hints") if isinstance(rule.get("llm_hints"), dict) else {}
+    llm_phrase_hits: List[str] = []
+    llm_term_hits: List[str] = []
+    llm_rule_score = 0.0
+    if llm_hints:
+        llm_phrase_hits = [
+            p for p in ordered_unique(llm_hints.get("match_phrases") or [])
+            if _match_llm_phrase(p, text_for_rule)
+        ]
+        llm_term_hits = [
+            t for t in ordered_unique(llm_hints.get("discriminative_terms") or [])
+            if match_phrase_or_symbol(t, text_for_rule)
+        ]
+        # Phrase hits are strong evidence; term hits are moderate
+        llm_rule_score = min(len(llm_phrase_hits) * 2.5, 7.5) + min(len(llm_term_hits) * 1.0, 4.0)
+
     support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
     count = int(support.get("count") or 0)
-    support_prior = min(math.log2(count + 1), 3.0) if lexical_hits > 0 else 0.0
+    # Activate support prior if there is any hit (lexical OR llm)
+    any_hits = lexical_hits > 0 or llm_phrase_hits or llm_term_hits
+    support_prior = min(math.log2(count + 1), 3.0) if any_hits else 0.0
     scope = norm_text(rule.get("scope") or "domain") or "domain"
     manual_override_reason = norm_text(rule.get("manual_override_reason") or "")
 
@@ -829,6 +886,7 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
         + min(len(object_hits) * 2, 6)
         + min(len(symbol_hits) * 2, 4)
         + support_prior
+        + llm_rule_score
     )
     if scope == "meta":
         score = max(score - 1.5, 0.0)
@@ -850,6 +908,8 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
             "support_count": count,
             "support_prior": round(support_prior, 4),
             "manual_override_reason": manual_override_reason,
+            "llm_phrase_hits": llm_phrase_hits,
+            "llm_term_hits": llm_term_hits,
         },
     }
 

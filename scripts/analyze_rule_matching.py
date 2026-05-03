@@ -304,7 +304,7 @@ def analyze_matching(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze offline matching quality for unified_rules v2.")
-    parser.add_argument("--catalog", default="catalogs/rules_unified.json")
+    parser.add_argument("--catalog", default="catalogs/unified_rule_library.json")
     parser.add_argument("--input", default="data/evaluation_sample_300.json")
     parser.add_argument("--outdir", default="results/unified_matching_analysis")
     parser.add_argument("--top-topics", type=int, default=3)

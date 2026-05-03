@@ -46,6 +46,7 @@ def main() -> None:
     parser.add_argument("--max-errors", type=int, default=0, help="0 means exhaustive GT extraction mode.")
     parser.add_argument("--max-recall-scan", type=int, default=500)
     parser.add_argument("--min-valid-gt-per-sample", type=int, default=1)
+    parser.add_argument("--unified-catalog", type=str, default="", help="Path to unified rule catalog JSON for run_verifier.py.")
     parser.add_argument("--disable-agentic", action="store_true", help="Disable agentic post-check in verifier for stability.")
     parser.add_argument("--run-quality-audit", action="store_true")
     parser.add_argument("--require-quality-pass", action="store_true")
@@ -70,9 +71,9 @@ def main() -> None:
         error_dataset = _resolve_existing_dataset(outdir, error_dataset, "error_eval_dataset_*.json", "Error-level")
         question_dataset = _resolve_existing_dataset(outdir, question_dataset, "question_eval_dataset_*.json", "Question-level")
 
-    error_results = outdir / "error_top_down_results.json"
+    error_results = outdir / "error_verifier_results.json"
     error_audit = outdir / "error_symbolic_audit.json"
-    question_results = outdir / "question_top_down_results.json"
+    question_results = outdir / "question_verifier_results.json"
     question_audit = outdir / "question_symbolic_audit.json"
     error_metrics_output = outdir / "error_metrics.json"
     question_metrics_output = outdir / "question_metrics.json"
@@ -115,23 +116,24 @@ def main() -> None:
                 raise SystemExit(f"Quality gate failed: {quality.get('quality_gate_issues')}")
 
     if not args.skip_run:
+        catalog_flag = f"--unified-catalog {shlex.quote(args.unified_catalog)}" if args.unified_catalog else ""
         _run(
-            f"{py} scripts/run_top_down.py "
+            f"{py} scripts/run_verifier.py "
             f"--input {shlex.quote(str(error_dataset))} "
             f"--output {shlex.quote(str(error_results))} "
             f"--symbolic-output {shlex.quote(str(error_audit))} "
             f"--model {shlex.quote(args.check_model)} "
-            + ("--no-agentic " if args.disable_agentic else "") +
-            f"--unified-catalog catalogs/rules_unified.json"
+            + ("--no-agentic " if args.disable_agentic else "")
+            + (catalog_flag + " " if catalog_flag else "")
         )
         _run(
-            f"{py} scripts/run_top_down.py "
+            f"{py} scripts/run_verifier.py "
             f"--input {shlex.quote(str(question_dataset))} "
             f"--output {shlex.quote(str(question_results))} "
             f"--symbolic-output {shlex.quote(str(question_audit))} "
             f"--model {shlex.quote(args.check_model)} "
-            + ("--no-agentic " if args.disable_agentic else "") +
-            f"--unified-catalog catalogs/rules_unified.json"
+            + ("--no-agentic " if args.disable_agentic else "")
+            + (catalog_flag + " " if catalog_flag else "")
         )
     if not args.skip_error_eval:
         _run(
@@ -153,12 +155,12 @@ def main() -> None:
         )
 
     print("Done.")
-    print(f"Error dataset: {error_dataset}")
-    print(f"Error checker output: {error_results}")
-    print(f"Error metrics: {error_metrics_output}")
-    print(f"Question dataset: {question_dataset}")
-    print(f"Question checker output: {question_results}")
-    print(f"Question metrics: {question_metrics_output}")
+    print(f"  Error dataset:          {error_dataset}")
+    print(f"  Error verifier output:  {error_results}")
+    print(f"  Error metrics:          {error_metrics_output}")
+    print(f"  Question dataset:       {question_dataset}")
+    print(f"  Question verifier out:  {question_results}")
+    print(f"  Question metrics:       {question_metrics_output}")
     if args.run_quality_audit:
         print(f"Quality audit: {quality_output}")
 

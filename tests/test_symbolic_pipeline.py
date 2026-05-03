@@ -5,13 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-class SymbolicPipelineTests(unittest.TestCase):
-    def test_pipeline_placeholder(self) -> None:
-        # Keep a lightweight pipeline-level smoke placeholder in this module.
-        # Runtime behavior is covered by PhysicsRuleVerifier + ExperienceCodeEngine tests.
-        self.assertTrue(True)
-
-
 class UnifiedCatalogTests(unittest.TestCase):
     def test_unified_catalog_loads_both_sources(self) -> None:
         """Verify that a unified catalog file loads both knowledge and experience rules."""

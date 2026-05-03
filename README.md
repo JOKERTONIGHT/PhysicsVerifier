@@ -1,242 +1,191 @@
 # PhysicsVerifier
 
-## 重要更新（2026-03-31）
+物理竞赛题模型回答规则检查框架。对给定题目和模型作答，逐条匹配规则并调用 LLM 进行语义检查，可选用经验代码执行确定性符号核查。
 
-当前主流程已切换为**经验代码唯一路径**：
+> 详细结构说明见 [`docs/整体结构.md`](docs/整体结构.md)；快速参考见 [`docs/概览.md`](docs/概览.md)。
 
-- 已在运行链路中彻底移除 `primitive+spec` 符号检查分支；
-- 不再进行 agentic symbolic spec 生成与 fallback；
-- 仅保留 `rule_id -> experience code` 的确定性符号校验（由 `symbolic/experience_code_engine.py` 执行）；
-- 对缺失代码绑定的规则采用严格抑制，避免旧路径回退。
+---
 
-> 说明：下方历史章节中关于 `symbolic/spec_synthesis.py`、`symbolic_catalog`、`primitive` 的描述为迁移过程记录，非当前默认执行路径。后续会进一步清理冗余条目。
+## 目录结构
 
-PhysicsVerifier 是一个面向物理解题诊断的混合框架，核心目标是把：
-- 自顶向下规则检查（Top-Down SRD）
-- 自底向上符号核查（Bottom-Up Symbolic）
+```text
+.
+├── core/
+│   ├── physics_rule_verifier.py    # 主检查流程（匹配→语义→符号→合并）
+│   ├── semantic_rule_checker.py    # LLM + SRD 语义规则检查引擎
+│   └── rule_catalog_retrieval.py   # 层次化目录上的主题/规则检索与打分
+├── rule_framework/
+│   ├── builder.py                  # 从经验规则集合从头构建层次化规则库
+│   ├── maintenance.py              # 增量添加/删除/重聚类/符号绑定
+│   ├── validation.py               # 规则库结构校验
+│   ├── normalization.py            # 规范化与关键词提取工具
+│   ├── models.py                   # 数据模型（RulePath、BuildConfig 等）
+│   └── io.py                       # 统一 JSON 读写
+├── rules/
+│   ├── base.py                     # RuleContext、RuleRuntime、RulePlugin 接口
+│   ├── llm_rules.py                # LLM 规则插件定义
+│   ├── symbolic_checks.py          # 符号检查规格与执行器
+│   └── graph_consistency.py        # 图一致性规则
+├── symbolic/
+│   ├── experience_code_engine.py   # manifest → rule_id → Python 检查（主路径）
+│   ├── generated_experience_checks.py  # 自动生成的确定性检查函数（勿手动编辑）
+│   ├── symbolic_system.py          # SymPy LaTeX 解析与公式工具
+│   ├── match_utils.py              # 符号规范化与别名映射
+│   ├── symbolic_catalog.py         # 符号检查目录加载
+│   ├── spec_synthesis.py           # 规则文本 → 符号规格（辅助路径）
+│   └── experience_bank.py          # 经验沉淀与晋升（辅助路径）
+├── scripts/
+│   ├── run_verifier.py             # 主入口：批量运行 PhysicsRuleVerifier
+│   ├── manage_rule_library.py      # 规则库管理 CLI（build/add/remove/recluster/validate/bind-symbolic）
+│   ├── generate_experience_rules.py # 经验规则生成（语义蒸馏）
+│   ├── generate_symbolic_checks.py  # 经验规则 → 符号检查代码
+│   ├── analyze_rule_matching.py    # 离线规则匹配质量分析
+│   ├── build_physics_eval_sets.py  # 构建错误级/题目级测评集
+│   ├── run_physics_eval_pipeline.py # 端到端测评流水线
+│   ├── evaluate_physics_eval_sets.py  # 错误级指标计算
+│   ├── evaluate_question_level_sets.py # 题目级指标计算
+│   ├── compute_strict_eval_metrics.py  # 严格口径 P/R/F1
+│   ├── audit_eval_set_quality.py   # 测评集质量审计
+│   └── run_llm_checker_baseline.py # 纯 LLM 基线（对比实验用）
+├── tests/
+│   ├── test_rule_framework.py      # rule_framework 包单元测试
+│   ├── test_unified_rules_v2.py    # PhysicsRuleVerifier + 统一规则库集成测试
+│   ├── test_symbolic_pipeline.py   # 符号管道测试
+│   └── test_symbolic_rules.py      # ExperienceCodeEngine 回归测试
+├── catalogs/
+│   ├── rules_catalog_top_down.json # 知识规则骨架（领域→主题→规则）
+│   ├── symbolic_catalog.json       # 符号检查目录
+│   └── unified_rule_library_*.json # 构建产物：统一层次化规则库
+├── data/                           # 评测输入数据集
+├── docs/                           # 文档
+└── results/                        # 运行产物（结果、日志、审计）
+```
 
-做成可迭代、可审计、可经验沉淀的统一流程。
+---
 
-## 分阶段测试流程（2026-03-31 新增）
+## 快速上手
 
-为支持“从头重建规则库 + 规则规模曲线评测”，已补齐以下工具链（默认先做 100 条小测评）：
-
-- `scripts/prepare_error_expansion_samples.py`
-  - 从 `data/combined_language_only.json` 抽取 1000 条错题扩充源（evaluation 格式）。
-  - 已修复大对象边界下的流式解析卡顿风险，新增 `--chunk-size` 与 `--progress-every` 便于性能调优和进度观察。
-- `scripts/prepare_rubric_eval_subset.py`
-  - 从 `data/physics_rubric_data_1000.json` 采样 100 条小测评集，并生成严格口径 meta。
-- `scripts/prepare_scale_checkpoints.py`
-  - 按每 200 条扩充样本生成检查点（200/400/600/800/1000）。
-- `scripts/generate_scale_runbook.py`
-  - 自动输出完整命令清单：`docs/SCALE_EXPERIMENT_RUNBOOK.md` 和 `scripts/run_scale_checkpoints.sh`。
-- `scripts/compute_strict_eval_metrics.py`
-  - 基于 rubric 严格口径计算 precision/recall/F1 和 inconclusive 比例等指标。
-- `scripts/aggregate_scale_curve.py`
-  - 聚合各检查点指标为曲线数据（CSV/JSON）。
-- `scripts/plot_scale_curve.py`
-  - 将 `curve_metrics.csv` 渲染为可视化曲线图（PNG）。
-
-准备命令（仅生成数据与runbook，不执行测评）：
+### 运行规则检查
 
 ```bash
+./.venv/bin/python scripts/run_verifier.py \
+  --input data/evaluation_sample_30.json \
+  --output results/result.json \
+  --symbolic-output results/symbolic_audit.json \
+  --model qwen3-30b-a3b \
+  --unified-catalog catalogs/unified_rule_library_20260324.json
+```
+
+### 规则库管理
+
+```bash
+# 从经验规则集合从头构建层次化规则库
+./.venv/bin/python scripts/manage_rule_library.py build \
+  --experience results/semantic_experience_distilled_300.json \
+  --output catalogs/unified_rule_library.json
+
+# 增量添加新规则
+./.venv/bin/python scripts/manage_rule_library.py add \
+  --catalog catalogs/unified_rule_library.json \
+  --experience results/new_rules.json
+
+# 校验规则库结构
+./.venv/bin/python scripts/manage_rule_library.py validate \
+  --catalog catalogs/unified_rule_library.json
+```
+
+### 经验规则生成与符号代码翻译
+
+```bash
+# 语义蒸馏生成经验规则
+./.venv/bin/python scripts/generate_experience_rules.py \
+  --input data/evaluation_sample_300.json \
+  --output results/semantic_experience_distilled_300.json \
+  --model qwen3-30b-a3b
+
+# 翻译为可执行符号检查代码
+./.venv/bin/python scripts/generate_symbolic_checks.py \
+  --input results/semantic_experience_distilled_300.json \
+  --manifest results/experience_symbolic_program_manifest.json \
+  --output symbolic/generated_experience_checks.py \
+  --model qwen3-30b-a3b
+```
+
+### 测评流水线
+
+```bash
+# 构建测评集
+./.venv/bin/python scripts/build_physics_eval_sets.py \
+  --input data/physics_rubric_data_1000.json \
+  --recall-output data/evaluation_recall_20.json \
+  --precision-output data/evaluation_precision_20.json \
+  --recall-size 20 --precision-size 20 \
+  --model qwen3-30b-a3b
+
+# 端到端测评流水线
+./.venv/bin/python scripts/run_physics_eval_pipeline.py \
+  --recall-input data/evaluation_recall_20.json \
+  --precision-input data/evaluation_precision_20.json \
+  --output-dir results/eval_run \
+  --model qwen3-30b-a3b \
+  --unified-catalog catalogs/unified_rule_library_20260324.json
+
+# 严格口径指标计算
+./.venv/bin/python scripts/compute_strict_eval_metrics.py \
+  --predictions results/eval_run/error_verifier_results.json \
+  --audit results/eval_run/error_symbolic_audit.json \
+  --rubric-meta data/rubric_eval_100_meta.json \
+  --output results/eval_run/strict_metrics.json
+```
+
+### 规模曲线实验
+
+```bash
+# 准备分检查点数据
 ./.venv/bin/python scripts/prepare_error_expansion_samples.py \
   --input data/combined_language_only.json \
   --output data/evaluation_sample_1000_expansion.json \
-  --target-size 1000 \
-  --seed 20260331 \
-  --chunk-size 8388608 \
-  --progress-every 200000
-
-./.venv/bin/python scripts/prepare_rubric_eval_subset.py \
-  --input data/physics_rubric_data_1000.json \
-  --output-eval data/evaluation_rubric_100.json \
-  --output-meta data/rubric_eval_100_meta.json \
-  --size 100 \
-  --seed 20260331
+  --target-size 1000 --seed 20260331
 
 ./.venv/bin/python scripts/prepare_scale_checkpoints.py \
   --input data/evaluation_sample_1000_expansion.json \
-  --output-dir data/checkpoints \
-  --step 200 \
-  --max-size 1000 \
+  --output-dir data/checkpoints --step 200 \
   --manifest results/scale_curve/checkpoint_manifest.json
 
+    # 生成运行手册（内含各检查点的 generate_experience_rules / generate_symbolic_checks / run_verifier 命令）
 ./.venv/bin/python scripts/generate_scale_runbook.py \
   --manifest results/scale_curve/checkpoint_manifest.json \
   --output-md docs/SCALE_EXPERIMENT_RUNBOOK.md \
   --output-sh scripts/run_scale_checkpoints.sh \
   --model qwen3-30b-a3b
 
-# 5) （在各检查点评测完成后）聚合并绘图
+# 聚合结果并绘图
 ./.venv/bin/python scripts/aggregate_scale_curve.py \
   --metrics-glob 'results/scale_curve/ckpt_*/strict_metrics.json' \
-  --output-csv results/scale_curve/curve_metrics.csv \
-  --output-json results/scale_curve/curve_metrics.json
+  --output-csv results/scale_curve/curve_metrics.csv
 
 ./.venv/bin/python scripts/plot_scale_curve.py \
   --input-csv results/scale_curve/curve_metrics.csv \
   --output results/scale_curve/scale_curve.png
 ```
 
-> 说明：主流程保持经验代码唯一路径，runbook 中每个检查点均按该路径执行，不包含 primitive/spec fallback。
+---
 
-## 当前状态（已完成优化）
-
-### 0. 统一规则/符号框架（新增）
-- 已将 top-down 规则与 experience 规则统一到同一主题框架视图（`unified_rule_frame`）。
-
-- 每个样本在分类后会输出该主题下：top-down 规则数量/ID 与 experience 规则数量/ID。
-- 这使后续检查、审计与迭代都可以在统一结构上进行，减少规则分散管理。
-
-### 1. 符号检查覆盖增强
-- 扩展了符号关系抽取，支持不等式（`<`, `>`, `<=`, `>=`, `\leq`, `\geq`）进入公式图。
-- 新增原语：`inequality_consistency`，用于 `v < c` 这类安全边界检查。
-- 新增原语：`formula_pattern`，用于向量积分等难解析公式的保守文本模式校验（如 Faraday 积分形式）。
-- `equation_equivalence` 增加了解析失败时的 pattern fallback，降低 `canonical_unparseable` 造成的大规模 `inconclusive`。
-- `required_symbols` 从“硬性全匹配”升级为“覆盖率软门槛”（`required_symbol_min_ratio`），减少符号命名差异导致的误拒绝。
-- 新增统一符号匹配工具：`symbolic/match_utils.py`，集中处理规范化、别名映射与覆盖率计算。
-
-### 2. Top-Down 与 Bottom-Up 联动优化
-- 增加 `symbolic/spec_synthesis.py`：从 top-down 规则文本自动合成 deterministic symbolic specs。
-- 诊断后核查改为三层来源合并：
-  1. curated catalog (`catalogs/symbolic_catalog.json`)
-  2. promoted experience specs (`results/rule_experience_bank.json`)
-  3. rule text synthesized specs（本轮即时合成）
-- 只有在上述检查全部无效或仅 `inconclusive` 时，才触发 agentic 生成。
-- experience symbolic spec 默认注入软匹配阈值，优先走确定性检查，避免过多 fallback 分支。
-
-### 3. 错题经验沉淀机制
-
-- 增加 `symbolic/experience_bank.py`，将 agentic 提案先沉淀到经验池，避免直接污染 curated catalog。
-- 当同一 `(domain, topic, rule_id)` 的提案重复出现达到阈值后，可被自动晋升为可复用的 bottom-up spec。
-- 主流程已经接入 experience 记录，支持后续离线审查和人工回灌 catalog。
-
-### 4. 匹配安全性优化
-- `symbolic/symbolic_catalog.py` 的 `find_applicable` 增加 rule-id 对齐约束。
-- 有 `match_rule_ids` 的 spec 必须命中同 rule，减少跨 topic/跨规则漂移误匹配。
-- `SymbolicCatalog` 增加 topic 级索引与文件缓存（mtime 失效），优化检索性能和一致性。
-
-## 优化过程记录
-
-本轮优化步骤详见：
-- `docs/OPTIMIZATION_LOG.md`
-- `docs/FINAL_REPORT.md`
-- `docs/DIRECTORY_GUIDE.md`
-
-## 目录结构（更新后）
-
-```text
-.
-├── catalogs/
-│   ├── rules_catalog_top_down.json
-│   └── symbolic_catalog.json
-├── core/
-│   ├── physics_rule_verifier.py   # 主检查流程（匹配→语义→符号→合并）
-│   ├── semantic_rule_checker.py   # LLM+SRD 语义规则检查
-│   └── rule_catalog_retrieval.py  # 层次化目录上的主题/规则检索
-├── rule_framework/
-│   ├── builder.py                 # 规则库从头构建
-│   ├── maintenance.py             # 增量添加/删除/重聚类/符号绑定
-│   └── validation.py              # 规则库结构校验
-├── rules/
-│   ├── llm_rules.py
-│   └── base.py
-├── symbolic/
-│   ├── symbolic_system.py
-│   ├── experience_code_engine.py
-│   ├── generated_experience_checks.py
-│   ├── match_utils.py
-│   └── __init__.py
-├── scripts/
-│   ├── run_top_down.py
-│   ├── manage_rule_library.py
-│   ├── merge_rules.py
-│   └── analyze_symbolic_audit.py
-├── tests/
-│   ├── test_symbolic_pipeline.py
-│   └── test_symbolic_rules.py
-├── docs/
-│   ├── OPTIMIZATION_LOG.md
-│   ├── FINAL_REPORT.md
-│   └── DIRECTORY_GUIDE.md
-└── results/
-```
-
-## 运行与验证
-
-### 0. 本轮新增产物（2026-03-24）
-
-- 300样例经验输出：`results/semantic_experience_300_20260324.json`
-- 300样例经验蒸馏：`results/semantic_experience_distilled_300_20260324.json`
-- 新统一规则库：`catalogs/unified_rule_library_20260324.json`
-- 30样例评测结果：`results/top_down_results_experience_30_20260324_unified.json`
-- 30样例符号审计：`results/symbolic_audit_experience_30_20260324_unified.json`
-
-300样例蒸馏统计（本轮）：
-- total_distilled_rules: 529
-- topic_buckets: 84
-
-### 1. 批量评估
+## 测试
 
 ```bash
-uv run python scripts/run_top_down.py \
-  --input data/evaluation_sample_30.json \
-  --output results/final_result.json \
-  --symbolic-output results/symbolic_audit.json \
-  --model qwen3-30b-a3b
+./.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q
 ```
 
-使用新蒸馏库跑 sample_30：
+---
 
-```bash
-./.venv/bin/python scripts/run_top_down.py \
-  --input data/evaluation_sample_30.json \
-  --output results/top_down_results_experience_30_20260324_unified.json \
-  --symbolic-output results/symbolic_audit_experience_30_20260324_unified.json \
-  --model qwen3-30b-a3b \
-  --experience \
-  --experience-rules results/semantic_experience_distilled_300_20260324.json
-```
+## 符号检查路径说明
 
-### 2. 分析脚本
+当前主路径为**经验代码确定性检查**：每条经验规则经 `generate_symbolic_checks.py` 翻译为 Python 函数，写入 `symbolic/generated_experience_checks.py`，在运行时由 `ExperienceCodeEngine`（`symbolic/experience_code_engine.py`）按 `rule_id` 查找并执行。
 
-```bash
-python scripts/analyze_symbolic_catalog.py --catalog catalogs/symbolic_catalog.json --outdir results/symbolic_catalog_analysis_after
-python scripts/analyze_symbolic_audit.py --audit results/symbolic_audit_100.json --outdir results/symbolic_audit_100_analysis
-```
+`symbolic/spec_synthesis.py` 和 `symbolic/experience_bank.py` 为辅助路径，保留代码稳定性，非默认执行路径。
 
-构建统一规则库：
-
-```bash
-./.venv/bin/python scripts/build_unified_rule_library.py \
-  --experience-distilled results/semantic_experience_distilled_300_20260324.json \
-  --output catalogs/unified_rule_library_20260324.json
-```
-
-### 3. 测试
-
-当前新增回归测试可直接运行：
-
-```bash
-python -m unittest tests.test_symbolic_pipeline
-```
-
-推荐补充回归：
-
-```bash
-python -m unittest tests.test_symbolic_rules
-```
-
-建议在项目虚拟环境中执行完整回归：
-
-```bash
-./.venv/bin/python -m unittest tests.test_symbolic_pipeline tests.test_symbolic_rules
-```
-
-最近一次回归结果（2026-03-24）：
-- Ran 7 tests in 0.665s
-- OK
+---
 
 ## 许可证
 

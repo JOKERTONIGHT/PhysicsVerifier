@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 from core.physics_rule_verifier import PhysicsRuleVerifier
-from scripts.analyze_unified_matching import analyze_matching
-from scripts.merge_rules import (
+from scripts.analyze_rule_matching import analyze_matching
+from rule_framework.builder import (
     CLUSTER_BUCKET_THRESHOLD,
     CLUSTER_TOPIC_THRESHOLD,
     build_unified_catalog,

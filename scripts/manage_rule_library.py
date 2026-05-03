@@ -12,6 +12,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from rule_framework.builder import build_unified_catalog  # noqa: E402
 from rule_framework.io import load_json, write_json  # noqa: E402
+from rule_framework.llm_enhancer import enhance_catalog  # noqa: E402
 from rule_framework.maintenance import add_experience_rules, attach_symbolic_bindings, recluster_catalog, remove_rules  # noqa: E402
 from rule_framework.validation import validate_catalog  # noqa: E402
 
@@ -70,6 +71,22 @@ def main() -> None:
     validate.add_argument("--catalog", type=str, required=True)
     validate.add_argument("--output", "-o", type=str, default="")
 
+    enhance = sub.add_parser(
+        "enhance",
+        help="Add LLM-generated retrieval signals (match_phrases, discriminative_terms, semantic clusters).",
+    )
+    enhance.add_argument("--catalog", type=str, required=True, help="Input unified v2 catalog.")
+    enhance.add_argument("--output", "-o", type=str, required=True, help="Output path for enhanced catalog.")
+    enhance.add_argument("--model", type=str, default="qwen3-30b-a3b-instruct-2507")
+    enhance.add_argument("--no-rule-hints", action="store_true", help="Skip per-rule LLM hint generation.")
+    enhance.add_argument("--no-topic-hints", action="store_true", help="Skip per-topic LLM hint generation.")
+    enhance.add_argument("--no-semantic-clusters", action="store_true", help="Skip LLM semantic clustering.")
+    enhance.add_argument("--cluster-min-rules", type=int, default=4,
+                         help="Minimum rules per topic to trigger semantic clustering.")
+    enhance.add_argument("--rule-batch-size", type=int, default=6,
+                         help="Number of rules to process per LLM call (default 6).")
+    enhance.add_argument("--sleep", type=float, default=0.0, help="Seconds to sleep between LLM calls.")
+
     args = parser.parse_args()
 
     if args.command == "build":
@@ -122,6 +139,24 @@ def main() -> None:
         _write_result(args.output, result)
         if not result["ok"]:
             raise SystemExit(1)
+        return
+
+    if args.command == "enhance":
+        catalog = load_json(args.catalog)
+        catalog = enhance_catalog(
+            catalog,
+            model=args.model,
+            do_rule_hints=not args.no_rule_hints,
+            do_topic_hints=not args.no_topic_hints,
+            do_semantic_clusters=not args.no_semantic_clusters,
+            cluster_min_rules=args.cluster_min_rules,
+            rule_batch_size=args.rule_batch_size,
+            sleep_between_calls=args.sleep,
+            verbose=True,
+        )
+        write_json(args.output, catalog)
+        print(f"Enhanced catalog written to: {args.output}")
+        return
 
 
 if __name__ == "__main__":

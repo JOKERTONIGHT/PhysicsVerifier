@@ -63,8 +63,8 @@ def _build_audit_index(audit_items: List[Dict[str, Any]]) -> Dict[str, Dict[str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compute strict rubric-based metrics for verifier outputs.")
-    parser.add_argument("--predictions", type=str, required=True, help="Path to scripts/run_top_down.py main output JSON.")
-    parser.add_argument("--audit", type=str, required=True, help="Path to scripts/run_top_down.py symbolic audit JSON.")
+    parser.add_argument("--predictions", type=str, required=True, help="Path to scripts/run_verifier.py main output JSON.")
+    parser.add_argument("--audit", type=str, required=True, help="Path to scripts/run_verifier.py symbolic audit JSON.")
     parser.add_argument("--rubric-meta", type=str, required=True, help="Path to rubric meta JSON from prepare_rubric_eval_subset.py.")
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--checkpoint-size", type=int, default=0)
@@ -178,7 +178,7 @@ def main() -> None:
         },
         "assumptions": {
             "strict_gt_definition": "ground_truth_normalized 与 prediction_normalized 全等时视为正确，否则视为错误",
-            "pred_positive_definition": "run_top_down.py（PhysicsRuleVerifier）输出中 diagnostics 非空",
+            "pred_positive_definition": "run_verifier.py（PhysicsRuleVerifier）输出中 diagnostics 非空",
         },
         "confusion": conf,
         "metrics": metric,
