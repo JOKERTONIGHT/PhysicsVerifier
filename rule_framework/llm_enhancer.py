@@ -147,6 +147,73 @@ def _llm_json(
     return {}
 
 
+def _default_precision_metadata(rule: Dict[str, Any]) -> Dict[str, Any]:
+    """Build conservative precision metadata when LLM output is absent or partial."""
+    features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
+    required_symbols = [norm_text(x) for x in (features.get("required_symbols") or []) if norm_text(x)]
+    trigger_keywords = [norm_text(x) for x in (features.get("trigger_keywords") or []) if norm_text(x)]
+    object_keywords = [norm_text(x) for x in (features.get("object_keywords") or []) if norm_text(x)]
+    symbolic_hint = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+    symbolic_policy = "suppress_on_inconclusive" if symbolic_hint.get("primitive") not in {"", None, "none"} else "suppress_on_pass"
+    profile = "balanced" if norm_text(rule.get("scope") or "") == "meta" else "strict"
+    return {
+        "precision_profile": profile,
+        "publishable": True,
+        "preconditions": ordered_unique(trigger_keywords[:3] + object_keywords[:2]),
+        "violation_signatures": ordered_unique(required_symbols[:3] + trigger_keywords[:2]),
+        "negative_conditions": [
+            "intermediate value later corrected",
+            "rule not required by the problem",
+            "equivalent formulation",
+        ],
+        "evidence_requirements": ordered_unique(required_symbols[:3] + trigger_keywords[:2]),
+        "symbolic_policy": symbolic_policy,
+    }
+
+
+def _clean_precision_metadata(raw: Any, rule: Dict[str, Any]) -> Dict[str, Any]:
+    base = _default_precision_metadata(rule)
+    if not isinstance(raw, dict):
+        return base
+
+    profile = norm_text(raw.get("precision_profile") or raw.get("profile") or base["precision_profile"]).lower()
+    if profile not in {"strict", "balanced", "recall"}:
+        profile = base["precision_profile"]
+    symbolic_policy = norm_text(raw.get("symbolic_policy") or base["symbolic_policy"]).lower()
+    if symbolic_policy not in {"suppress_on_pass", "suppress_on_inconclusive", "require_fail"}:
+        symbolic_policy = base["symbolic_policy"]
+    publishable_raw = raw.get("publishable", base["publishable"])
+    if isinstance(publishable_raw, str):
+        publishable = publishable_raw.strip().lower() not in {"0", "false", "no", "off"}
+    else:
+        publishable = bool(publishable_raw)
+
+    def _items(key: str, limit: int) -> List[str]:
+        values = [norm_text(x) for x in (raw.get(key) or []) if norm_text(x)]
+        return ordered_unique(values)[:limit] or list(base[key])
+
+    return {
+        "precision_profile": profile,
+        "publishable": publishable,
+        "preconditions": _items("preconditions", 6),
+        "violation_signatures": _items("violation_signatures", 6),
+        "negative_conditions": _items("negative_conditions", 6),
+        "evidence_requirements": _items("evidence_requirements", 6),
+        "symbolic_policy": symbolic_policy,
+    }
+
+
+def _attach_precision_metadata(rule: Dict[str, Any], raw: Any = None) -> None:
+    metadata = _clean_precision_metadata(raw, rule)
+    rule["precision_profile"] = metadata["precision_profile"]
+    rule["publishable"] = metadata["publishable"]
+    rule["preconditions"] = metadata["preconditions"]
+    rule["violation_signatures"] = metadata["violation_signatures"]
+    rule["negative_conditions"] = metadata["negative_conditions"]
+    rule["evidence_requirements"] = metadata["evidence_requirements"]
+    rule["symbolic_policy"] = metadata["symbolic_policy"]
+
+
 # ── Per-rule LLM hint generation ───────────────────────────────────────────────
 
 _RULE_HINT_SYSTEM = (
@@ -175,13 +242,30 @@ this rule.  Return JSON exactly:
     "term 3",
     "term 4",
     "term 5"
-  ]
+  ],
+  "precision_profile": "strict",
+  "preconditions": [
+    "specific condition that must be present before this rule applies"
+  ],
+  "violation_signatures": [
+    "direct formula, unit, value-range, or reasoning pattern proving violation"
+  ],
+  "negative_conditions": [
+    "context where this rule must NOT trigger"
+  ],
+  "evidence_requirements": [
+    "tokens or phrases that must appear in the quoted evidence"
+  ],
+  "symbolic_policy": "suppress_on_pass"
 }}
 
 Constraints:
 - match_phrases must read like real student solution text, not rule descriptions.
 - discriminative_terms must be physics-specific and distinguish this rule from similar rules.
   Bad: "energy", "force", "equation".  Good: "Carnot efficiency", "reduced mass", "gyroscopic precession".
+- precision_profile must be "strict" unless the rule is inherently broad; never use "recall" for final-answer checks.
+- preconditions and violation_signatures must be concrete, not generic descriptions.
+- symbolic_policy is one of "suppress_on_pass", "suppress_on_inconclusive", or "require_fail".
 - Respond ONLY with the JSON object."""
 
 
@@ -225,6 +309,7 @@ def _enhance_rule_leaf(
         "match_phrases": ordered_unique(phrases)[:5],
         "discriminative_terms": ordered_unique(terms)[:8],
     }
+    _attach_precision_metadata(patched, result)
     return patched
 
 
@@ -255,7 +340,13 @@ Return JSON exactly — a list with one entry per rule in the SAME ORDER:
       "specific term 1 (1-4 words, highly specific to this rule)",
       "term 2",
       "term 3"
-    ]
+    ],
+    "precision_profile": "strict",
+    "preconditions": ["concrete applicability condition"],
+    "violation_signatures": ["direct evidence pattern for the violation"],
+    "negative_conditions": ["context where the rule must not trigger"],
+    "evidence_requirements": ["required token or phrase in quoted evidence"],
+    "symbolic_policy": "suppress_on_pass"
   }},
   ...
 ]
@@ -264,6 +355,8 @@ Constraints:
 - match_phrases must read like real student solution text.
 - discriminative_terms must be physics-specific (e.g. "reduced mass", "Carnot efficiency").
   Avoid generic: "energy", "force", "equation".
+- precision fields are used as final-publication gates. Make them conservative and concrete.
+- symbolic_policy is one of "suppress_on_pass", "suppress_on_inconclusive", or "require_fail".
 - Return exactly {n} entries in the same order as the input rules.
 - Respond ONLY with the JSON array."""
 
@@ -325,6 +418,7 @@ def _enhance_rules_batch(
             "match_phrases": ordered_unique(phrases)[:5],
             "discriminative_terms": ordered_unique(terms)[:6],
         }
+        _attach_precision_metadata(rule, entry)
 
 
 # ── Per-topic LLM hint generation ──────────────────────────────────────────────
@@ -555,6 +649,7 @@ def enhance_catalog(
     cluster_min_rules: int = 4,
     rule_batch_size: int = 6,
     sleep_between_calls: float = 0.0,
+    refresh_existing: bool = False,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Add LLM-generated retrieval signals in-place and return the catalog.
@@ -576,6 +671,8 @@ def enhance_catalog(
 
     enhanced_topics = 0
     enhanced_rules = 0
+    skipped_rule_hints = 0
+    skipped_topic_hints = 0
     failed_calls = 0
 
     for domain_obj in catalog.get("domains", []) or []:
@@ -591,22 +688,33 @@ def enhance_catalog(
 
             # ── Phase 1: topic retrieval hints ─────────────────────────────────
             if do_topic_hints:
-                try:
-                    _enhance_topic_hints(
-                        topic_entry,
-                        domain=domain_name,
-                        client=client,
-                        model=model,
-                        sleep_sec=sleep_between_calls,
-                    )
-                except Exception as exc:
-                    failed_calls += 1
-                    if verbose:
-                        print(f"    [WARN] topic hint: {exc}")
+                hints = topic_entry.get("retrieval_hints") if isinstance(topic_entry.get("retrieval_hints"), dict) else {}
+                has_topic_hints = bool(
+                    hints.get("llm_problem_phrases") and hints.get("llm_discriminative_terms")
+                )
+                if has_topic_hints and not refresh_existing:
+                    skipped_topic_hints += 1
+                else:
+                    try:
+                        _enhance_topic_hints(
+                            topic_entry,
+                            domain=domain_name,
+                            client=client,
+                            model=model,
+                            sleep_sec=sleep_between_calls,
+                        )
+                    except Exception as exc:
+                        failed_calls += 1
+                        if verbose:
+                            print(f"    [WARN] topic hint: {exc}")
 
             # ── Phase 2: batched per-rule hints ────────────────────────────────
             if do_rule_hints:
-                rule_list = topic_entry.get("rules") or []
+                rule_list = [
+                    rule for rule in (topic_entry.get("rules") or [])
+                    if refresh_existing or not isinstance(rule.get("llm_hints"), dict)
+                ]
+                skipped_rule_hints += max(0, len(topic_entry.get("rules") or []) - len(rule_list))
                 batch_size = max(1, int(rule_batch_size))
                 for batch_start in range(0, len(rule_list), batch_size):
                     batch = rule_list[batch_start: batch_start + batch_size]
@@ -641,6 +749,10 @@ def enhance_catalog(
                     if verbose:
                         print(f"    [WARN] cluster enhancement: {exc}")
 
+            for rule in rules:
+                if not rule.get("preconditions") or not rule.get("violation_signatures"):
+                    _attach_precision_metadata(rule, rule)
+
             enhanced_topics += 1
 
     meta = catalog.setdefault("metadata", {})
@@ -651,11 +763,65 @@ def enhance_catalog(
         "topic_hints": do_topic_hints,
         "semantic_clusters": do_semantic_clusters,
     }
+    meta["llm_enhance_refresh_existing"] = bool(refresh_existing)
+    meta["llm_enhance_coverage"] = summarize_enhancement_coverage(catalog)
+    meta["precision_schema"] = {
+        "fields": [
+            "precision_profile",
+            "publishable",
+            "preconditions",
+            "violation_signatures",
+            "negative_conditions",
+            "evidence_requirements",
+            "symbolic_policy",
+        ],
+        "default_mode": "strict",
+    }
 
     if verbose:
         print(
             f"\nEnhancement complete: {enhanced_topics} topics, "
-            f"{enhanced_rules} rules enhanced, {failed_calls} failed LLM calls."
+            f"{enhanced_rules} rules enhanced, "
+            f"{skipped_rule_hints} existing rule hints skipped, "
+            f"{skipped_topic_hints} existing topic hints skipped, "
+            f"{failed_calls} failed LLM calls."
         )
 
     return catalog
+
+
+def summarize_enhancement_coverage(catalog: Dict[str, Any]) -> Dict[str, int]:
+    """Return coarse coverage counts for LLM-generated catalog signals."""
+    topics_with_rules = 0
+    rules_total = 0
+    topics_with_llm_hints = 0
+    rules_with_llm_hints = 0
+    rules_with_precision_metadata = 0
+    topics_with_clusters = 0
+
+    for domain_obj in catalog.get("domains", []) or []:
+        for topic_entry in domain_obj.get("topics", []) or []:
+            rules = list(iter_rule_leaves(topic_entry))
+            if not rules:
+                continue
+            topics_with_rules += 1
+            rules_total += len(rules)
+            hints = topic_entry.get("retrieval_hints") if isinstance(topic_entry.get("retrieval_hints"), dict) else {}
+            if hints.get("llm_problem_phrases") or hints.get("llm_discriminative_terms"):
+                topics_with_llm_hints += 1
+            if topic_entry.get("clusters"):
+                topics_with_clusters += 1
+            for rule in rules:
+                if isinstance(rule.get("llm_hints"), dict):
+                    rules_with_llm_hints += 1
+                if rule.get("preconditions") and rule.get("violation_signatures"):
+                    rules_with_precision_metadata += 1
+
+    return {
+        "topics_with_rules": topics_with_rules,
+        "rules_total": rules_total,
+        "topics_with_llm_hints": topics_with_llm_hints,
+        "rules_with_llm_hints": rules_with_llm_hints,
+        "rules_with_precision_metadata": rules_with_precision_metadata,
+        "topics_with_clusters": topics_with_clusters,
+    }

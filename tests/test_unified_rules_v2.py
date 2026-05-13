@@ -48,6 +48,7 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
             "symbolic_hint",
             "support",
             "match_features",
+            "retrieval_text",
         }
         total_rules = 0
         for domain in self.catalog["domains"]:
@@ -67,7 +68,14 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
                     self.assertIn(rule["scope"], {"domain", "meta"})
                     self.assertEqual(
                         set(rule["match_features"].keys()),
-                        {"trigger_keywords", "object_keywords", "required_symbols", "primitive"},
+                        {
+                            "trigger_keywords",
+                            "object_keywords",
+                            "required_symbols",
+                            "primitive",
+                            "match_text_normalized",
+                            "negative_keywords",
+                        },
                     )
         self.assertEqual(total_rules, 514)
 
@@ -294,7 +302,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             "Electromagnetic Induction and Faraday's Law",
         )
 
-    def test_unmatched_distilled_topic_raises(self) -> None:
+    def test_unmatched_distilled_topic_collects_orphans(self) -> None:
         knowledge = {
             "domains": [
                 {
@@ -328,8 +336,11 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         }
         tagged = []
 
-        with self.assertRaises(ValueError):
-            build_unified_catalog_from_data(knowledge, distilled, tagged)
+        catalog = build_unified_catalog_from_data(knowledge, distilled, tagged)
+        meta = catalog["metadata"]
+        self.assertGreaterEqual(int(meta.get("distilled_orphan_count") or 0), 1)
+        orphans = meta.get("distilled_orphan_rules") or []
+        self.assertTrue(any(str(o.get("rule_id")) == "exp_bad" for o in orphans))
 
     def test_offline_matching_respects_top_k_and_top_n(self) -> None:
         catalog = {

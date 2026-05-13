@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from itertools import product
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.rule_catalog_retrieval import (
+    apply_topic_symbol_overlap_boost,
     build_signal_document_frequency,
     build_topic_candidates,
+    build_unified_topic_retrieval_text,
+    extract_prediction_symbol_set,
     norm_text,
     rule_topic_context,
     rule_sort_key,
@@ -32,6 +37,20 @@ def _load_json(path: Path) -> Any:
 def _dump_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def merge_retrieval_tuning_into_catalog(catalog: Dict[str, Any], tuning: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of `catalog` with `metadata.retrieval_tuning` merged with `tuning`."""
+    out = copy.deepcopy(catalog)
+    meta = out.get("metadata")
+    if not isinstance(meta, dict):
+        meta = {}
+        out["metadata"] = meta
+    base = meta.get("retrieval_tuning")
+    base_d = dict(base) if isinstance(base, dict) else {}
+    base_d.update(tuning)
+    meta["retrieval_tuning"] = base_d
+    return out
 
 
 def _norm_text(text: Any) -> str:
@@ -57,17 +76,27 @@ def retrieve_topics(
     sample: Dict[str, Any],
     *,
     top_k: int,
+    retrieval_tuning: Optional[Dict[str, Any]] = None,
+    legacy_topic_text: bool = False,
+    apply_symbol_boost: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    text_for_topic = "\n".join(
-        [
-            _norm_text(sample.get("question") or ""),
-            _norm_text(sample.get("context") or ""),
-        ]
-    )
+    tuning = retrieval_tuning or {}
+    if legacy_topic_text:
+        text_for_topic = "\n".join(
+            [
+                _norm_text(sample.get("question") or ""),
+                _norm_text(sample.get("context") or ""),
+            ]
+        )
+    else:
+        text_for_topic = build_unified_topic_retrieval_text(sample, tuning=tuning)
     scored = [
         score_topic_candidate(candidate, text_for_topic, signal_df=signal_df)
         for candidate in topic_candidates
     ]
+    pred_syms = extract_prediction_symbol_set(str(sample.get("prediction") or ""))
+    if apply_symbol_boost:
+        apply_topic_symbol_overlap_boost(scored, pred_syms, tuning=tuning)
     scored.sort(key=topic_sort_key)
     selected = scored[:top_k]
     trace = [
@@ -82,7 +111,13 @@ def retrieve_topics(
     return selected, trace
 
 
-def retrieve_rules(topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], *, top_n: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def retrieve_rules(
+    topic_matches: List[Dict[str, Any]],
+    sample: Dict[str, Any],
+    *,
+    top_n: int,
+    retrieval_tuning: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     text_for_rule = "\n".join(
         [
             _norm_text(sample.get("question") or ""),
@@ -110,6 +145,7 @@ def retrieve_rules(topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], 
                 scope=str(payload.get("scope") or "domain"),
                 rule_evidence=payload.get("evidence") or {},
                 topic_evidence=topic_match.get("evidence") or {},
+                retrieval_tuning=retrieval_tuning,
             )
             scored.append(
                 {
@@ -138,6 +174,68 @@ def retrieve_rules(topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], 
     return selected, trace
 
 
+def _effective_retrieval_tuning(
+    catalog: Dict[str, Any],
+    override: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    meta = catalog.get("metadata") if isinstance(catalog.get("metadata"), dict) else {}
+    base = meta.get("retrieval_tuning") if isinstance(meta.get("retrieval_tuning"), dict) else {}
+    out = dict(base)
+    if override:
+        out.update(override)
+    return out
+
+
+def tuning_objective(summary: Dict[str, Any]) -> float:
+    """Lower is better for offline sweep (heuristic composite)."""
+    return (
+        float(summary.get("rules_outside_top1_topic_ratio") or 0.0)
+        + 0.5 * float(summary.get("low_margin_cross_topic_ratio") or 0.0)
+        + 0.25 * float(summary.get("samples_with_generic_signal_rules_ratio") or 0.0)
+    )
+
+
+def sweep_retrieval_tuning_grid(
+    catalog: Dict[str, Any],
+    samples: List[Dict[str, Any]],
+    *,
+    top_topics: int,
+    top_rules: int,
+    annotation_limit: int,
+    legacy_topic_text: bool,
+    apply_topic_symbol_boost: bool,
+    retrieval_override: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Small grid over deltas + topic_include_prediction; returns (best_tuning, all_results)."""
+    deltas = [-0.5, 0.0, 0.5]
+    pred_flags = [True, False]
+    best: Optional[Dict[str, Any]] = None
+    best_obj = float("inf")
+    results: List[Dict[str, Any]] = []
+    for ms, bd, pred in product(deltas, deltas, pred_flags):
+        tuning = dict(_effective_retrieval_tuning(catalog, retrieval_override))
+        tuning["min_score_delta"] = ms
+        tuning["bonus_delta"] = bd
+        tuning["topic_include_prediction"] = pred
+        analysis = analyze_matching(
+            catalog,
+            samples,
+            top_topics=top_topics,
+            top_rules=top_rules,
+            annotation_limit=annotation_limit,
+            retrieval_tuning=tuning,
+            legacy_topic_text=legacy_topic_text,
+            apply_topic_symbol_boost=apply_topic_symbol_boost,
+        )
+        obj = tuning_objective(analysis["summary"])
+        results.append({"tuning": tuning, "objective": obj, "summary": analysis["summary"]})
+        if obj < best_obj:
+            best_obj = obj
+            best = tuning
+    assert best is not None
+    return best, results
+
+
 def analyze_matching(
     catalog: Dict[str, Any],
     samples: List[Dict[str, Any]],
@@ -145,9 +243,13 @@ def analyze_matching(
     top_topics: int = 3,
     top_rules: int = 6,
     annotation_limit: int = 50,
+    retrieval_tuning: Optional[Dict[str, Any]] = None,
+    legacy_topic_text: bool = False,
+    apply_topic_symbol_boost: bool = True,
 ) -> Dict[str, Any]:
     topic_candidates = build_topic_candidates(catalog)
     signal_df = build_signal_document_frequency(topic_candidates)
+    effective_tuning = _effective_retrieval_tuning(catalog, retrieval_tuning)
 
     per_sample: List[Dict[str, Any]] = []
     annotation_samples: List[Dict[str, Any]] = []
@@ -164,8 +266,18 @@ def analyze_matching(
     generic_signal_rule_samples = 0
 
     for sample in samples:
-        topic_matches, topic_trace = retrieve_topics(topic_candidates, signal_df, sample, top_k=top_topics)
-        rule_matches, rule_trace = retrieve_rules(topic_matches, sample, top_n=top_rules)
+        topic_matches, topic_trace = retrieve_topics(
+            topic_candidates,
+            signal_df,
+            sample,
+            top_k=top_topics,
+            retrieval_tuning=effective_tuning,
+            legacy_topic_text=legacy_topic_text,
+            apply_symbol_boost=apply_topic_symbol_boost,
+        )
+        rule_matches, rule_trace = retrieve_rules(
+            topic_matches, sample, top_n=top_rules, retrieval_tuning=effective_tuning
+        )
         positive_rule_trace_count = sum(1 for item in rule_trace if float(item.get("score") or 0.0) > 0)
         topic_top1_score = float(topic_matches[0]["score"]) if topic_matches else 0.0
         topic_top2_score = float(topic_matches[1]["score"]) if len(topic_matches) > 1 else 0.0
@@ -266,6 +378,9 @@ def analyze_matching(
         "top_topics": top_topics,
         "top_rules": top_rules,
         "annotation_limit": annotation_limit,
+        "legacy_topic_text": legacy_topic_text,
+        "apply_topic_symbol_boost": apply_topic_symbol_boost,
+        "retrieval_tuning_effective": effective_tuning,
         "average_candidate_rule_count": average,
         "p95_candidate_rule_count": _p95(candidate_counts),
         "max_candidate_rule_count": max(candidate_counts) if candidate_counts else 0,
@@ -295,6 +410,7 @@ def analyze_matching(
         if samples
         else 0.0,
     }
+    summary["tuning_objective"] = tuning_objective(summary)
     return {
         "summary": summary,
         "per_sample": per_sample,
@@ -310,6 +426,38 @@ def main() -> None:
     parser.add_argument("--top-topics", type=int, default=3)
     parser.add_argument("--top-rules", type=int, default=6)
     parser.add_argument("--annotation-limit", type=int, default=50)
+    parser.add_argument(
+        "--legacy-topic-text",
+        action="store_true",
+        help="Use only question+context for topic scoring (A/B vs default extended text).",
+    )
+    parser.add_argument(
+        "--no-topic-symbol-boost",
+        action="store_true",
+        help="Disable prediction-symbol overlap boost on topic scores.",
+    )
+    parser.add_argument(
+        "--tuning-json",
+        type=str,
+        default="",
+        help="Optional JSON file of retrieval_tuning overrides (merged on top of catalog metadata).",
+    )
+    parser.add_argument(
+        "--sweep-tuning",
+        action="store_true",
+        help="Grid-search min_score_delta, bonus_delta, topic_include_prediction; writes sweep_results + best_tuning.json",
+    )
+    parser.add_argument(
+        "--export-catalog-with-tuning",
+        type=str,
+        default="",
+        help="If set with --sweep-tuning, write catalog copy with best tuning embedded to this path.",
+    )
+    parser.add_argument(
+        "--ab-compare-topic-text",
+        action="store_true",
+        help="Run legacy vs extended topic text and write topic_text_ab.json with both summaries.",
+    )
     args = parser.parse_args()
 
     catalog = _load_json(Path(args.catalog))
@@ -317,15 +465,85 @@ def main() -> None:
     if not isinstance(samples, list):
         raise SystemExit("Input samples must be a JSON list.")
 
+    tuning_override: Optional[Dict[str, Any]] = None
+    if str(args.tuning_json or "").strip():
+        p = Path(args.tuning_json)
+        if not p.exists():
+            raise SystemExit(f"--tuning-json not found: {p}")
+        raw = _load_json(p)
+        if not isinstance(raw, dict):
+            raise SystemExit("--tuning-json must be a JSON object")
+        tuning_override = raw
+
+    outdir = Path(args.outdir)
+    top_topics = max(1, int(args.top_topics))
+    top_rules = max(1, int(args.top_rules))
+    ann = max(1, int(args.annotation_limit))
+    use_legacy = bool(args.legacy_topic_text)
+    use_symbol_boost = not bool(args.no_topic_symbol_boost)
+
+    if args.sweep_tuning:
+        best, grid = sweep_retrieval_tuning_grid(
+            catalog,
+            samples,
+            top_topics=top_topics,
+            top_rules=top_rules,
+            annotation_limit=ann,
+            legacy_topic_text=use_legacy,
+            apply_topic_symbol_boost=use_symbol_boost,
+            retrieval_override=tuning_override,
+        )
+        outdir.mkdir(parents=True, exist_ok=True)
+        _dump_json(outdir / "sweep_results.json", {"best_tuning": best, "grid": grid})
+        _dump_json(outdir / "best_tuning.json", best)
+        if str(args.export_catalog_with_tuning or "").strip():
+            merged = merge_retrieval_tuning_into_catalog(catalog, best)
+            _dump_json(Path(args.export_catalog_with_tuning), merged)
+        print(f"[ok] sweep: best_tuning -> {outdir / 'best_tuning.json'}")
+
+    if args.ab_compare_topic_text:
+        ext = analyze_matching(
+            catalog,
+            samples,
+            top_topics=top_topics,
+            top_rules=top_rules,
+            annotation_limit=ann,
+            retrieval_tuning=tuning_override,
+            legacy_topic_text=False,
+            apply_topic_symbol_boost=use_symbol_boost,
+        )
+        leg = analyze_matching(
+            catalog,
+            samples,
+            top_topics=top_topics,
+            top_rules=top_rules,
+            annotation_limit=ann,
+            retrieval_tuning=tuning_override,
+            legacy_topic_text=True,
+            apply_topic_symbol_boost=use_symbol_boost,
+        )
+        outdir.mkdir(parents=True, exist_ok=True)
+        _dump_json(
+            outdir / "topic_text_ab.json",
+            {
+                "extended_topic_text_summary": ext["summary"],
+                "legacy_topic_text_summary": leg["summary"],
+            },
+        )
+        print(f"[ok] wrote: {outdir / 'topic_text_ab.json'}")
+
     analysis = analyze_matching(
         catalog,
         samples,
-        top_topics=max(1, int(args.top_topics)),
-        top_rules=max(1, int(args.top_rules)),
-        annotation_limit=max(1, int(args.annotation_limit)),
+        top_topics=top_topics,
+        top_rules=top_rules,
+        annotation_limit=ann,
+        retrieval_tuning=tuning_override,
+        legacy_topic_text=use_legacy,
+        apply_topic_symbol_boost=use_symbol_boost,
     )
 
-    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
     _dump_json(outdir / "summary.json", analysis["summary"])
     _dump_json(outdir / "per_sample.json", analysis["per_sample"])
     _dump_json(outdir / "annotation_samples.json", analysis["annotation_samples"])

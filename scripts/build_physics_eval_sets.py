@@ -5,8 +5,24 @@ import json
 import random
 import re
 import time
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _load_dotenv(path: Path = Path(".env")) -> None:
+    """Load simple KEY=VALUE pairs from .env without overriding existing env."""
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -93,6 +109,8 @@ def _parse_prediction_answers(item: Dict[str, Any]) -> List[str]:
 
 
 def _strict_is_correct(item: Dict[str, Any]) -> bool:
+    if item.get("source_reward_acc") is True:
+        return True
     gt_raw = _parse_ground_truth_labels(item)
     pred_raw = _parse_prediction_answers(item)
     gt_norm = _normalize_list(gt_raw)
@@ -103,6 +121,8 @@ def _strict_is_correct(item: Dict[str, Any]) -> bool:
 
 
 def _relaxed_is_correct(item: Dict[str, Any]) -> bool:
+    if item.get("source_reward_acc") is True:
+        return True
     gt_raw = _parse_ground_truth_labels(item)
     pred_text = str(item.get("model_response") or item.get("prediction") or "")
     pred_raw = _parse_prediction_answers(item)
@@ -978,6 +998,7 @@ def _build_question_eval_item(row: Dict[str, Any], expected_has_physics_error: b
 
 
 def main() -> None:
+    _load_dotenv()
     parser = argparse.ArgumentParser(description="Build error-level and question-level physics evaluation sets.")
     parser.add_argument("--input", type=str, default="data/physics_rubric_data_1000.json", help="Legacy shared input path (kept for compatibility).")
     parser.add_argument("--recall-input", type=str, default="data/evaluation_sample_1000_expansion.json")
@@ -993,6 +1014,12 @@ def main() -> None:
         help="Deprecated compatibility output. Prefer --question-output for question-level dataset.",
     )
     parser.add_argument("--recall-size", type=int, default=20)
+    parser.add_argument(
+        "--question-recall-size",
+        type=int,
+        default=-1,
+        help="Number of positive/error rows to include in question-level dataset. -1 means use all collected recall rows.",
+    )
     parser.add_argument("--precision-size", type=int, default=20)
     parser.add_argument("--skip-recall", action="store_true")
     parser.add_argument("--skip-precision", action="store_true")
@@ -1052,7 +1079,13 @@ def main() -> None:
     recall_take = min(args.recall_size, len(recall_data))
     precision_take = min(args.precision_size, len(relaxed_correct_pool))
 
-    recall_candidates = list(recall_data)
+    recall_candidates = [
+        row
+        for row in recall_data
+        if not (isinstance(row, dict) and row.get("source_reward_acc") is True)
+    ]
+    if not recall_candidates:
+        recall_candidates = list(recall_data)
     rng.shuffle(recall_candidates)
     if args.max_recall_scan > 0:
         recall_candidates = recall_candidates[: min(len(recall_candidates), int(args.max_recall_scan))]
@@ -1164,8 +1197,13 @@ def main() -> None:
     if not args.skip_precision:
         precision_path.write_text(json.dumps(precision_out, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    question_positive_limit = int(args.question_recall_size)
+    question_recall_rows = recall_out
+    if question_positive_limit >= 0:
+        question_recall_rows = recall_out[: min(question_positive_limit, len(recall_out))]
+
     question_out: List[Dict[str, Any]] = []
-    for x in recall_out:
+    for x in question_recall_rows:
         if isinstance(x, dict):
             question_out.append(_build_question_eval_item(x, expected_has_physics_error=True, split="wrong"))
     for x in precision_out:
@@ -1206,6 +1244,8 @@ def main() -> None:
         "recall_target_size": recall_take if not args.skip_recall else 0,
         "recall_collected_size": len(recall_out) if not args.skip_recall else 0,
         "recall_shortfall": (recall_take - len(recall_out)) if not args.skip_recall else 0,
+        "question_recall_size": len(question_recall_rows),
+        "question_recall_target_size": question_positive_limit if question_positive_limit >= 0 else None,
         "recall_candidates_scanned": recall_candidates_scanned,
         "recall_rejected_invalid_location": recall_rejected_invalid_location,
         "recall_rejected_no_errors": recall_rejected_no_errors,

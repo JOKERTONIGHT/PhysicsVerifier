@@ -43,6 +43,23 @@ def validate_catalog(catalog: Dict[str, Any]) -> ValidationResult:
                     warnings.append(f"{rid}: missing support object")
                 if not isinstance(rule.get("symbolic_hint"), dict):
                     warnings.append(f"{rid}: missing symbolic_hint object")
+                profile = str(rule.get("precision_profile") or "").strip().lower()
+                if profile and profile not in {"strict", "balanced", "recall"}:
+                    warnings.append(f"{rid}: invalid precision_profile {profile!r}")
+                if not rule.get("preconditions"):
+                    warnings.append(f"{rid}: missing precision preconditions")
+                if not rule.get("violation_signatures"):
+                    warnings.append(f"{rid}: missing precision violation_signatures")
+                if not rule.get("evidence_requirements"):
+                    warnings.append(f"{rid}: missing precision evidence_requirements")
+                policy = str(rule.get("symbolic_policy") or "").strip().lower()
+                if policy and policy not in {"suppress_on_pass", "suppress_on_inconclusive", "require_fail"}:
+                    warnings.append(f"{rid}: invalid symbolic_policy {policy!r}")
+                features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
+                genericish = set(str(x).strip().lower() for x in (features.get("trigger_keywords") or []))
+                genericish.update(str(x).strip().lower() for x in (features.get("object_keywords") or []))
+                if genericish and genericish.issubset({"energy", "force", "equation", "formula", "calculation", "result"}):
+                    warnings.append(f"{rid}: only generic match signals; mark publishable=false or add precision metadata")
 
             cluster_rule_ids = set()
             for cluster in topic.get("clusters") or []:

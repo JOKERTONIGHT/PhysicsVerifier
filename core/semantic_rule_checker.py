@@ -21,6 +21,8 @@ import os
 import tempfile
 import datetime
 import importlib
+import urllib.error
+import urllib.request
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -118,6 +120,29 @@ _BUILTIN_RULES_MAP = {
     "function_domain_guard": "rules.llm_rules:FunctionDomainRule",
 }
 
+
+def _load_env_file_fallback() -> None:
+    """Load simple KEY=VALUE pairs from .env when python-dotenv is unavailable."""
+    if load_dotenv:
+        load_dotenv()
+        return
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            value = value.strip().strip('"').strip("'")
+            os.environ[key] = value
+    except Exception:
+        return
+
 def _load_rule_class(spec: str):
     module_name, class_name = None, None
     if ":" in spec:
@@ -137,6 +162,30 @@ def _load_rule_class(spec: str):
 
 # ------------------------- 主检查器实现 (重构) -------------------------
 class SemanticRuleChecker:
+    _NEGATIVE_DIAGNOSTIC_PATTERNS = (
+        r"\bno violation\b",
+        r"\bnot triggered\b",
+        r"\bnot trigger(?:ed|ing)?\b",
+        r"\btrigger condition (?:is )?not met\b",
+        r"\bcondition (?:is )?not met\b",
+        r"\bdoes not apply\b",
+        r"\bnot applicable\b",
+        r"\bunrelated to\b",
+        r"\bnot relevant\b",
+        r"\bcomplies with\b",
+        r"\bcompliant\b",
+        r"\bno direct contradiction\b",
+        r"\bno violation (?:exists|is present|can be assessed)\b",
+        r"\bno .* violation .* found\b",
+        r"\btherefore,? .* no violation\b",
+        r"未(?:发现|构成|触发|违反)",
+        r"没有(?:发现)?(?:明显)?(?:违规|违反|错误)",
+        r"不(?:适用|相关|触发|违反)",
+        r"无法(?:判断|确认|确定)",
+        r"证据不足",
+        r"条件不足",
+    )
+
     def __init__(self, llm_model: Optional[str] = None, max_llm_calls: int = 0, logger=None,
                  enable_cache: bool = True, llm_temperature: float = 0.1,
                  llm_max_output_tokens: int = 2048,
@@ -157,6 +206,7 @@ class SemanticRuleChecker:
         self.rule_mode = rule_mode
         self.llm_trace_path = str(os.getenv("PHYSICSVERIFIER_LLM_TRACE_PATH") or "").strip()
         self.llm_trace_include_prompts = str(os.getenv("PHYSICSVERIFIER_LLM_TRACE_INCLUDE_PROMPTS") or "").strip().lower() in {"1", "true", "yes"}
+        self._http_llm_enabled = False
         _timeout_env = str(os.getenv("PHYSICSVERIFIER_LLM_TIMEOUT_SEC") or "").strip()
         try:
             self.llm_timeout_sec = float(_timeout_env) if _timeout_env else None
@@ -191,8 +241,7 @@ class SemanticRuleChecker:
             self._load_cache()
 
         if self.llm_model and openai:
-            if load_dotenv:
-                load_dotenv()
+            _load_env_file_fallback()
             try:
                 base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
                 client_kwargs: Dict[str, Any] = {"base_url": base_url}
@@ -205,6 +254,11 @@ class SemanticRuleChecker:
             except Exception as e:
                 self._llm = None
                 print(f"[Verifier] Failed to initialize OpenAI client: {e}")
+        elif self.llm_model:
+            _load_env_file_fallback()
+            if os.getenv("OPENAI_API_KEY"):
+                self._http_llm_enabled = True
+                self._log(f"HTTP LLM fallback enabled for model: {self.llm_model}")
 
     def _load_rule_translations(self, path: str) -> dict:
         trans_path = Path(path)
@@ -263,11 +317,38 @@ class SemanticRuleChecker:
             pass
 
     def _llm_available(self) -> bool:
-        if self._llm is None:
+        if self._llm is None and not self._http_llm_enabled:
             return False
         if self.max_llm_calls <= 0:
             return True
         return self._llm_calls_used < self.max_llm_calls
+
+    def _llm_json_http(self, messages: List[Dict[str, str]]) -> str:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "https://api.openai.com/v1").rstrip("/")
+        url = f"{base_url}/chat/completions" if base_url.endswith("/v1") else f"{base_url}/v1/chat/completions"
+        payload = {
+            "model": self.llm_model,
+            "messages": messages,
+            "temperature": self.llm_temperature,
+            "max_tokens": self.llm_max_output_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self.llm_timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return str(data["choices"][0]["message"]["content"] or "")
 
     def _append_llm_trace(self, record: Dict[str, Any]) -> None:
         if not self.llm_trace_path:
@@ -295,16 +376,19 @@ class SemanticRuleChecker:
                 {"role": "user", "content": user_prompt},
             ]
             
-            response = self._llm.chat.completions.create(
-                model=self.llm_model,
-                messages=messages,
-                temperature=self.llm_temperature,
-                max_tokens=self.llm_max_output_tokens,
-                # Request JSON output from models that support it
-                response_format={"type": "json_object"},
-                timeout=self.llm_timeout_sec,
-            )
-            resp = response.choices[0].message.content
+            if self._llm is not None:
+                response = self._llm.chat.completions.create(
+                    model=self.llm_model,
+                    messages=messages,
+                    temperature=self.llm_temperature,
+                    max_tokens=self.llm_max_output_tokens,
+                    # Request JSON output from models that support it
+                    response_format={"type": "json_object"},
+                    timeout=self.llm_timeout_sec,
+                )
+                resp = response.choices[0].message.content
+            else:
+                resp = self._llm_json_http(messages)
             self._llm_calls_used += 1
 
             trace_record = {
@@ -773,6 +857,34 @@ class SemanticRuleChecker:
         out["evidence"] = evidence
         return out
 
+    @classmethod
+    def _is_negative_or_uncertain_diagnostic(cls, diagnostic: Dict[str, Any]) -> bool:
+        """Filter model explanations that explicitly say the rule was not violated.
+
+        Some LLMs answer with a diagnostic-shaped object even when they conclude
+        that a rule is irrelevant or untriggered. Those objects should not become
+        user-facing error findings.
+        """
+        if not isinstance(diagnostic, dict):
+            return False
+        severity = str(diagnostic.get("severity") or "").strip().lower()
+        if severity == "info":
+            return True
+
+        text_parts = [
+            str(diagnostic.get("message") or ""),
+            str(diagnostic.get("symbol") or ""),
+        ]
+        evidence = diagnostic.get("evidence")
+        if isinstance(evidence, dict):
+            text_parts.append(str(evidence.get("quote") or ""))
+        elif isinstance(evidence, str):
+            text_parts.append(evidence)
+        text = " ".join(text_parts).strip().lower()
+        if not text:
+            return True
+        return any(re.search(pattern, text, flags=re.I) for pattern in cls._NEGATIVE_DIAGNOSTIC_PATTERNS)
+
     # ------------------------- 新的LLM驱动的规则检查 -------------------------
     def _get_check_prompt(self, srd: str, raw_answer: str, context_summary: str, rule_id: str) -> tuple[str, str]:
         system_prompt = (
@@ -815,7 +927,8 @@ Instructions:
     - Use "error" ONLY for clear, undeniable violations with strong direct evidence.
     - Use "warning" ONLY when there is strong indication of a problem but some minor uncertainty remains.
     - If you are not sure (for example, the text is ambiguous, the context is missing, or the rule's preconditions may not hold), you MUST treat the solution as compliant for this rule and return [].
-6. It is acceptable to miss some subtle issues. It is NOT acceptable to invent problems or penalize a solution that could reasonably be correct.
+6. Do NOT output explanatory "no violation", "not triggered", "not applicable", or "unrelated" diagnostics. In all such cases return [].
+7. It is acceptable to miss some subtle issues. It is NOT acceptable to invent problems or penalize a solution that could reasonably be correct.
 
 JSON Output Schema:
 [
@@ -909,6 +1022,8 @@ Respond with only the JSON output (array or empty array).
                 normalized_diag: List[Any] = []
                 for d in diagnostics:
                     if isinstance(d, dict):
+                        if self._is_negative_or_uncertain_diagnostic(d):
+                            continue
                         normalized_diag.append(self._normalize_diagnostic_location(d, answer_text))
                     else:
                         normalized_diag.append(d)

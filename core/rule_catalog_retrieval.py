@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\u4e00-\u9fff]+")
@@ -831,17 +831,118 @@ def score_topic_candidate(
     }
 
 
+def _student_text_surfaces(text_for_rule: str) -> Tuple[str, str]:
+    """Return raw haystack plus a lightly normalised variant for keyword matching."""
+    raw = str(text_for_rule or "")
+    norm = norm_text(raw)
+    for pat, repl in (
+        (r"\\mathrm\{([^}]*)\}", r"\1"),
+        (r"\\text\{([^}]*)\}", r"\1"),
+        (r"\\,|\~", " "),
+        (r"\s+", " "),
+    ):
+        norm = re.sub(pat, repl, norm, flags=re.I)
+    norm = norm.strip()
+    return raw, norm
+
+
+def build_unified_topic_retrieval_text(sample: Dict[str, Any], *, tuning: Optional[Dict[str, Any]] = None) -> str:
+    """Topic-stage retrieval text (defaults: question + context + truncated prediction)."""
+    tuning = tuning or {}
+    parts = [norm_text(sample.get("question") or ""), norm_text(sample.get("context") or "")]
+    if tuning.get("topic_include_prediction", True):
+        pred = norm_text(sample.get("prediction") or "")
+        max_c = int(tuning.get("topic_prediction_max_chars") or 4000)
+        if max_c > 0 and len(pred) > max_c:
+            pred = pred[:max_c] + "\n...[truncated]"
+        if pred:
+            parts.append(pred)
+    return "\n".join(p for p in parts if p)
+
+
+_SYMBOL_TOKEN_RE = re.compile(r"\\?([a-zA-Z][a-zA-Z0-9_]*)")
+_STOP_WORDS_SYM = {
+    "the", "of", "a", "an", "is", "in", "on", "for", "with", "and", "or", "not", "sin", "cos", "tan", "log", "ln", "exp",
+}
+
+
+def _looks_like_symbol_token(tok: str) -> bool:
+    if not tok or len(tok) > 20:
+        return False
+    low = tok.lower()
+    if low in _STOP_WORDS_SYM:
+        return False
+    if re.fullmatch(r"[a-z]+", tok) and len(tok) >= 4:
+        return False
+    return True
+
+
+def extract_prediction_symbol_set(prediction_text: str) -> Set[str]:
+    """Lightweight symbol tokens from student text (aligns with semantic checker heuristics)."""
+    out: Set[str] = set()
+    for line in (prediction_text or "").splitlines():
+        for m in _SYMBOL_TOKEN_RE.finditer(line):
+            sym = m.group(1)
+            if _looks_like_symbol_token(sym):
+                out.add(sym.casefold())
+    return out
+
+
+def topic_retrieval_required_symbols(topic_obj: Dict[str, Any]) -> Set[str]:
+    hints = topic_obj.get("retrieval_hints") if isinstance(topic_obj.get("retrieval_hints"), dict) else {}
+    return {norm_text(s).casefold() for s in (hints.get("required_symbols") or []) if norm_text(s)}
+
+
+def apply_topic_symbol_overlap_boost(
+    scored: List[Dict[str, Any]],
+    pred_syms: Set[str],
+    *,
+    tuning: Optional[Dict[str, Any]] = None,
+) -> None:
+    """In-place: boost topic scores when prediction symbols overlap topic required_symbols (unified v2)."""
+    if not pred_syms:
+        return
+    tuning = tuning or {}
+    bonus_per_hit = float(tuning.get("topic_symbol_overlap_bonus", 0.45) or 0.45)
+    max_bonus = float(tuning.get("topic_symbol_overlap_max_bonus", 2.2) or 2.2)
+    for item in scored:
+        topic_obj = item.get("topic") if isinstance(item.get("topic"), dict) else item.get("topic_obj")
+        if not isinstance(topic_obj, dict):
+            continue
+        req = topic_retrieval_required_symbols(topic_obj)
+        if not req:
+            continue
+        overlap = len(pred_syms.intersection(req))
+        if overlap <= 0:
+            continue
+        add = min(max_bonus, overlap * bonus_per_hit)
+        item["score"] = float(item.get("score") or 0.0) + add
+        ev = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        ev = dict(ev)
+        ev["prediction_symbol_overlap"] = overlap
+        ev["prediction_symbol_overlap_bonus"] = round(add, 4)
+        item["evidence"] = ev
+
+
 def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
     match_features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
-    trigger_hits = [
-        kw for kw in ordered_unique(match_features.get("trigger_keywords") or []) if match_phrase_or_symbol(kw, text_for_rule)
-    ]
-    object_hits = [
-        kw for kw in ordered_unique(match_features.get("object_keywords") or []) if match_phrase_or_symbol(kw, text_for_rule)
-    ]
+    hay_raw, hay_norm = _student_text_surfaces(text_for_rule)
+
+    def _hits_in_student(keywords: List[str]) -> List[str]:
+        out: List[str] = []
+        for kw in ordered_unique(keywords):
+            if match_phrase_or_symbol(kw, hay_raw) or (hay_norm and match_phrase_or_symbol(kw, hay_norm)):
+                out.append(kw)
+        return out
+
+    trigger_hits = _hits_in_student(list(match_features.get("trigger_keywords") or []))
+    object_hits = _hits_in_student(list(match_features.get("object_keywords") or []))
     symbol_hits = [
-        sym for sym in ordered_unique(match_features.get("required_symbols") or []) if match_phrase_or_symbol(sym, text_for_rule)
+        sym
+        for sym in ordered_unique(match_features.get("required_symbols") or [])
+        if match_phrase_or_symbol(sym, hay_raw) or (hay_norm and match_phrase_or_symbol(sym, hay_norm))
     ]
+    negative_hits = _hits_in_student(list(ordered_unique(match_features.get("negative_keywords") or [])))
     lexical_hits = len(trigger_hits) + len(object_hits) + len(symbol_hits)
 
     # LLM-enhanced signals (present only in enhanced catalogs)
@@ -849,23 +950,28 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
     llm_phrase_hits: List[str] = []
     llm_term_hits: List[str] = []
     llm_rule_score = 0.0
+    llm_haystack = hay_raw if not hay_norm else (hay_raw + "\n" + hay_norm)
     if llm_hints:
         llm_phrase_hits = [
-            p for p in ordered_unique(llm_hints.get("match_phrases") or [])
-            if _match_llm_phrase(p, text_for_rule)
+            p for p in ordered_unique(llm_hints.get("match_phrases") or []) if _match_llm_phrase(p, llm_haystack)
         ]
         llm_term_hits = [
-            t for t in ordered_unique(llm_hints.get("discriminative_terms") or [])
-            if match_phrase_or_symbol(t, text_for_rule)
+            t
+            for t in ordered_unique(llm_hints.get("discriminative_terms") or [])
+            if match_phrase_or_symbol(t, hay_raw) or (hay_norm and match_phrase_or_symbol(t, hay_norm))
         ]
         # Phrase hits are strong evidence; term hits are moderate
         llm_rule_score = min(len(llm_phrase_hits) * 2.5, 7.5) + min(len(llm_term_hits) * 1.0, 4.0)
 
+    llm_only = bool((llm_phrase_hits or llm_term_hits) and lexical_hits == 0)
+    if llm_only:
+        llm_rule_score *= 0.35
+
     support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
     count = int(support.get("count") or 0)
-    # Activate support prior if there is any hit (lexical OR llm)
-    any_hits = lexical_hits > 0 or llm_phrase_hits or llm_term_hits
-    support_prior = min(math.log2(count + 1), 3.0) if any_hits else 0.0
+    has_strong_anchor = bool(trigger_hits or symbol_hits)
+    support_eligible = bool(count > 0 and (has_strong_anchor or (lexical_hits >= 2 and bool(object_hits))))
+    support_prior = min(math.log2(count + 1), 3.0) if support_eligible else 0.0
     scope = norm_text(rule.get("scope") or "domain") or "domain"
     manual_override_reason = norm_text(rule.get("manual_override_reason") or "")
 
@@ -888,6 +994,8 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
         + support_prior
         + llm_rule_score
     )
+    neg_penalty = min(len(negative_hits) * 2.0, 8.0)
+    score = max(0.0, float(score) - neg_penalty)
     if scope == "meta":
         score = max(score - 1.5, 0.0)
         if not trigger_hits and not object_hits:
@@ -910,6 +1018,15 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
             "manual_override_reason": manual_override_reason,
             "llm_phrase_hits": llm_phrase_hits,
             "llm_term_hits": llm_term_hits,
+            "llm_only_soft_hit": llm_only,
+            "negative_keyword_hits": negative_hits,
+            "negative_keyword_penalty": round(neg_penalty, 4),
+            "score_components": {
+                "anchor_score": min(len(trigger_hits) * 3, 9) + min(len(symbol_hits) * 2, 4),
+                "object_score": min(len(object_hits) * 2, 6),
+                "support_prior": round(support_prior, 4),
+                "llm_hint_score": round(llm_rule_score, 4),
+            },
         },
     }
 
@@ -938,6 +1055,7 @@ def rule_topic_context(
     scope: str,
     rule_evidence: Dict[str, Any] | None = None,
     topic_evidence: Dict[str, Any] | None = None,
+    retrieval_tuning: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, float]:
     gap = max(0.0, float(top1_topic_score or 0.0) - float(topic_score or 0.0))
     evidence = rule_evidence if isinstance(rule_evidence, dict) else {}
@@ -945,6 +1063,7 @@ def rule_topic_context(
     generic_signal_only = bool(evidence.get("generic_signal_only"))
     has_topic_anchor = bool(topic_hits.get("name_or_alias_hits") or topic_hits.get("scene_keyword_hits"))
     normalized_scope = norm_text(scope or "domain") or "domain"
+    tuning = retrieval_tuning if isinstance(retrieval_tuning, dict) else {}
 
     if topic_rank <= 0:
         min_score = 1.0
@@ -972,6 +1091,9 @@ def rule_topic_context(
         if not has_topic_anchor:
             min_score += 2.0
             bonus -= 1.5
+
+    min_score += float(tuning.get("min_score_delta", 0.0) or 0.0)
+    bonus += float(tuning.get("bonus_delta", 0.0) or 0.0)
 
     return {
         "topic_gap": gap,

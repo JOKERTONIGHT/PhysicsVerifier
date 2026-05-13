@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.rule_catalog_retrieval import (
     apply_manual_rule_override,
@@ -204,16 +204,44 @@ def make_rule_leaf(raw_rule: Dict[str, Any], *, domain: str, topic: str) -> Dict
             ),
         },
         "match_features": build_match_features(title, trigger, check_logic, symbolic_hint),
+        "retrieval_text": norm_text(
+            " \n ".join(
+                [title, trigger, check_logic]
+                + (
+                    ["symbols: " + ", ".join(str(s) for s in (symbolic_hint.get("required_symbols") or [])[:16])]
+                    if (symbolic_hint.get("required_symbols") or [])
+                    else []
+                )
+            )
+        ),
     }
     return apply_manual_rule_override(rule_leaf)
 
 
-def attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: Dict[str, Any]) -> None:
+def _cluster_required_symbols_for_rules(rules: List[Dict[str, Any]], rule_ids: List[str]) -> List[str]:
+    wanted = {str(rid) for rid in rule_ids if str(rid)}
+    syms: List[str] = []
+    for rule in rules:
+        rid = str(rule.get("rule_id") or rule.get("id") or "")
+        if rid not in wanted:
+            continue
+        features = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
+        syms.extend(str(s) for s in (features.get("required_symbols") or []) if str(s).strip())
+    return ordered_unique(syms)
+
+
+def attach_distilled_rules(
+    states: Dict[str, Dict[str, Any]],
+    distilled_data: Dict[str, Any],
+    *,
+    topic_aliases: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
     raw_rules = distilled_data.get("rules") if isinstance(distilled_data, dict) else []
     if not isinstance(raw_rules, list):
         raise ValueError("Distilled experience data must contain a top-level 'rules' list.")
 
-    unmatched: List[str] = []
+    aliases = topic_aliases or {}
+    orphans: List[Dict[str, Any]] = []
     for raw_rule in raw_rules:
         if not isinstance(raw_rule, dict):
             continue
@@ -223,18 +251,24 @@ def attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: Di
         key = topic_key(domain, topic)
         state = states.get(key)
         if state is None:
-            unmatched.append(f"{domain} / {topic} :: {raw_rule.get('rule_id')}")
+            mapped = aliases.get(key)
+            if mapped and states.get(mapped):
+                state = states[mapped]
+        if state is None:
+            orphans.append(
+                {
+                    "domain": domain,
+                    "topic": topic,
+                    "topic_key": key,
+                    "rule_id": raw_rule.get("rule_id") or raw_rule.get("id"),
+                    "title": norm_text(raw_rule.get("title") or ""),
+                }
+            )
             continue
 
         state["entry"]["rules"].append(make_rule_leaf(raw_rule, domain=domain, topic=topic))
 
-    if unmatched:
-        uniq = ordered_unique(unmatched)
-        preview = "\n".join(f"- {item}" for item in uniq[:10])
-        raise ValueError(
-            "Distilled rules contain topics that do not map to the knowledge skeleton.\n"
-            f"Unmatched unique topics/rules: {len(uniq)}\n{preview}"
-        )
+    return orphans
 
 
 def attach_tagged_reference(states: Dict[str, Dict[str, Any]], tagged_data: Any) -> int:
@@ -314,6 +348,11 @@ def finalize_topics(states: Dict[str, Dict[str, Any]]) -> None:
             "required_symbols": build_topic_required_symbols(rules),
         }
         entry["clusters"] = build_clusters(rules)
+        for cluster in entry["clusters"]:
+            if not isinstance(cluster, dict):
+                continue
+            rids = [str(r) for r in (cluster.get("rule_ids") or []) if str(r)]
+            cluster["required_symbols"] = _cluster_required_symbols_for_rules(rules, rids)
         entry["rule_tree"] = build_rule_tree(state["topic"], rules, entry["clusters"])
 
         cluster_by_rule: Dict[str, str] = {}
@@ -330,9 +369,11 @@ def build_unified_catalog_from_data(
     knowledge_data: Dict[str, Any],
     distilled_data: Dict[str, Any],
     tagged_data: Any,
+    *,
+    topic_aliases: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     domains_out, states = _build_topic_skeleton(knowledge_data)
-    attach_distilled_rules(states, distilled_data)
+    distilled_orphans = attach_distilled_rules(states, distilled_data, topic_aliases=topic_aliases)
     mapped_tagged_rules = attach_tagged_reference(states, tagged_data)
     finalize_topics(states)
 
@@ -361,13 +402,31 @@ def build_unified_catalog_from_data(
             "cluster_topic_threshold": CLUSTER_TOPIC_THRESHOLD,
             "cluster_bucket_threshold": CLUSTER_BUCKET_THRESHOLD,
             "hierarchy": ["domain", "topic", "context", "cluster", "rule"],
+            "distilled_orphan_rules": distilled_orphans,
+            "distilled_orphan_count": len(distilled_orphans),
         },
         "domains": domains_out,
     }
 
 
-def build_unified_catalog(knowledge_path: Path, distilled_path: Path, tagged_path: Path) -> Dict[str, Any]:
-    return build_unified_catalog_from_data(load_json(knowledge_path), load_json(distilled_path), load_json(tagged_path))
+def build_unified_catalog(
+    knowledge_path: Path,
+    distilled_path: Path,
+    tagged_path: Path,
+    *,
+    topic_alias_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    aliases: Optional[Dict[str, str]] = None
+    if topic_alias_path and topic_alias_path.exists():
+        raw_aliases = load_json(topic_alias_path)
+        if isinstance(raw_aliases, dict):
+            aliases = {norm_text(str(k)): norm_text(str(v)) for k, v in raw_aliases.items()}
+    return build_unified_catalog_from_data(
+        load_json(knowledge_path),
+        load_json(distilled_path),
+        load_json(tagged_path),
+        topic_aliases=aliases,
+    )
 
 
 def _experience_rule_to_catalog_rule(er: Dict[str, Any]) -> Dict[str, Any]:

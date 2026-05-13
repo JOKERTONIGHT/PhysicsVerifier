@@ -5,15 +5,21 @@
 `symbolic/`（符号执行与目录）。"""
 import json
 import datetime
+import os
 import re
 import math
-from typing import List, Dict, Any, Optional, Tuple
+import time
+from typing import List, Dict, Any, Optional, Set, Tuple
 from pathlib import Path
 
 from core.rule_catalog_retrieval import (
+    apply_topic_symbol_overlap_boost,
     build_signal_document_frequency,
     build_topic_candidates,
+    build_unified_topic_retrieval_text,
+    extract_prediction_symbol_set,
     norm_text,
+    ordered_unique,
     rule_topic_context,
     rule_sort_key,
     select_rules_with_topic_priority,
@@ -23,33 +29,84 @@ from core.rule_catalog_retrieval import (
     topic_sort_key,
 )
 from core.semantic_rule_checker import SemanticRuleChecker
-from rules.base import RuleContext
-from rules.symbolic_checks import (
-    GeneratedSymbolicCheckExecutor,
-    GeneratedSymbolicCheckRegistry,
-    GeneratedSymbolicCheckSpec,
-    catalog_spec_to_generated,
-)
-from symbolic.symbolic_catalog import SymbolicCatalog, SymbolicCheckSpec
-from symbolic.experience_bank import SymbolicExperienceBank
-from symbolic.spec_synthesis import RuleSymbolicSpecSynthesizer
+from symbolic.experience_code_engine import ExperienceCodeEngine
 
 class PhysicsRuleVerifier:
+    UNIFIED_V2_MIN_DIAGNOSTIC_RULE_SCORE = 4.0
+    STRICT_RELEASE_INCONCLUSIVE_SCORE_BONUS = 2.0
+    # Per-sample / per-paragraph caps default to 0 (disabled). They can be
+    # enabled via CLI when over-diagnosis appears to dominate precision losses.
+    DEFAULT_MAX_DIAGNOSTICS_PER_SAMPLE = 0
+    DEFAULT_MAX_DIAGNOSTICS_PER_PARAGRAPH = 0
+    # Quote-level required-symbol overlap defaults to 0 so that the historically
+    # noisy "missing required symbol" signal does not cause unintended recall
+    # regressions; users can opt-in to a stricter threshold via CLI.
+    DEFAULT_QUOTE_REQUIRED_SYMBOL_RATIO = 0.0
+
     def __init__(
         self,
         rules_catalog_path: str = "catalogs/rules_catalog_top_down.json",
         llm_model: str = "qwen3-30b-a3b",
         log_dir: str = "logs",
         results_dir: str = "results",
-        enable_agentic_postcheck: bool = True,
-        agentic_max_checks_per_sample: int = 2,
-        enable_experience_pipeline: bool = True,
-        experience_rules_path: str = "results/semantic_experience_distilled_300.json",
+        enable_symbolic_check: bool = True,
         unified_rules_path: Optional[str] = None,
-        experience_code_manifest_path: str = "results/experience_symbolic_program_manifest_300.json",
-        experience_code_module: str = "symbolic.generated_experience_checks",
+        experience_code_manifest_path: str = "results/experience_symbolic_program_manifest_v2_unified.json",
+        experience_code_module: str = "symbolic.generated_experience_checks_v2_unified",
+        symbolic_topic_check_limit: int = 40,
+        precision_mode: str = "strict",
+        min_diagnostic_rule_score: Optional[float] = None,
+        max_diagnostics_per_sample: Optional[int] = None,
+        max_diagnostics_per_paragraph: Optional[int] = None,
+        quote_required_symbol_ratio: Optional[float] = None,
+        unified_rule_top_n: Optional[int] = None,
+        # Legacy kwargs (accepted for backward compatibility, ignored).
+        enable_agentic_postcheck: Optional[bool] = None,
+        agentic_max_checks_per_sample: Optional[int] = None,
+        enable_experience_pipeline: Optional[bool] = None,
+        experience_rules_path: Optional[str] = None,
     ):
+        # Legacy kwargs are accepted but ignored: the primitive+spec / agentic
+        # LLM paths and the keyword-trigger experience pipeline have been
+        # removed. The single symbolic verification path now is the
+        # generated experience-code engine, which is on by default.
+        _ = (
+            enable_agentic_postcheck,
+            agentic_max_checks_per_sample,
+            enable_experience_pipeline,
+            experience_rules_path,
+        )
         self.llm_model = llm_model
+        self.precision_mode = str(precision_mode or "strict").strip().lower()
+        if self.precision_mode not in {"strict", "balanced", "score_only"}:
+            self.precision_mode = "strict"
+        self.min_diagnostic_rule_score = (
+            float(min_diagnostic_rule_score)
+            if min_diagnostic_rule_score is not None
+            else float(self.UNIFIED_V2_MIN_DIAGNOSTIC_RULE_SCORE)
+        )
+        self.max_diagnostics_per_sample = int(
+            max_diagnostics_per_sample
+            if max_diagnostics_per_sample is not None
+            else self.DEFAULT_MAX_DIAGNOSTICS_PER_SAMPLE
+        )
+        self.max_diagnostics_per_paragraph = int(
+            max_diagnostics_per_paragraph
+            if max_diagnostics_per_paragraph is not None
+            else self.DEFAULT_MAX_DIAGNOSTICS_PER_PARAGRAPH
+        )
+        self.quote_required_symbol_ratio = float(
+            quote_required_symbol_ratio
+            if quote_required_symbol_ratio is not None
+            else self.DEFAULT_QUOTE_REQUIRED_SYMBOL_RATIO
+        )
+        _env_top = str(os.getenv("PHYSICSVERIFIER_UNIFIED_RULE_TOP_N", "")).strip()
+        if unified_rule_top_n is not None:
+            self.unified_rule_top_n = max(1, int(unified_rule_top_n))
+        elif _env_top.isdigit():
+            self.unified_rule_top_n = max(1, int(_env_top))
+        else:
+            self.unified_rule_top_n = 6
         self.log_dir = Path(log_dir)
         self.results_dir = Path(results_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +122,13 @@ class PhysicsRuleVerifier:
 
         self.catalog = self._load_catalog()
         meta = self.catalog.get("metadata") if isinstance(self.catalog, dict) else {}
+        self._retrieval_tuning: Dict[str, Any] = {}
+        if isinstance(meta, dict):
+            rt = meta.get("retrieval_tuning")
+            if isinstance(rt, dict):
+                self._retrieval_tuning = dict(rt)
+        if str(os.getenv("PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION", "")).strip().lower() in {"1", "true", "yes"}:
+            self._retrieval_tuning["topic_include_prediction"] = False
         self._unified_v2_mode = bool(
             self._unified_mode and isinstance(meta, dict) and meta.get("catalog_type") == "unified_rules_v2"
         )
@@ -84,24 +148,296 @@ class PhysicsRuleVerifier:
         # Clear initial translations as we will set them per request
         self.semantic_checker.rule_translations = {} 
         
-        self.enable_agentic_postcheck = bool(enable_agentic_postcheck)
-        self.agentic_max_checks_per_sample = int(agentic_max_checks_per_sample)
-        # In unified mode, experience rules are already part of the catalog;
-        # the separate experience pipeline is only needed when NOT using unified catalog.
-        self.enable_experience_pipeline = bool(enable_experience_pipeline) and not self._unified_mode
-        self.experience_rules_path = str(experience_rules_path)
-        # Keep compatibility with run_verifier.py arguments.
+        self.enable_symbolic_check = bool(enable_symbolic_check)
         self.experience_code_manifest_path = str(experience_code_manifest_path)
         self.experience_code_module = str(experience_code_module)
-        # Backward compatible registry (results/*) is kept for audit logs, but the source of truth is catalogs/symbolic_catalog.json
-        self.symbolic_registry = GeneratedSymbolicCheckRegistry(path=str(self.results_dir / "agentic_symbolic_checks.json"))
-        self.symbolic_catalog = SymbolicCatalog(path="catalogs/symbolic_catalog.json")
-        self.symbolic_executor = GeneratedSymbolicCheckExecutor()
-        self.symbolic_experience_bank = SymbolicExperienceBank(path=str(self.results_dir / "rule_experience_bank.json"))
-        self.spec_synthesizer = RuleSymbolicSpecSynthesizer()
-        self.experience_rules_index = self._load_experience_rules(self.experience_rules_path) if self.enable_experience_pipeline else {}
+        self.symbolic_topic_check_limit = max(0, int(symbolic_topic_check_limit))
+        self.experience_code_engine = ExperienceCodeEngine(
+            manifest_path=self.experience_code_manifest_path,
+            module_name=self.experience_code_module,
+        )
 
         self.error_experiences = []
+
+    def _filter_low_confidence_unified_diagnostics(
+        self,
+        diagnostics: List[Dict[str, Any]],
+        selected_rule_records: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Suppress diagnostics emitted by weakly matched rules.
+
+        Top-ranked topics can admit broad rules with low raw match scores. If an
+        LLM still emits a finding for those rules, it is usually a precision risk.
+        """
+        score_by_rule = {
+            str((item.get("rule") or {}).get("id") or ""): float(item.get("score") or 0.0)
+            for item in selected_rule_records
+            if isinstance(item, dict)
+        }
+        kept: List[Dict[str, Any]] = []
+        suppressed: List[Dict[str, Any]] = []
+        min_score = self.min_diagnostic_rule_score
+        for d in diagnostics or []:
+            if not isinstance(d, dict):
+                kept.append(d)
+                continue
+            rid = str(d.get("rule") or "")
+            rule_score = score_by_rule.get(rid, 0.0)
+            if rule_score < min_score:
+                suppressed.append(
+                    {
+                        "reason": "low_rule_match_score",
+                        "rule_id": rid,
+                        "rule_score": rule_score,
+                        "min_rule_score": min_score,
+                        "original_diagnostic": d,
+                    }
+                )
+                continue
+            kept.append(d)
+        return kept, suppressed
+
+    def _quote_required_symbols(self, rule: Dict[str, Any]) -> List[str]:
+        """Aggregate symbols a quote should mention for a rule diagnostic to be credible."""
+        if not isinstance(rule, dict):
+            return []
+        out: List[str] = []
+        sh = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+        out.extend(str(s) for s in (sh.get("required_symbols") or []) if str(s).strip())
+        mf = rule.get("match_features") if isinstance(rule.get("match_features"), dict) else {}
+        out.extend(str(s) for s in (mf.get("required_symbols") or []) if str(s).strip())
+        out.extend(str(s) for s in (rule.get("required_symbols") or []) if str(s).strip())
+        return ordered_unique([s for s in out if s])
+
+    def _quote_symbol_overlap(
+        self,
+        quote: str,
+        required_symbols: List[str],
+    ) -> Tuple[List[str], float]:
+        if not required_symbols or not quote:
+            return [], 0.0
+        from rules.symbolic_checks import _normalize_text_for_match, _token_present  # local import to avoid cycles
+
+        text_lower = quote.lower()
+        text_norm = _normalize_text_for_match(quote)
+        hits = [s for s in required_symbols if _token_present(s, text_lower, text_norm)]
+        ratio = len(hits) / max(1, len(required_symbols))
+        return hits, ratio
+
+    def _diagnostic_release_gate(
+        self,
+        diagnostic: Dict[str, Any],
+        rule_record: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        reasons: List[str] = []
+        severity = str(diagnostic.get("severity") or "").strip().lower()
+        allowed_severities = {"error", "warning"} if self.precision_mode == "balanced" else {"error"}
+        if severity not in allowed_severities:
+            reasons.append("severity_not_error")
+        if self.semantic_checker._is_negative_or_uncertain_diagnostic(diagnostic):
+            reasons.append("negative_or_uncertain_diagnostic")
+
+        evidence = diagnostic.get("evidence") if isinstance(diagnostic.get("evidence"), dict) else {}
+        quote = str(evidence.get("quote") or "").strip()
+        loc = evidence.get("location") if isinstance(evidence.get("location"), dict) else {}
+        if not quote:
+            reasons.append("missing_quote")
+        if not bool(loc.get("locatable_valid")):
+            reasons.append("unlocatable_quote")
+
+        publish_gate = rule_record.get("publish_gate") if isinstance(rule_record, dict) else None
+        if isinstance(publish_gate, dict):
+            if not bool(publish_gate.get("publishable")):
+                reasons.extend(str(r) for r in (publish_gate.get("reasons") or []))
+        else:
+            reasons.append("missing_rule_publish_gate")
+
+        rule = rule_record.get("rule") if isinstance(rule_record, dict) and isinstance(rule_record.get("rule"), dict) else {}
+        precision = self._rule_precision_metadata(rule)
+        evidence_requirement_hits = self._match_text_list(precision["evidence_requirements"], quote)
+        if precision["evidence_requirements"] and not evidence_requirement_hits:
+            reasons.append("missing_required_evidence")
+        if self._match_text_list(precision["negative_conditions"], quote):
+            reasons.append("quote_hits_negative_condition")
+
+        recon = diagnostic.get("symbolic_reconciliation") if isinstance(diagnostic.get("symbolic_reconciliation"), dict) else {}
+        symbolic_status = str(recon.get("status") or "").strip().lower()
+        min_score = float((publish_gate or {}).get("min_publish_score") or self.min_diagnostic_rule_score)
+        score = float((rule_record or {}).get("score") or 0.0)
+        topic_rank = int((rule_record or {}).get("topic_rank") or 0)
+        if symbolic_status in {"supported", "quote_overlap"}:
+            # Either the canonical-missing primitive triggered (fail-as-supported)
+            # or the diagnostic's quote sits on top of the canonical pattern;
+            # both indicate the LLM critique is plausibly grounded.
+            pass
+        elif symbolic_status == "inconclusive":
+            if precision["symbolic_policy"] in {"require_fail", "suppress_on_inconclusive"}:
+                reasons.append("symbolic_inconclusive_suppressed")
+            elif self.precision_mode == "strict" and score < (min_score + self.STRICT_RELEASE_INCONCLUSIVE_SCORE_BONUS):
+                reasons.append("symbolic_inconclusive_below_strict_score")
+            elif self.precision_mode == "strict" and topic_rank >= 1 and score < (min_score + self.STRICT_RELEASE_INCONCLUSIVE_SCORE_BONUS + 1.0):
+                reasons.append("symbolic_inconclusive_secondary_topic_below_score")
+        elif precision["symbolic_policy"] == "require_fail" and diagnostic.get("symbolic_cross_checks"):
+            reasons.append("symbolic_fail_required")
+
+        # Quote-level required-symbol overlap: if the rule's symbolic hint specifies which
+        # symbols a violation should reference, the diagnostic's quote must mention them.
+        quote_required_symbols = self._quote_required_symbols(rule)
+        quote_symbol_hits: List[str] = []
+        quote_symbol_ratio = 0.0
+        if quote_required_symbols and quote:
+            quote_symbol_hits, quote_symbol_ratio = self._quote_symbol_overlap(quote, quote_required_symbols)
+            if (
+                self.precision_mode == "strict"
+                and len(quote_required_symbols) >= 2
+                and symbolic_status != "supported"
+                and quote_symbol_ratio < self.quote_required_symbol_ratio
+            ):
+                reasons.append("quote_missing_required_symbols")
+
+        return {
+            "publishable": not reasons,
+            "reasons": ordered_unique(reasons),
+            "rule_score": score,
+            "min_publish_score": min_score,
+            "symbolic_status": symbolic_status or "none",
+            "evidence_requirement_hits": evidence_requirement_hits,
+            "quote_symbol_hits": quote_symbol_hits,
+            "quote_symbol_ratio": round(quote_symbol_ratio, 4),
+            "quote_symbol_required_count": len(quote_required_symbols),
+        }
+
+    def _dedupe_final_diagnostics(self, diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        best_by_location: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for d in diagnostics:
+            evidence = d.get("evidence") if isinstance(d.get("evidence"), dict) else {}
+            quote = str(evidence.get("quote") or "").strip()
+            loc = evidence.get("location") if isinstance(evidence.get("location"), dict) else {}
+            para = str(loc.get("paragraph_index") or "")
+            key = (quote.casefold(), para)
+            gate = d.get("release_gate") if isinstance(d.get("release_gate"), dict) else {}
+            candidate_score = float(gate.get("rule_score") or 0.0)
+            current = best_by_location.get(key)
+            if current is None:
+                best_by_location[key] = d
+                continue
+            current_gate = current.get("release_gate") if isinstance(current.get("release_gate"), dict) else {}
+            current_score = float(current_gate.get("rule_score") or 0.0)
+            if candidate_score > current_score:
+                best_by_location[key] = d
+        return list(best_by_location.values())
+
+    def _apply_diagnostic_release_gate(
+        self,
+        diagnostics: List[Dict[str, Any]],
+        selected_rule_records: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        record_by_rule = {
+            str((item.get("rule") or {}).get("id") or item.get("rule_id") or ""): item
+            for item in selected_rule_records
+            if isinstance(item, dict)
+        }
+        kept: List[Dict[str, Any]] = []
+        suppressed: List[Dict[str, Any]] = []
+        for d in diagnostics or []:
+            if not isinstance(d, dict):
+                continue
+            rid = str(d.get("rule") or "")
+            gate = self._diagnostic_release_gate(d, record_by_rule.get(rid))
+            enriched = dict(d)
+            enriched["release_gate"] = gate
+            if gate["publishable"]:
+                if rid in record_by_rule:
+                    rec = record_by_rule[rid]
+                    enriched["rule_match"] = {
+                        "score": float(rec.get("score") or 0.0),
+                        "min_score": float(rec.get("min_score") or 0.0),
+                        "topic_gap": float(rec.get("topic_gap") or 0.0),
+                        "topic_rank": int(rec.get("topic_rank") or 0),
+                        "publish_gate": rec.get("publish_gate") or {},
+                    }
+                kept.append(enriched)
+            else:
+                suppressed.append(
+                    {
+                        "reason": "diagnostic_release_gate",
+                        "rule_id": rid,
+                        "release_gate": gate,
+                        "original_diagnostic": d,
+                    }
+                )
+        deduped = self._dedupe_final_diagnostics(kept)
+        deduped_ids = {id(d) for d in deduped}
+        for d in kept:
+            if id(d) not in deduped_ids:
+                suppressed.append(
+                    {
+                        "reason": "duplicate_location_or_quote",
+                        "rule_id": str(d.get("rule") or ""),
+                        "original_diagnostic": d,
+                    }
+                )
+
+        capped, cap_suppressed = self._apply_diagnostic_caps(deduped)
+        suppressed.extend(cap_suppressed)
+        return capped, suppressed
+
+    def _apply_diagnostic_caps(
+        self,
+        diagnostics: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Enforce per-paragraph and per-sample caps on published diagnostics.
+
+        Diagnostics are ranked by (symbolic_status priority, rule_score). For
+        each paragraph we keep at most ``max_diagnostics_per_paragraph``; the
+        global list is then truncated to ``max_diagnostics_per_sample``. This
+        eliminates "over-diagnosis" cases where multiple rules emit findings on
+        the same passage or where a single sample collects many low-confidence
+        signals.
+        """
+
+        def _priority(d: Dict[str, Any]) -> Tuple[int, float, float]:
+            gate = d.get("release_gate") if isinstance(d.get("release_gate"), dict) else {}
+            status = str(gate.get("symbolic_status") or "none").lower()
+            status_rank = {"supported": 0, "none": 1, "inconclusive": 2}.get(status, 3)
+            score = float(gate.get("rule_score") or 0.0)
+            quote_ratio = float(gate.get("quote_symbol_ratio") or 0.0)
+            return (status_rank, -score, -quote_ratio)
+
+        if self.max_diagnostics_per_paragraph <= 0 and self.max_diagnostics_per_sample <= 0:
+            return list(diagnostics), []
+
+        ordered = sorted(diagnostics, key=_priority)
+        per_paragraph_keep: Dict[str, int] = {}
+        kept: List[Dict[str, Any]] = []
+        suppressed: List[Dict[str, Any]] = []
+        for d in ordered:
+            evidence = d.get("evidence") if isinstance(d.get("evidence"), dict) else {}
+            loc = evidence.get("location") if isinstance(evidence.get("location"), dict) else {}
+            para = str(loc.get("paragraph_index") or "<none>")
+            paragraph_quota = self.max_diagnostics_per_paragraph
+            if paragraph_quota and per_paragraph_keep.get(para, 0) >= paragraph_quota:
+                suppressed.append(
+                    {
+                        "reason": "over_paragraph_cap",
+                        "rule_id": str(d.get("rule") or ""),
+                        "original_diagnostic": d,
+                    }
+                )
+                continue
+            sample_quota = self.max_diagnostics_per_sample
+            if sample_quota and len(kept) >= sample_quota:
+                suppressed.append(
+                    {
+                        "reason": "over_sample_cap",
+                        "rule_id": str(d.get("rule") or ""),
+                        "original_diagnostic": d,
+                    }
+                )
+                continue
+            per_paragraph_keep[para] = per_paragraph_keep.get(para, 0) + 1
+            kept.append(d)
+        return kept, suppressed
 
     def _normalize_topic_key(self, domain: str, topic: str) -> str:
         d = str(domain or "Unknown").strip().lower()
@@ -109,127 +445,6 @@ class PhysicsRuleVerifier:
         # Distilled experience topic may look like "Domain / Topic"; keep the last segment for robust matching.
         t = t_raw.split("/")[-1].strip().lower() if "/" in t_raw else t_raw.lower()
         return f"{d}::{t}"
-
-    def _load_experience_rules(self, path: str) -> Dict[str, List[Dict[str, Any]]]:
-        idx: Dict[str, List[Dict[str, Any]]] = {}
-        p = Path(path)
-        if not p.exists():
-            return idx
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return idx
-        rules = data.get("rules") if isinstance(data, dict) else []
-        if not isinstance(rules, list):
-            return idx
-
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            key = self._normalize_topic_key(rule.get("domain"), rule.get("topic"))
-            idx.setdefault(key, []).append(rule)
-        return idx
-
-    def _get_experience_rules_for_topic(self, topic: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if not topic:
-            return []
-        key = self._normalize_topic_key(topic.get("domain"), topic.get("name"))
-        return list(self.experience_rules_index.get(key, []))
-
-    def _extract_keywords(self, text: str, max_kw: int = 8) -> List[str]:
-        tokens = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]+", str(text or ""))
-        out: List[str] = []
-        for tok in tokens:
-            tok = tok.strip()
-            if len(tok) < 2:
-                continue
-            if tok.lower() in {"check", "logic", "rule", "error", "with", "from", "this"}:
-                continue
-            if tok not in out:
-                out.append(tok)
-            if len(out) >= max_kw:
-                break
-        return out
-
-    def _experience_rule_triggered(self, rule: Dict[str, Any], text_all: str) -> Dict[str, Any]:
-        hay = str(text_all or "").lower()
-        trigger_text = " ".join([
-            str(rule.get("title") or ""),
-            str(rule.get("trigger") or ""),
-            str(rule.get("check_logic") or ""),
-        ])
-        keywords = self._extract_keywords(trigger_text, max_kw=10)
-        hits = [kw for kw in keywords if kw.lower() in hay]
-        # Conservative trigger: at least two keyword hits, or one long keyword.
-        if len(hits) >= 2:
-            return {"triggered": True, "hits": hits}
-        if len(hits) == 1 and len(hits[0]) >= 6:
-            return {"triggered": True, "hits": hits}
-        return {"triggered": False, "hits": hits}
-
-    def _build_experience_symbolic_spec(self, rule: Dict[str, Any]) -> Optional[GeneratedSymbolicCheckSpec]:
-        hint = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
-        primitive = str(hint.get("primitive") or "none").strip()
-        if primitive in {"", "none"}:
-            return None
-
-        canonical = str(hint.get("canonical") or "").strip()
-        required_symbols = [str(s) for s in (hint.get("required_symbols") or []) if str(s).strip()]
-
-        params: Dict[str, Any] = {}
-        if primitive in {"equation_equivalence", "inequality_consistency"}:
-            if not canonical or len(required_symbols) < 2:
-                return None
-            params = {
-                "canonical_latex": [canonical],
-                "required_symbols": required_symbols,
-                "allow_scalar_multiple": False,
-                "allow_additive_constant": False,
-            }
-        elif primitive == "formula_pattern":
-            if len(required_symbols) < 2:
-                return None
-            relation = "=" if "=" in canonical else None
-            params = {
-                "patterns": [{"all_tokens": required_symbols, "relation": relation}],
-                "required_symbols": required_symbols,
-            }
-        else:
-            # Unsupported primitive in experience_hint for this pipeline version.
-            return None
-
-        rule_id = str(rule.get("rule_id") or "exp_unknown")
-        return GeneratedSymbolicCheckSpec(
-            spec_id=f"exp_sym_{rule_id}",
-            title=f"Experience symbolic check: {rule.get('title')}",
-            description=str(rule.get("check_logic") or ""),
-            primitive=primitive,
-            params=params,
-            source_rule_id=rule_id,
-            source_message_substring=str(rule.get("title") or ""),
-        )
-
-    def _build_rule_context(self, sample: Dict[str, Any]) -> RuleContext:
-        text_all = "\n".join([
-            sample.get("question", ""),
-            sample.get("context", ""),
-            sample.get("prediction", ""),
-            sample.get("answer", ""),
-        ])
-        parsed = self.semantic_checker._extract_symbols_and_formulas(text_all)
-        graph = self.semantic_checker._build_symbol_graph(parsed["lines"], parsed["symbols"], parsed["formulas"])
-        return RuleContext(
-            sample_id=str(sample.get("id")),
-            dataset_key=None,
-            text_all=text_all,
-            lines=parsed["lines"],
-            symbols=parsed["symbols"],
-            formulas_raw=parsed["formulas"],
-            graph=graph,
-            snippets={},
-            sym_stats={},
-            precondition_cues=[],
-        )
 
     def _load_catalog(self) -> Dict:
         with open(self.rules_catalog_path, 'r', encoding='utf-8') as f:
@@ -271,6 +486,145 @@ class PhysicsRuleVerifier:
             return bool(pat.search(text))
         return target.casefold() in text.casefold()
 
+    @staticmethod
+    def _as_text_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, dict):
+            out: List[str] = []
+            for item in value.values():
+                out.extend(PhysicsRuleVerifier._as_text_list(item))
+            return ordered_unique(out)
+        if isinstance(value, list):
+            out = []
+            for item in value:
+                out.extend(PhysicsRuleVerifier._as_text_list(item))
+            return ordered_unique(out)
+        text = str(value).strip()
+        return [text] if text else []
+
+    def _rule_precision_metadata(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        precision = rule.get("precision") if isinstance(rule.get("precision"), dict) else {}
+        publishable_raw = rule.get("publishable", precision.get("publishable", True))
+        if isinstance(publishable_raw, str):
+            publishable = publishable_raw.strip().lower() not in {"0", "false", "no", "off"}
+        else:
+            publishable = bool(publishable_raw)
+        out = {
+            "precision_profile": str(
+                rule.get("precision_profile") or precision.get("precision_profile") or precision.get("profile") or "strict"
+            ).strip().lower(),
+            "publishable": publishable,
+            "preconditions": self._as_text_list(rule.get("preconditions") or precision.get("preconditions")),
+            "violation_signatures": self._as_text_list(
+                rule.get("violation_signatures") or precision.get("violation_signatures")
+            ),
+            "negative_conditions": self._as_text_list(
+                rule.get("negative_conditions") or precision.get("negative_conditions")
+            ),
+            "evidence_requirements": self._as_text_list(
+                rule.get("evidence_requirements") or precision.get("evidence_requirements")
+            ),
+            "symbolic_policy": str(
+                rule.get("symbolic_policy") or precision.get("symbolic_policy") or "suppress_on_pass"
+            ).strip().lower(),
+        }
+        if out["precision_profile"] not in {"strict", "balanced", "recall"}:
+            out["precision_profile"] = "strict"
+        return out
+
+    def _match_text_list(self, items: List[str], text: str) -> List[str]:
+        return [item for item in items if self._match_phrase_or_symbol(item, text)]
+
+    def _build_rule_publish_gate(
+        self,
+        *,
+        rule: Dict[str, Any],
+        score_payload: Dict[str, Any],
+        topic_ctx: Dict[str, Any],
+        topic_rank: int,
+        text_for_rule: str,
+    ) -> Dict[str, Any]:
+        evidence = score_payload.get("evidence") if isinstance(score_payload.get("evidence"), dict) else {}
+        precision = self._rule_precision_metadata(rule)
+        score = float(score_payload.get("score") or 0.0)
+        min_publish_score = max(
+            float(self.min_diagnostic_rule_score),
+            float(topic_ctx.get("min_score") or 0.0),
+        )
+        if str(score_payload.get("scope") or "domain") == "meta":
+            min_publish_score += 0.5
+        if topic_rank > 0:
+            min_publish_score += 1.0
+        if precision["precision_profile"] == "balanced":
+            min_publish_score += 0.5
+        elif precision["precision_profile"] == "recall":
+            min_publish_score += 2.0
+
+        precondition_hits = self._match_text_list(precision["preconditions"], text_for_rule)
+        violation_hits = self._match_text_list(precision["violation_signatures"], text_for_rule)
+        negative_hits = self._match_text_list(precision["negative_conditions"], text_for_rule)
+
+        trigger_hits = list(evidence.get("trigger_hits") or [])
+        object_hits = list(evidence.get("object_hits") or [])
+        symbol_hits = list(evidence.get("required_symbol_hits") or [])
+        llm_phrase_hits = list(evidence.get("llm_phrase_hits") or [])
+        llm_term_hits = list(evidence.get("llm_term_hits") or [])
+        strong_anchor_hits = ordered_unique(trigger_hits + symbol_hits + precondition_hits)
+        llm_only = bool(evidence.get("llm_only_soft_hit"))
+        if not llm_only:
+            llm_only = bool(llm_phrase_hits or llm_term_hits) and not bool(trigger_hits or object_hits or symbol_hits)
+
+        reasons: List[str] = []
+        if self.precision_mode == "score_only":
+            if score < self.min_diagnostic_rule_score:
+                reasons.append("below_score_only_threshold")
+            return {
+                "publishable": not reasons,
+                "reasons": reasons,
+                "score": score,
+                "min_publish_score": round(float(self.min_diagnostic_rule_score), 4),
+                "precision_profile": precision["precision_profile"],
+                "symbolic_policy": precision["symbolic_policy"],
+                "strong_anchor_hits": strong_anchor_hits,
+                "precondition_hits": precondition_hits,
+                "violation_signature_hits": violation_hits,
+                "negative_condition_hits": negative_hits,
+                "llm_hint_only": llm_only,
+            }
+        if precision["publishable"] is False:
+            reasons.append("rule_marked_unpublishable")
+        if precision["precision_profile"] == "recall":
+            reasons.append("recall_profile_not_publishable_in_strict_mode")
+        if bool(evidence.get("generic_signal_only")):
+            reasons.append("generic_signal_only")
+        if llm_only:
+            reasons.append("llm_hint_only")
+        if precision["preconditions"] and not precondition_hits:
+            reasons.append("missing_precondition_evidence")
+        if precision["violation_signatures"] and not violation_hits:
+            reasons.append("missing_violation_signature")
+        if negative_hits:
+            reasons.append("negative_condition_hit")
+        if score < min_publish_score:
+            reasons.append("below_dynamic_publish_score")
+
+        return {
+            "publishable": not reasons,
+            "reasons": reasons,
+            "score": score,
+            "min_publish_score": round(min_publish_score, 4),
+            "precision_profile": precision["precision_profile"],
+            "symbolic_policy": precision["symbolic_policy"],
+            "strong_anchor_hits": strong_anchor_hits,
+            "precondition_hits": precondition_hits,
+            "violation_signature_hits": violation_hits,
+            "negative_condition_hits": negative_hits,
+            "llm_hint_only": llm_only,
+        }
+
     def _prepare_unified_v2_rule(self, rule: Dict[str, Any]) -> Dict[str, Any]:
         prepared = dict(rule)
         rid = str(rule.get("rule_id") or rule.get("id") or "").strip()
@@ -309,13 +663,97 @@ class PhysicsRuleVerifier:
             "topic": payload["topic_obj"],
         }
 
-    def _retrieve_unified_v2_topics(self, sample: Dict[str, Any], top_k: int = 3) -> List[Dict[str, Any]]:
-        text_for_topic = "\n".join(
-            [
-                str(sample.get("question") or ""),
-                str(sample.get("context") or ""),
-            ]
+    def _prediction_symbol_set(self, sample: Dict[str, Any]) -> Set[str]:
+        return extract_prediction_symbol_set(str(sample.get("prediction") or ""))
+
+    def _maybe_llm_rerank_topics(
+        self,
+        scored: List[Dict[str, Any]],
+        sample: Dict[str, Any],
+        text_for_topic: str,
+    ) -> List[Dict[str, Any]]:
+        if not self._retrieval_tuning.get("llm_topic_rerank_enabled"):
+            return scored
+        if not self.semantic_checker._llm_available():
+            return scored
+        take = min(int(self._retrieval_tuning.get("llm_topic_rerank_pool", 8) or 8), len(scored))
+        pool = scored[:take]
+        lines = []
+        for i, item in enumerate(pool):
+            lines.append(
+                f"{i}. domain={item.get('domain')!s} topic={item.get('name')!s} score={float(item.get('score') or 0.0):.3f}"
+            )
+        user = (
+            "You reorder physics catalog TOPICS by relevance to the problem text.\n"
+            "Return JSON only: {\"order\": [indices as integers]} — a permutation of 0..n-1, most relevant first.\n\n"
+            f"Problem text (truncated):\n{text_for_topic[:6000]}\n\n"
+            "Candidates:\n" + "\n".join(lines)
         )
+        try:
+            resp = self.semantic_checker._llm_json(
+                system_prompt="You are a precise router. Output JSON only.",
+                user_prompt=user,
+            )
+        except Exception:
+            return scored
+        order = []
+        if isinstance(resp, dict):
+            order = resp.get("order") or resp.get("indices") or []
+        if not isinstance(order, list) or len(order) < 2:
+            return scored
+        reordered: List[Dict[str, Any]] = []
+        seen = set()
+        for idx in order:
+            try:
+                j = int(idx)
+            except Exception:
+                continue
+            if j < 0 or j >= len(pool) or j in seen:
+                continue
+            seen.add(j)
+            reordered.append(pool[j])
+        for i, item in enumerate(pool):
+            if i not in seen:
+                reordered.append(item)
+        tail = scored[take:]
+        return reordered + tail
+
+    def _sidecar_rule_ids(self) -> List[str]:
+        path = str(self._retrieval_tuning.get("vector_sidecar_rule_ids_path") or "").strip()
+        if not path or not Path(path).exists():
+            return []
+        try:
+            raw = Path(path).read_text(encoding="utf-8")
+        except OSError:
+            return []
+        out: List[str] = []
+        for line in raw.splitlines():
+            rid = line.strip().split("#", 1)[0].strip()
+            if rid:
+                out.append(rid)
+        return ordered_unique(out)
+
+    def _find_rule_across_catalog(self, rule_id: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        for domain in self.catalog.get("domains") or []:
+            if not isinstance(domain, dict):
+                continue
+            domain_name = str(domain.get("name") or "Unknown")
+            for topic in domain.get("topics") or []:
+                if not isinstance(topic, dict):
+                    continue
+                topic_name = str(topic.get("name") or "Unknown")
+                for raw in topic_rule_leaves(topic):
+                    if not isinstance(raw, dict):
+                        continue
+                    rid = str(raw.get("rule_id") or raw.get("id") or "").strip()
+                    if rid == rule_id:
+                        topic_wrap = dict(topic)
+                        topic_wrap.setdefault("domain", domain_name)
+                        return topic_wrap, raw
+        return None
+
+    def _retrieve_unified_v2_topics(self, sample: Dict[str, Any], top_k: int = 3) -> List[Dict[str, Any]]:
+        text_for_topic = build_unified_topic_retrieval_text(sample, tuning=self._retrieval_tuning)
         scored = [
             {
                 "domain": payload["domain"],
@@ -329,7 +767,10 @@ class PhysicsRuleVerifier:
                 for candidate in self._unified_v2_topic_candidates
             )
         ]
+        pred_syms = self._prediction_symbol_set(sample)
+        apply_topic_symbol_overlap_boost(scored, pred_syms, tuning=self._retrieval_tuning)
         scored.sort(key=lambda item: topic_sort_key({"score": item["score"], "domain": item["domain"], "topic": item["name"]}))
+        scored = self._maybe_llm_rerank_topics(scored, sample, text_for_topic)
         return scored[:top_k]
 
     def _score_unified_v2_rule(self, rule: Dict[str, Any], text_for_rule: str) -> Dict[str, Any]:
@@ -341,6 +782,59 @@ class PhysicsRuleVerifier:
             "scope": payload["scope"],
             "evidence": payload["evidence"],
         }
+
+    def _maybe_llm_rerank_rules(self, scored: List[Dict[str, Any]], text_for_rule: str) -> None:
+        if not self._retrieval_tuning.get("llm_rule_rerank_enabled"):
+            return
+        if not self.semantic_checker._llm_available() or not scored:
+            return
+        pool_size = min(int(self._retrieval_tuning.get("llm_rule_rerank_pool", 18) or 18), len(scored))
+        pool = sorted(
+            scored,
+            key=lambda x: -float(x.get("adjusted_score", x.get("score") or 0.0)),
+        )[:pool_size]
+        lines: List[str] = []
+        short_ids: List[str] = []
+        for item in pool:
+            rid = str(item["rule"].get("id") or "")
+            if not rid:
+                continue
+            short_ids.append(rid)
+            lines.append(f"- {rid}: {norm_text(item['rule'].get('title') or '')[:120]}")
+        if len(short_ids) < 2:
+            return
+        user = (
+            "Rank these verification rule ids by relevance to the student's combined problem+solution text. "
+            "Return JSON only: {\"order\": [\"rule_id\", ...]} including each id exactly once.\n\n"
+            f"Text (truncated):\n{text_for_rule[:5000]}\n\nCandidates:\n" + "\n".join(lines)
+        )
+        try:
+            resp = self.semantic_checker._llm_json(
+                system_prompt="You are a precise retrieval ranker. Output JSON only.",
+                user_prompt=user,
+            )
+        except Exception:
+            return
+        order: List[str] = []
+        if isinstance(resp, dict):
+            order = [str(x) for x in (resp.get("order") or resp.get("rule_ids") or []) if str(x)]
+        if len(order) < 2:
+            return
+        rank_by_id = {rid: i for i, rid in enumerate(order) if rid in set(short_ids)}
+        if not rank_by_id:
+            return
+        for item in scored:
+            rid = str(item["rule"].get("id") or "")
+            if rid not in rank_by_id:
+                continue
+            r = rank_by_id[rid]
+            mult = 1.0 + max(0.0, 0.28 - 0.015 * float(r))
+            item["score"] = float(item.get("score") or 0.0) * mult
+            item["adjusted_score"] = float(item.get("adjusted_score") or 0.0) * mult
+            ev = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+            ev = dict(ev)
+            ev["llm_rerank_multiplier"] = round(mult, 4)
+            item["evidence"] = ev
 
     def _retrieve_unified_v2_rules(self, topic_matches: List[Dict[str, Any]], sample: Dict[str, Any], top_n: int = 6) -> List[Dict[str, Any]]:
         text_for_rule = "\n".join(
@@ -374,12 +868,21 @@ class PhysicsRuleVerifier:
                     scope=str(score_payload.get("scope") or "domain"),
                     rule_evidence=score_payload.get("evidence") or {},
                     topic_evidence=item.get("evidence") or {},
+                    retrieval_tuning=self._retrieval_tuning,
+                )
+                publish_gate = self._build_rule_publish_gate(
+                    rule=prepared_rule,
+                    score_payload=score_payload,
+                    topic_ctx=topic_ctx,
+                    topic_rank=topic_rank,
+                    text_for_rule=text_for_rule,
                 )
                 scored.append(
                     {
                         "domain": domain_name,
                         "topic_name": topic_name,
                         "topic": topic,
+                        "topic_rank": topic_rank,
                         "rule": prepared_rule,
                         "score": score_payload["score"],
                         "adjusted_score": topic_ctx["adjusted_score"],
@@ -387,9 +890,62 @@ class PhysicsRuleVerifier:
                         "min_score": topic_ctx["min_score"],
                         "scope": score_payload.get("scope") or "domain",
                         "evidence": score_payload["evidence"],
+                        "publish_gate": publish_gate,
                         "manual_override_reason": (score_payload.get("evidence") or {}).get("manual_override_reason") or "",
                     }
                 )
+
+        seen_rule_ids = {str(item["rule"].get("id") or "") for item in scored if item.get("rule")}
+        for rid in self._sidecar_rule_ids():
+            if not rid or rid in seen_rule_ids:
+                continue
+            found = self._find_rule_across_catalog(rid)
+            if not found:
+                continue
+            topic_wrap, raw_rule = found
+            prepared_rule = self._prepare_unified_v2_rule(raw_rule)
+            score_payload = self._score_unified_v2_rule(prepared_rule, text_for_rule)
+            anchor_topic = topic_matches[0] if topic_matches else {"score": 0.0, "evidence": {}}
+            topic_ctx = rule_topic_context(
+                raw_score=float(score_payload["score"] or 0.0),
+                topic_rank=0,
+                topic_score=float(anchor_topic.get("score") or 0.0),
+                top1_topic_score=top1_score,
+                scope=str(score_payload.get("scope") or "domain"),
+                rule_evidence=score_payload.get("evidence") or {},
+                topic_evidence=anchor_topic.get("evidence") or {},
+                retrieval_tuning=self._retrieval_tuning,
+            )
+            publish_gate = self._build_rule_publish_gate(
+                rule=prepared_rule,
+                score_payload=score_payload,
+                topic_ctx=topic_ctx,
+                topic_rank=0,
+                text_for_rule=text_for_rule,
+            )
+            domain_name = str(topic_wrap.get("domain") or "Unknown")
+            topic_name = str(topic_wrap.get("name") or "Unknown")
+            scored.append(
+                {
+                    "domain": domain_name,
+                    "topic_name": topic_name,
+                    "topic": topic_wrap,
+                    "topic_rank": 0,
+                    "rule": prepared_rule,
+                    "score": score_payload["score"],
+                    "adjusted_score": topic_ctx["adjusted_score"],
+                    "topic_gap": topic_ctx["topic_gap"],
+                    "min_score": topic_ctx["min_score"],
+                    "scope": score_payload.get("scope") or "domain",
+                    "evidence": score_payload["evidence"],
+                    "publish_gate": publish_gate,
+                    "manual_override_reason": (score_payload.get("evidence") or {}).get("manual_override_reason") or "",
+                    "sidecar_injected": True,
+                }
+            )
+            seen_rule_ids.add(rid)
+
+        self._maybe_llm_rerank_rules(scored, text_for_rule)
 
         scored.sort(
             key=lambda item: rule_sort_key(
@@ -502,17 +1058,14 @@ JSON Output:
         diagnostics: List[Dict[str, Any]] = []
         used_rules: List[str] = []
         verifier_used = "top_down_rule_based"
-        agentic_actions: List[Dict[str, Any]] = []
-        symbolic_post_diagnostics: List[Dict[str, Any]] = []
-        generated_specs: List[Dict[str, Any]] = []
+        symbolic_actions: List[Dict[str, Any]] = []
         suppressed_diagnostics: List[Dict[str, Any]] = []
-        experience_candidates: Dict[int, List[SymbolicCheckSpec]] = {}
-        topic_synthesized_specs: Dict[str, List[SymbolicCheckSpec]] = {}
+        experience_code_post_diagnostics: List[Dict[str, Any]] = []
         experience_post_diagnostics: List[Dict[str, Any]] = []
-        experience_symbolic_post_diagnostics: List[Dict[str, Any]] = []
-        experience_actions: List[Dict[str, Any]] = []
+        candidate_diagnostics: List[Dict[str, Any]] = []
 
         selected_rule_records: List[Dict[str, Any]] = []
+        semantic_rule_records: List[Dict[str, Any]] = []
         retrieved_topics_payload: List[Dict[str, Any]] = []
         retrieved_rules_payload: List[Dict[str, Any]] = []
 
@@ -533,7 +1086,9 @@ JSON Output:
                 if topic:
                     print(f"Retrieved primary topic: {topic['domain']} - {topic['name']}")
 
-            selected_rule_records = self._retrieve_unified_v2_rules(topic_matches, sample, top_n=6)
+            selected_rule_records = self._retrieve_unified_v2_rules(
+                topic_matches, sample, top_n=int(self.unified_rule_top_n)
+            )
             retrieved_rules_payload = [
                 {
                     "rule_id": str(item["rule"].get("id") or ""),
@@ -542,15 +1097,30 @@ JSON Output:
                     "title": str(item["rule"].get("title") or ""),
                     "scope": str(item.get("scope") or item["rule"].get("scope") or "domain"),
                     "score": float(item.get("score") or 0.0),
+                    "publish_gate": item.get("publish_gate") or {},
                     "manual_override_reason": str(item.get("manual_override_reason") or ""),
                     "evidence": item.get("evidence") or {},
                 }
                 for item in selected_rule_records
             ]
+            semantic_rule_records = [
+                item for item in selected_rule_records
+                if bool((item.get("publish_gate") or {}).get("publishable"))
+            ]
+            for item in selected_rule_records:
+                gate = item.get("publish_gate") if isinstance(item.get("publish_gate"), dict) else {}
+                if gate and not bool(gate.get("publishable")):
+                    suppressed_diagnostics.append(
+                        {
+                            "reason": "rule_publish_gate_precheck",
+                            "rule_id": str((item.get("rule") or {}).get("id") or ""),
+                            "publish_gate": gate,
+                        }
+                    )
 
             current_translations: Dict[str, Dict[str, str]] = {}
             rule_ids: List[str] = []
-            for item in selected_rule_records:
+            for item in semantic_rule_records:
                 rule = item["rule"]
                 rid = str(rule.get("id") or "").strip()
                 if not rid:
@@ -558,27 +1128,18 @@ JSON Output:
                 rule_ids.append(rid)
                 current_translations[rid] = {"srd": self._build_srd_for_rule(rule)}
 
-            topic_synthesized_specs = {}
-            seen_topic_keys = set()
-            for item in topic_matches:
-                topic_obj = item.get("topic") if isinstance(item.get("topic"), dict) else None
-                if not topic_obj:
-                    continue
-                topic_key = self._normalize_topic_key(topic_obj.get("domain"), topic_obj.get("name"))
-                if topic_key in seen_topic_keys:
-                    continue
-                seen_topic_keys.add(topic_key)
-                adapted_topic = self._build_unified_v2_topic_for_synthesis(topic_obj)
-                topic_synthesized_specs.update(
-                    self.spec_synthesizer.synthesize_topic(topic_obj.get("domain", "Unknown"), adapted_topic)
-                )
-
             if rule_ids:
                 self.semantic_checker.rules_to_check = rule_ids
                 self.semantic_checker.rule_translations = current_translations
                 print(f"Running unified v2 rule check with {len(rule_ids)} rules...")
                 result = self.semantic_checker.analyze(sample)
                 diagnostics = result.get("diagnostics", [])
+                candidate_diagnostics = list(diagnostics)
+                diagnostics, low_conf_suppressed = self._filter_low_confidence_unified_diagnostics(
+                    diagnostics,
+                    semantic_rule_records,
+                )
+                suppressed_diagnostics.extend(low_conf_suppressed)
                 used_rules = rule_ids
                 verifier_used = "unified_v2_rule_based"
         else:
@@ -588,7 +1149,6 @@ JSON Output:
             if topic:
                 print(f"Classified into: {topic['domain']} - {topic['name']}")
                 rules = topic.get("rules", [])
-                topic_synthesized_specs = self.spec_synthesizer.synthesize_topic(topic.get("domain", "Unknown"), topic)
 
                 if rules:
                     # 2. Prepare Rule Verifier
@@ -617,12 +1177,10 @@ JSON Output:
             else:
                 print("Could not classify topic or no topic found.")
 
-        ctx: Optional[RuleContext] = None
-        if (self.enable_agentic_postcheck and diagnostics) or (self.enable_experience_pipeline and topic):
-            ctx = self._build_rule_context(sample)
-
-        # 4. Agentic post-check: for each diagnostic, decide whether to build a symbolic cross-check spec.
-        # Build a lookup from rule id -> rule dict for symbolic_hint access (unified mode)
+        # Build the lookup from rule id -> rule dict + topic for downstream
+        # release-gate metadata. The symbolic check now runs deterministic
+        # generated experience code keyed by ``rule_id``; no LLM, no
+        # primitive+spec catalog, no experience bank. It is on by default.
         _rule_by_id: Dict[str, Dict[str, Any]] = {}
         _rule_topic_by_id: Dict[str, Dict[str, Any]] = {}
         if self._unified_v2_mode:
@@ -648,186 +1206,166 @@ JSON Output:
                         "name": str(topic.get("name") or "Unknown"),
                     }
 
-        if self.enable_agentic_postcheck and diagnostics and ctx is not None:
+        symbolic_enabled = bool(self.enable_symbolic_check) and self.experience_code_engine.available
+        sample_for_check: Dict[str, Any] = {
+            "question": str(sample.get("question") or ""),
+            "prediction": str(sample.get("prediction") or ""),
+            "answer": str(sample.get("answer") or ""),
+            "context": str(sample.get("context") or ""),
+            "id": sample.get("id"),
+        }
 
-            checks_used = 0
+        # 4. Top-down: run experience-rule code for every LLM diagnostic whose
+        #    rule has a generated check function. Results are tagged with a
+        #    ``exp_code::<rule_id>`` spec id and feed into the reconciliation
+        #    step below; the legacy ``symbolic_cross_checks`` /
+        #    ``symbolic_reconciliation`` fields are preserved so existing
+        #    release-gate logic keeps working unchanged.
+        #
+        #    When the LLM diagnostic's rule_id is not directly covered by the
+        #    manifest (rule_id taxonomies can drift between catalog versions),
+        #    fall back to a topic bridge: run every manifest check that lives
+        #    under the same (domain, topic) pair. ``fail`` results from such
+        #    bridge checks are accepted only as corroboration (mark supported);
+        #    ``pass`` is treated as ``inconclusive`` because the underlying
+        #    rule statement may not match the LLM diagnostic's assertion.
+        triggered_rule_ids: Set[str] = set()
+        if symbolic_enabled and diagnostics:
             for d in diagnostics:
                 if not isinstance(d, dict):
                     continue
-                rid = d.get("rule")
+                rid = str(d.get("rule") or "").strip()
                 if not rid:
                     continue
-
-                # 4.1 Try to find an existing symbolic check from catalog first.
-                matched_topic = _rule_topic_by_id.get(str(rid), topic or {"domain": "Unknown", "name": "Unknown"})
-                domain_name = matched_topic.get("domain") if isinstance(matched_topic, dict) else "Unknown"
-                topic_name = matched_topic.get("name") if isinstance(matched_topic, dict) else "Unknown"
-                existing = self.symbolic_catalog.find_applicable(domain=domain_name, topic=topic_name, diagnostic=d)
-                promoted = self.symbolic_experience_bank.get_promoted_specs(domain=domain_name, topic=topic_name, rule_id=rid)
-                synthesized = list(topic_synthesized_specs.get(rid, []))
-
-                # In unified mode, experience rules may carry symbolic_hint –
-                # convert it into a GeneratedSymbolicCheckSpec and include it.
-                inline_hint_specs: List[GeneratedSymbolicCheckSpec] = []
-                rule_obj = _rule_by_id.get(rid)
-                if rule_obj and rule_obj.get("symbolic_hint"):
-                    hint_spec = self._build_experience_symbolic_spec_from_hint(
-                        rule_id=rid,
-                        title=rule_obj.get("title", ""),
-                        check_logic=rule_obj.get("check_logic", ""),
-                        symbolic_hint=rule_obj["symbolic_hint"],
-                    )
-                    if hint_spec is not None:
-                        inline_hint_specs.append(hint_spec)
-
-                resolved_specs = self._merge_specs(
-                    [catalog_spec_to_generated(s) for s in existing],
-                    [catalog_spec_to_generated(s) for s in promoted],
-                    [catalog_spec_to_generated(s) for s in synthesized],
-                    inline_hint_specs,
-                )
-
-                if synthesized:
-                    experience_candidates[id(d)] = synthesized
-
-                if resolved_specs:
-                    spec_ids = [s.spec_id for s in resolved_specs]
-                    d.setdefault("symbolic_cross_checks", []).extend(spec_ids)
-                    run_result = self.symbolic_executor.run(ctx, resolved_specs)
-                    symbolic_post_diagnostics.extend(run_result)
-                    agentic_actions.append(
+                triggered_rule_ids.add(rid)
+                if self.experience_code_engine.has_rule(rid):
+                    res = self.experience_code_engine.run_rule(rid, sample_for_check)
+                    if res is None:
+                        continue
+                    spec_id = f"exp_code::{rid}"
+                    payload = {
+                        "spec_id": spec_id,
+                        "rule": f"experience_code::{rid}",
+                        "rule_id": rid,
+                        "primitive": "experience_code",
+                        "title": f"Experience code check {rid}",
+                        "result": res.get("result", "inconclusive"),
+                        "symbolic_result": res.get("result", "inconclusive"),
+                        "message": str(res.get("message") or ""),
+                        "evidence": str(res.get("evidence") or ""),
+                        "source": "experience_code_top_down",
+                    }
+                    experience_code_post_diagnostics.append(payload)
+                    d.setdefault("symbolic_cross_checks", []).append(spec_id)
+                    symbolic_actions.append(
                         {
-                            "need": False,
-                            "reason": "used_resolved_symbolic_checks",
                             "diagnostic_rule": rid,
-                            "spec_ids": spec_ids,
-                            "sources": {
-                                "catalog": [s.spec_id for s in existing],
-                                "experience_bank": [s.spec_id for s in promoted],
-                                "derived_from_rule": [s.spec_id for s in synthesized],
-                                "inline_hint": [s.spec_id for s in inline_hint_specs],
-                            },
+                            "spec_ids": [spec_id],
+                            "source": "experience_code_top_down",
+                            "result": payload["result"],
                         }
                     )
-
-                    if any(r.get("symbolic_result") in {"pass", "fail"} for r in run_result if isinstance(r, dict)):
+                else:
+                    # Topic bridge: try every manifest check in the same topic.
+                    topic_pair = _rule_topic_by_id.get(rid) or {}
+                    domain_name = str(topic_pair.get("domain") or "Unknown")
+                    topic_name = str(topic_pair.get("name") or "Unknown")
+                    if domain_name == "Unknown" and topic_name == "Unknown":
                         continue
+                    bridge_rule_ids = self.experience_code_engine.list_topic_rule_ids(domain_name, topic_name)
+                    bridge_limit = max(1, int(self.symbolic_topic_check_limit or 0))
+                    bridge_rule_ids = bridge_rule_ids[:bridge_limit]
+                    for bridge_rid in bridge_rule_ids:
+                        triggered_rule_ids.add(bridge_rid)
+                        bres = self.experience_code_engine.run_rule(bridge_rid, sample_for_check)
+                        if bres is None:
+                            continue
+                        bridge_spec_id = f"exp_code_bridge::{rid}::{bridge_rid}"
+                        bridge_result = bres.get("result", "inconclusive")
+                        # Topic-bridge ``pass`` is downgraded to ``inconclusive``
+                        # because a different rule passing does not refute the
+                        # LLM's specific assertion. Only ``fail`` corroborates.
+                        sym_result = bridge_result if bridge_result == "fail" else "inconclusive"
+                        bridge_payload = {
+                            "spec_id": bridge_spec_id,
+                            "rule": f"experience_code::{bridge_rid}",
+                            "rule_id": bridge_rid,
+                            "bridge_for_rule_id": rid,
+                            "primitive": "experience_code",
+                            "title": f"Experience code topic-bridge {bridge_rid}",
+                            "result": bridge_result,
+                            "symbolic_result": sym_result,
+                            "message": str(bres.get("message") or ""),
+                            "evidence": str(bres.get("evidence") or ""),
+                            "source": "experience_code_topic_bridge",
+                        }
+                        experience_code_post_diagnostics.append(bridge_payload)
+                        # Only attach bridge spec to the diagnostic when it
+                        # corroborates (fail). Avoid polluting the spec list
+                        # with neutral inconclusive entries.
+                        if sym_result == "fail":
+                            d.setdefault("symbolic_cross_checks", []).append(bridge_spec_id)
+                            symbolic_actions.append(
+                                {
+                                    "diagnostic_rule": rid,
+                                    "spec_ids": [bridge_spec_id],
+                                    "source": "experience_code_topic_bridge",
+                                    "result": bridge_result,
+                                }
+                            )
 
-                if checks_used >= self.agentic_max_checks_per_sample or not self.semantic_checker._llm_available():
-                    continue
-
-                srd = None
-                rule_obj = _rule_by_id.get(str(rid))
-                if rule_obj:
-                    srd = self._build_srd_for_rule(rule_obj)
-                if not srd:
-                    continue
-
-                agent_payload = self._agentic_decide_symbolic_check(srd=srd, diagnostic=d)
-                agentic_actions.append(agent_payload)
-
-                spec_dict = agent_payload.get("spec") if isinstance(agent_payload, dict) else None
-                need = bool(agent_payload.get("need")) if isinstance(agent_payload, dict) else False
-                if not need or not isinstance(spec_dict, dict):
-                    continue
-
-                try:
-                    spec_id = str(spec_dict.get("spec_id"))
-                    spec = GeneratedSymbolicCheckSpec(
-                        spec_id=spec_id,
-                        title=str(spec_dict.get("title")),
-                        description=str(spec_dict.get("description")),
-                        primitive=str(spec_dict.get("primitive")),
-                        params=dict(spec_dict.get("params") or {}),
-                        source_rule_id=rid,
-                        source_message_substring=str(d.get("message") or "")[:200],
-                    )
-                except Exception:
-                    continue
-
-                self.symbolic_registry.upsert(spec)
-                generated_specs.append(spec.__dict__)
-                d.setdefault("symbolic_cross_checks", []).append(spec.spec_id)
-                checks_used += 1
-                experience_candidates.setdefault(id(d), []).append(
-                    SymbolicCheckSpec(
-                        spec_id=spec.spec_id,
-                        title=spec.title,
-                        description=spec.description,
-                        primitive=spec.primitive,
-                        params=spec.params,
-                        match_rule_ids=[rid],
-                        match_keywords=[str(d.get("message") or "")[:60]],
-                    )
-                )
-
-            # Execute newly generated specs (avoid re-running the entire registry every time)
-            if generated_specs:
-                specs_to_run = [GeneratedSymbolicCheckSpec(**s) for s in generated_specs]
-                symbolic_post_diagnostics.extend(self.symbolic_executor.run(ctx, specs_to_run))
-
-            symbolic_post_diagnostics = self._dedupe_symbolic_post_diagnostics(symbolic_post_diagnostics)
-
-            # 5. Reconcile: if symbolic check refutes an original diagnostic, suppress/modify it.
-            spec_failed: set[str] = set()
-            spec_inconclusive: set[str] = set()
-            for sd in symbolic_post_diagnostics:
-                if not isinstance(sd, dict):
-                    continue
-                spec_id = sd.get("spec_id")
-                if not spec_id and isinstance(sd.get("rule"), str) and "::" in sd.get("rule"):
-                    spec_id = sd.get("rule").split("::", 1)[1]
+        # 5. Reconcile LLM diagnostics against deterministic experience code
+        #    outcomes. ``fail`` reinforces the diagnostic (mark supported);
+        #    ``pass`` refutes it (suppress); ``inconclusive`` keeps it tagged.
+        if symbolic_enabled and diagnostics and experience_code_post_diagnostics:
+            spec_failed: Set[str] = set()
+            spec_passed: Set[str] = set()
+            spec_inconclusive: Set[str] = set()
+            for sd in experience_code_post_diagnostics:
+                spec_id = str(sd.get("spec_id") or "")
                 if not spec_id:
                     continue
-                if sd.get("symbolic_result") == "fail":
-                    spec_failed.add(str(spec_id))
-                elif sd.get("symbolic_result") == "inconclusive":
-                    spec_inconclusive.add(str(spec_id))
+                flag = sd.get("symbolic_result")
+                if flag == "fail":
+                    spec_failed.add(spec_id)
+                elif flag == "pass":
+                    spec_passed.add(spec_id)
+                elif flag == "inconclusive":
+                    spec_inconclusive.add(spec_id)
 
             reconciled: List[Dict[str, Any]] = []
             for d in diagnostics:
                 if not isinstance(d, dict):
+                    reconciled.append(d)
                     continue
-                spec_ids = d.get("symbolic_cross_checks")
+                spec_ids = [str(s) for s in (d.get("symbolic_cross_checks") or [])]
                 if not spec_ids:
                     reconciled.append(d)
-                    self._record_symbolic_experience(
-                        sample=sample,
-                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
-                        diagnostic=d,
-                        outcome="no_symbolic_match",
-                        proposed_specs=experience_candidates.get(id(d), []),
-                    )
                     continue
-                spec_ids = [str(s) for s in spec_ids]
                 any_fail = any(s in spec_failed for s in spec_ids)
+                any_pass = any(s in spec_passed for s in spec_ids)
                 any_inconclusive = any(s in spec_inconclusive for s in spec_ids)
 
-                # Conservative policy:
-                # - Keep if any check failed (supports the LLM diagnostic)
-                # - Keep if any check is inconclusive
-                # - Suppress only if ALL checks pass (no fail, no inconclusive)
+                # Quote-aware safety: when ``pass`` would refute the
+                # diagnostic, only suppress if the diagnostic's quote does not
+                # already overlap the rule's required symbols. Otherwise we
+                # fall back to ``quote_overlap`` which keeps the diagnostic.
+                quote_overlap_blocks_pass = False
+                if any_pass:
+                    rule_obj = _rule_by_id.get(str(d.get("rule")))
+                    if isinstance(rule_obj, dict):
+                        required_quote_symbols = self._quote_required_symbols(rule_obj)
+                        evidence = d.get("evidence") if isinstance(d.get("evidence"), dict) else {}
+                        quote = str(evidence.get("quote") or "").strip()
+                        if quote and required_quote_symbols:
+                            _, ratio = self._quote_symbol_overlap(quote, required_quote_symbols)
+                            if ratio >= 0.5:
+                                quote_overlap_blocks_pass = True
+
                 if any_fail:
                     d["symbolic_reconciliation"] = {"status": "supported", "spec_ids": spec_ids}
                     reconciled.append(d)
-                    self._record_symbolic_experience(
-                        sample=sample,
-                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
-                        diagnostic=d,
-                        outcome="supported",
-                        proposed_specs=experience_candidates.get(id(d), []),
-                    )
-                elif any_inconclusive:
-                    d["symbolic_reconciliation"] = {"status": "inconclusive", "spec_ids": spec_ids}
-                    reconciled.append(d)
-                    self._record_symbolic_experience(
-                        sample=sample,
-                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
-                        diagnostic=d,
-                        outcome="inconclusive",
-                        proposed_specs=experience_candidates.get(id(d), []),
-                    )
-                else:
+                elif any_pass and not quote_overlap_blocks_pass:
                     suppressed_diagnostics.append(
                         {
                             "reason": "symbolic_check_refuted_original",
@@ -835,80 +1373,198 @@ JSON Output:
                             "original_diagnostic": d,
                         }
                     )
-                    self._record_symbolic_experience(
-                        sample=sample,
-                        topic=_rule_topic_by_id.get(str(d.get("rule")), topic),
-                        diagnostic=d,
-                        outcome="suppressed",
-                        proposed_specs=experience_candidates.get(id(d), []),
-                    )
-
+                elif quote_overlap_blocks_pass:
+                    d["symbolic_reconciliation"] = {"status": "quote_overlap", "spec_ids": spec_ids}
+                    reconciled.append(d)
+                else:
+                    # All specs returned ``inconclusive`` (or had no signal).
+                    # Leave the diagnostic untagged so the release gate treats
+                    # it as neutral ``none`` rather than down-weighted
+                    # ``inconclusive``. The catalog's experience-code coverage
+                    # is uneven and many functions conservatively return
+                    # ``inconclusive``; treating that as a negative signal
+                    # would prematurely suppress otherwise valid diagnostics.
+                    reconciled.append(d)
             diagnostics = reconciled
 
-        # 6. Experience-rule pipeline: add bottom-up experience diagnostics and corresponding symbolic checks.
-        if self.enable_experience_pipeline and topic and ctx is not None:
-            exp_rules = self._get_experience_rules_for_topic(topic)
-            if exp_rules:
-                text_all = "\n".join([
-                    sample.get("question", ""),
-                    sample.get("context", ""),
-                    sample.get("prediction", ""),
-                    sample.get("answer", ""),
-                ])
-                # Keep per-sample overhead bounded.
-                for rule in exp_rules[:40]:
-                    trig = self._experience_rule_triggered(rule, text_all)
-                    if not trig.get("triggered"):
+        if self._unified_v2_mode and diagnostics:
+            diagnostics, release_suppressed = self._apply_diagnostic_release_gate(
+                diagnostics,
+                semantic_rule_records or selected_rule_records,
+            )
+            suppressed_diagnostics.extend(release_suppressed)
+
+        # 6. Bottom-up experience-code pass: run deterministic checks for
+        #    every retrieved-topic rule that does not already have an LLM
+        #    diagnostic. Any rule whose code returns ``fail`` becomes a new
+        #    bottom-up diagnostic, but only when its evidence string can be
+        #    located in the prediction text. Non-locatable fails are recorded
+        #    in the audit trail (so the symbolic activity is preserved) but
+        #    never published, because un-locatable findings cannot be matched
+        #    against ground-truth and would only inflate question-level FPs.
+        prediction_text = str(sample.get("prediction") or "")
+        paragraphs_for_location: List[Dict[str, Any]] = []
+        if prediction_text and symbolic_enabled:
+            paragraphs_for_location = self.semantic_checker._paragraph_ranges(prediction_text)
+
+        def _build_location_for_evidence(evidence_text: str) -> Optional[Dict[str, Any]]:
+            ev = str(evidence_text or "").strip()
+            if not ev or not prediction_text:
+                return None
+            # Try the evidence string as-is, then progressively shorter prefixes
+            # (common shape: "<short snippet>: <explanation>"). Stop on the
+            # first locatable substring of length >= 6.
+            candidates: List[str] = [ev]
+            if ":" in ev:
+                head = ev.split(":", 1)[0].strip()
+                if head and head not in candidates:
+                    candidates.append(head)
+            if len(ev) > 80:
+                candidates.append(ev[:80].strip())
+            seen: Set[str] = set()
+            for cand in candidates:
+                if not cand or cand in seen:
+                    continue
+                seen.add(cand)
+                if len(cand) < 6:
+                    continue
+                located = self.semantic_checker._locate_quote_span(prediction_text, cand)
+                if not bool(located.get("span_valid")):
+                    continue
+                start = int(located.get("start_char") or -1)
+                end = int(located.get("end_char") or -1)
+                if start < 0 or end <= start:
+                    continue
+                paragraph = self.semantic_checker._paragraph_from_offset(
+                    paragraphs_for_location, start
+                )
+                paragraph_index = int(paragraph.get("paragraph_index") or -1) if paragraph else -1
+                paragraph_start = int(paragraph.get("start_char") or -1) if paragraph else -1
+                paragraph_end = int(paragraph.get("end_char") or -1) if paragraph else -1
+                return {
+                    "quote": cand,
+                    "location": {
+                        "start_char": start,
+                        "end_char": end,
+                        "line_index": int(located.get("line_index") or -1),
+                        "span_valid": True,
+                        "locate_method": f"experience_code_{located.get('locate_method') or 'quote_match'}",
+                        "locate_confidence": float(located.get("locate_confidence") or 0.6),
+                        "paragraph_index": paragraph_index,
+                        "paragraph_start_char": paragraph_start,
+                        "paragraph_end_char": paragraph_end,
+                        "paragraph_valid": paragraph_index >= 1,
+                        "paragraph_source": "experience_code_anchor",
+                        "locatable_valid": True,
+                    },
+                }
+            return None
+
+        if symbolic_enabled:
+            topic_pairs: List[Tuple[str, str]] = []
+            seen_pairs: Set[Tuple[str, str]] = set()
+            if self._unified_v2_mode:
+                for tp in retrieved_topics_payload[:3]:
+                    pair = (str(tp.get("domain") or "Unknown"), str(tp.get("topic") or "Unknown"))
+                    if pair in seen_pairs:
                         continue
+                    seen_pairs.add(pair)
+                    topic_pairs.append(pair)
+            elif topic:
+                pair = (str(topic.get("domain") or "Unknown"), str(topic.get("name") or "Unknown"))
+                if pair not in seen_pairs:
+                    topic_pairs.append(pair)
 
-                    rule_id = str(rule.get("rule_id") or "exp_unknown")
-                    diag = {
-                        "severity": "warning",
-                        "rule": f"experience::{rule_id}",
-                        "symbol": None,
-                        "message": f"Experience rule matched: {rule.get('title')}",
-                        "evidence": ",".join(trig.get("hits") or [])[:200],
-                        "experience_rule": {
-                            "title": rule.get("title"),
-                            "trigger": rule.get("trigger"),
-                            "check_logic": rule.get("check_logic"),
-                            "error_type": rule.get("error_type"),
-                        },
+            for domain_name, topic_name in topic_pairs:
+                rule_ids_for_topic = self.experience_code_engine.list_topic_rule_ids(domain_name, topic_name)
+                if self.symbolic_topic_check_limit > 0:
+                    rule_ids_for_topic = rule_ids_for_topic[: self.symbolic_topic_check_limit]
+                for rid in rule_ids_for_topic:
+                    if rid in triggered_rule_ids:
+                        continue
+                    triggered_rule_ids.add(rid)
+                    res = self.experience_code_engine.run_rule(rid, sample_for_check)
+                    if res is None:
+                        continue
+                    spec_id = f"exp_code::{rid}"
+                    payload = {
+                        "spec_id": spec_id,
+                        "rule": f"experience_code::{rid}",
+                        "rule_id": rid,
+                        "primitive": "experience_code",
+                        "title": f"Experience code check {rid}",
+                        "result": res.get("result", "inconclusive"),
+                        "symbolic_result": res.get("result", "inconclusive"),
+                        "message": str(res.get("message") or ""),
+                        "evidence": str(res.get("evidence") or ""),
+                        "source": "experience_code_bottom_up",
                     }
+                    experience_code_post_diagnostics.append(payload)
+                    symbolic_actions.append(
+                        {
+                            "diagnostic_rule": rid,
+                            "spec_ids": [spec_id],
+                            "source": "experience_code_bottom_up",
+                            "result": payload["result"],
+                        }
+                    )
+                    if payload["result"] != "fail":
+                        continue
+                    located_evidence = _build_location_for_evidence(payload["evidence"])
+                    if located_evidence is None:
+                        # Try the message text as a last-resort anchor (some
+                        # functions return only a message, not a quote).
+                        located_evidence = _build_location_for_evidence(payload["message"])
+                    if located_evidence is None:
+                        # Last resort: try the catalog rule's own
+                        # ``trigger_keywords`` / ``object_keywords`` /
+                        # ``required_symbols``. These are precisely the tokens
+                        # the rule was designed to fire on, so anchoring there
+                        # keeps the bottom-up finding semantically aligned
+                        # with the rule even if the generated function did
+                        # not surface a usable quote.
+                        rule_obj = _rule_by_id.get(rid) if isinstance(_rule_by_id.get(rid), dict) else None
+                        if rule_obj:
+                            mf = rule_obj.get("match_features") if isinstance(rule_obj.get("match_features"), dict) else {}
+                            anchor_candidates: List[str] = []
+                            for key in ("trigger_keywords", "object_keywords", "required_symbols"):
+                                vals = mf.get(key) or []
+                                if isinstance(vals, list):
+                                    for v in vals:
+                                        if isinstance(v, str) and len(v.strip()) >= 3:
+                                            anchor_candidates.append(v.strip())
+                            for cand in anchor_candidates[:6]:
+                                located_evidence = _build_location_for_evidence(cand)
+                                if located_evidence is not None:
+                                    break
+                    if located_evidence is None:
+                        # Cannot locate in prediction; skip publishing to
+                        # protect precision but keep the audit record above.
+                        payload["publish_skipped"] = "non_locatable"
+                        continue
+                    experience_post_diagnostics.append(
+                        {
+                            "severity": "warning",
+                            "rule": f"experience_code::{rid}",
+                            "symbol": None,
+                            "message": f"Experience code check failed: {payload['message']}"[:300],
+                            "evidence": located_evidence,
+                            "experience_code": {
+                                "rule_id": rid,
+                                "spec_id": spec_id,
+                                "domain": domain_name,
+                                "topic": topic_name,
+                            },
+                            "symbolic_reconciliation": {
+                                "status": "supported",
+                                "spec_ids": [spec_id],
+                            },
+                        }
+                    )
 
-                    spec = self._build_experience_symbolic_spec(rule)
-                    if spec is not None:
-                        diag["experience_symbolic_cross_checks"] = [spec.spec_id]
-                        run_result = self.symbolic_executor.run(ctx, [spec])
-                        experience_symbolic_post_diagnostics.extend(run_result)
-
-                        result_flag = None
-                        for rr in run_result:
-                            if isinstance(rr, dict) and rr.get("spec_id") == spec.spec_id:
-                                result_flag = rr.get("symbolic_result")
-                                break
-
-                        if result_flag == "fail":
-                            # Experience symbolic check disagrees with the triggered experience rule -> suppress.
-                            experience_actions.append(
-                                {
-                                    "rule_id": rule_id,
-                                    "action": "suppressed_by_symbolic",
-                                    "spec_id": spec.spec_id,
-                                }
-                            )
-                            continue
-                        if result_flag in {"pass", "inconclusive"}:
-                            diag["experience_symbolic_reconciliation"] = {
-                                "status": "supported" if result_flag == "pass" else "inconclusive",
-                                "spec_ids": [spec.spec_id],
-                            }
-
-                    experience_post_diagnostics.append(diag)
-
-                # Merge experience diagnostics into final diagnostics.
+            if experience_post_diagnostics:
                 diagnostics.extend(experience_post_diagnostics)
-            
+
         return {
             "id": sample.get("id"),
             "topic": topic.get("name") if topic else None,
@@ -916,211 +1572,34 @@ JSON Output:
             "unified_mode": self._unified_mode,
             "retrieved_topics": retrieved_topics_payload,
             "retrieved_rules": retrieved_rules_payload,
+            "candidate_diagnostics": candidate_diagnostics,
             "diagnostics": diagnostics,
-            "symbolic_post_diagnostics": symbolic_post_diagnostics,
+            "symbolic_post_diagnostics": list(experience_code_post_diagnostics),
             "experience_post_diagnostics": experience_post_diagnostics,
-            "experience_symbolic_post_diagnostics": experience_symbolic_post_diagnostics,
+            "experience_code_post_diagnostics": experience_code_post_diagnostics,
+            "experience_symbolic_post_diagnostics": [],
+            "symbolic_check": {
+                "enabled": symbolic_enabled,
+                "manifest": self.experience_code_manifest_path,
+                "module": self.experience_code_module,
+                "actions": symbolic_actions,
+                "suppressed_diagnostics": suppressed_diagnostics,
+            },
+            # Backwards-compatible aliases for downstream tooling that still
+            # reads ``agentic`` / ``experience_pipeline`` keys.
             "agentic": {
-                "enabled": self.enable_agentic_postcheck,
-                "actions": agentic_actions,
-                "generated_specs": generated_specs,
+                "enabled": False,
+                "actions": [],
+                "generated_specs": [],
                 "suppressed_diagnostics": suppressed_diagnostics,
             },
             "experience_pipeline": {
-                "enabled": self.enable_experience_pipeline,
-                "actions": experience_actions,
-                "rules_path": self.experience_rules_path,
+                "enabled": symbolic_enabled,
+                "actions": symbolic_actions,
+                "manifest": self.experience_code_manifest_path,
             },
-            "score": -1.0 * len(diagnostics) # Simple scoring
+            "score": -1.0 * len(diagnostics),
         }
-
-    def _merge_specs(self, *groups: List[GeneratedSymbolicCheckSpec]) -> List[GeneratedSymbolicCheckSpec]:
-        merged: List[GeneratedSymbolicCheckSpec] = []
-        seen = set()
-        for group in groups:
-            for spec in group or []:
-                spec_id = getattr(spec, "spec_id", None)
-                if not spec_id or spec_id in seen:
-                    continue
-                merged.append(spec)
-                seen.add(spec_id)
-        return merged
-
-    @staticmethod
-    def _build_experience_symbolic_spec_from_hint(
-        *,
-        rule_id: str,
-        title: str,
-        check_logic: str,
-        symbolic_hint: Dict[str, Any],
-    ) -> Optional[GeneratedSymbolicCheckSpec]:
-        """Convert an inline symbolic_hint from a unified rule into a GeneratedSymbolicCheckSpec."""
-        primitive = str(symbolic_hint.get("primitive") or "none").strip()
-        if primitive in {"", "none"}:
-            return None
-
-        canonical = str(symbolic_hint.get("canonical") or "").strip()
-        required_symbols = [str(s) for s in (symbolic_hint.get("required_symbols") or []) if str(s).strip()]
-
-        params: Dict[str, Any] = {}
-        if primitive in {"equation_equivalence", "inequality_consistency"}:
-            if not canonical or len(required_symbols) < 2:
-                return None
-            params = {
-                "canonical_latex": [canonical],
-                "required_symbols": required_symbols,
-                "allow_scalar_multiple": False,
-                "allow_additive_constant": False,
-            }
-        elif primitive == "formula_pattern":
-            if len(required_symbols) < 2:
-                return None
-            relation = "=" if "=" in canonical else None
-            params = {
-                "patterns": [{"all_tokens": required_symbols, "relation": relation}],
-                "required_symbols": required_symbols,
-            }
-        elif primitive == "power_law":
-            if len(required_symbols) < 2:
-                return None
-            params = {
-                "dependent_candidates": required_symbols[:1],
-                "independent_candidates": required_symbols[1:],
-                "expected_exponent": 1,
-                "tolerance": 0.1,
-            }
-        else:
-            return None
-
-        return GeneratedSymbolicCheckSpec(
-            spec_id=f"unified_hint_{rule_id}",
-            title=f"Symbolic hint: {title}",
-            description=check_logic,
-            primitive=primitive,
-            params=params,
-            source_rule_id=rule_id,
-            source_message_substring=title[:200] if title else "",
-        )
-
-    def _dedupe_symbolic_post_diagnostics(self, diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        unique: List[Dict[str, Any]] = []
-        seen = set()
-        for item in diagnostics or []:
-            if not isinstance(item, dict):
-                continue
-            key = (
-                item.get("spec_id"),
-                item.get("symbolic_result"),
-                item.get("symbol"),
-                item.get("message"),
-                item.get("evidence"),
-            )
-            if key in seen:
-                continue
-            unique.append(item)
-            seen.add(key)
-        return unique
-
-    def _record_symbolic_experience(
-        self,
-        *,
-        sample: Dict[str, Any],
-        topic: Optional[Dict[str, Any]],
-        diagnostic: Dict[str, Any],
-        outcome: str,
-        proposed_specs: List[SymbolicCheckSpec],
-    ) -> None:
-        if not topic or not isinstance(diagnostic, dict):
-            return
-        spec_ids = [str(s) for s in (diagnostic.get("symbolic_cross_checks") or []) if s]
-        self.symbolic_experience_bank.record_event(
-            domain=str(topic.get("domain") or "Unknown"),
-            topic=str(topic.get("name") or "Unknown"),
-            rule_id=str(diagnostic.get("rule") or "<unknown>"),
-            diagnostic=diagnostic,
-            outcome=outcome,
-            had_symbolic_match=bool(spec_ids),
-            spec_ids=spec_ids,
-            proposed_specs=proposed_specs,
-        )
-
-    def _agentic_decide_symbolic_check(self, srd: str, diagnostic: Dict[str, Any]) -> Dict[str, Any]:
-        """Ask LLM whether a symbolic cross-check should be constructed, and return a safe spec if needed."""
-        system_prompt = (
-            "You are a cautious physics verification agent. "
-            "Your job: decide if a reported rule violation needs an additional symbolic cross-check. "
-            "Be conservative: if unsure, say need=false. "
-            "You must output ONLY valid JSON."
-        )
-
-        available = {
-            "power_law": {
-                "description": "Check whether dependent ~ independent^p in any equation that contains both variables.",
-                "params_schema": {
-                    "dependent_candidates": "list[str]",
-                    "independent_candidates": "list[str]",
-                    "dependent_power": "number (default 1). Interprets check as dependent^dependent_power ~ independent^expected_exponent. Useful for laws written as T^2 ~ r^3.",
-                    "expected_exponent": "number",
-                    "tolerance": "number (default 0.1)",
-                },
-            }
-            ,
-            "multi_power_law": {
-                "description": "Check whether dependent^k matches a multi-variable power law product over several independent variables.",
-                "params_schema": {
-                    "dependent": "str",
-                    "independents": "list[str]",
-                    "expected_exponents": "dict[str, number] or list[number] aligned with independents",
-                    "dependent_power": "number (default 1)",
-                    "tolerance": "number (default 0.1)",
-                },
-            },
-            "equation_equivalence": {
-                "description": "Check whether any extracted equation is algebraically equivalent to a canonical equation (up to scalar multiple).",
-                "params_schema": {
-                    "canonical_latex": "list[str] (canonical equations in LaTeX)",
-                    "required_symbols": "list[str] (optional; candidate equations must contain all)",
-                    "allow_scalar_multiple": "bool (default true)",
-                    "allow_additive_constant": "bool (default false). Accepts equivalence up to an additive constant.",
-                },
-            },
-            "inequality_consistency": {
-                "description": "Check whether an extracted inequality is equivalent to a canonical safety or validity constraint.",
-                "params_schema": {
-                    "canonical_latex": "list[str] (canonical inequalities in LaTeX or plain text)",
-                    "required_symbols": "list[str] (candidate inequalities must contain all)",
-                },
-            },
-            "formula_pattern": {
-                "description": "Conservative text-pattern matcher for formulas that are hard to parse symbolically, such as vector/integral forms.",
-                "params_schema": {
-                    "patterns": "list[object] with all_tokens and optional relation",
-                    "required_symbols": "list[str]",
-                },
-            },
-        }
-
-        user_prompt = (
-            "Rule SRD:\n" + srd + "\n\n"
-            "Reported diagnostic (may be wrong):\n" + json.dumps(diagnostic, ensure_ascii=False, indent=2) + "\n\n"
-            "Available symbolic primitives:\n" + json.dumps(available, ensure_ascii=False, indent=2) + "\n\n"
-            "Return JSON: {\n"
-            "  \"need\": true|false,\n"
-            "  \"reason\": string,\n"
-            "  \"spec\": {\n"
-            "     \"spec_id\": string (unique, short),\n"
-            "     \"title\": string,\n"
-            "     \"description\": string,\n"
-            "     \"primitive\": one of ['power_law', 'multi_power_law', 'equation_equivalence', 'inequality_consistency', 'formula_pattern'],\n"
-            "     \"params\": object\n"
-            "  } | null\n"
-            "}\n"
-        )
-
-        resp = self.semantic_checker._llm_json(system_prompt=system_prompt, user_prompt=user_prompt, fallback={"need": False, "reason": "llm_unavailable", "spec": None})
-        if not isinstance(resp, dict):
-            return {"need": False, "reason": "invalid_llm_response", "spec": None}
-        return resp
 
     def _record_error_experience(self, sample: Dict, topic: Optional[Dict], errors: List[Dict]):
         experience = {
@@ -1148,12 +1627,55 @@ JSON Output:
         with open(exp_file, 'w') as f:
             json.dump(all_exps, f, indent=2, ensure_ascii=False)
 
-    def run_batch(self, samples: List[Dict]):
-        results = []
-        for s in samples:
-            print(f"Verifying sample {s.get('id')}...")
+    def run_batch(
+        self,
+        samples: List[Dict],
+        *,
+        progress_interval: int = 10,
+        verbose_per_sample: bool = False,
+    ) -> List[Dict]:
+        """Run verifier on each sample; optionally log throughput milestones.
+
+        progress_interval: emit one summary line every N completed samples (and at the end).
+            Set to 0 to disable milestone logs.
+        verbose_per_sample: if True, print a line before each sample (very noisy).
+        """
+        results: List[Dict] = []
+        total = len(samples)
+        t0 = time.perf_counter()
+
+        def _elapsed_s() -> float:
+            return time.perf_counter() - t0
+
+        def _fmt_duration(sec: float) -> str:
+            if sec < 60.0:
+                return f"{sec:.1f}s"
+            sec_i = int(sec)
+            m, s = divmod(sec_i, 60)
+            if m < 60:
+                return f"{m}m{s}s"
+            h, m = divmod(m, 60)
+            return f"{h}h{m}m{s}s"
+
+        for idx, s in enumerate(samples, start=1):
+            sid = s.get("id")
+            if verbose_per_sample:
+                print(f"Verifying sample {sid}...", flush=True)
             res = self.verify(s)
             results.append(res)
+
+            done = idx
+            milestone = done == total
+            if progress_interval > 0 and (done % progress_interval == 0 or milestone):
+                elapsed = _elapsed_s()
+                rate = elapsed / done if done else 0.0
+                print(
+                    f"[PhysicsVerifier] progress {done}/{total} samples | "
+                    f"elapsed {_fmt_duration(elapsed)} | "
+                    f"avg {rate:.2f}s/sample | last_id={sid!r}",
+                    flush=True,
+                )
+
         return results
 
 if __name__ == "__main__":

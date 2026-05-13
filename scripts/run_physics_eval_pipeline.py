@@ -47,7 +47,55 @@ def main() -> None:
     parser.add_argument("--max-recall-scan", type=int, default=500)
     parser.add_argument("--min-valid-gt-per-sample", type=int, default=1)
     parser.add_argument("--unified-catalog", type=str, default="", help="Path to unified rule catalog JSON for run_verifier.py.")
-    parser.add_argument("--disable-agentic", action="store_true", help="Disable agentic post-check in verifier for stability.")
+    parser.add_argument(
+        "--no-symbolic-check",
+        action="store_true",
+        help="Disable the experience-code symbolic verification (on by default).",
+    )
+    parser.add_argument(
+        "--experience-code-manifest",
+        type=str,
+        default="results/experience_symbolic_program_manifest_v2_unified.json",
+        help="Forwarded to run_verifier.py.",
+    )
+    parser.add_argument(
+        "--experience-code-module",
+        type=str,
+        default="symbolic.generated_experience_checks_v2_unified",
+        help="Forwarded to run_verifier.py.",
+    )
+    parser.add_argument(
+        "--symbolic-topic-check-limit",
+        type=int,
+        default=40,
+        help="Forwarded to run_verifier.py.",
+    )
+    parser.add_argument(
+        "--unified-rule-top-n",
+        type=int,
+        default=None,
+        help="Forwarded to run_verifier.py (unified v2 rule pool width per sample).",
+    )
+    parser.add_argument(
+        "--min-diagnostic-rule-score",
+        type=float,
+        default=None,
+        help="Forwarded to run_verifier.py.",
+    )
+    # Legacy flag, kept for backward compatibility (no-op).
+    parser.add_argument("--disable-agentic", action="store_true", help="(deprecated, no-op)")
+    parser.add_argument(
+        "--max-per-sample",
+        type=int,
+        default=12,
+        help="Forwarded to run_verifier.py: cap published diagnostics per sample (<=0 disables). Default 12 improves precision on long rollouts.",
+    )
+    parser.add_argument(
+        "--max-per-paragraph",
+        type=int,
+        default=2,
+        help="Forwarded to run_verifier.py: cap diagnostics per paragraph (<=0 disables). Default 2 reduces redundant alarms.",
+    )
     parser.add_argument("--run-quality-audit", action="store_true")
     parser.add_argument("--require-quality-pass", action="store_true")
     parser.add_argument("--min-locatable-ratio", type=float, default=0.70)
@@ -58,6 +106,13 @@ def main() -> None:
     parser.add_argument("--skip-run", action="store_true")
     parser.add_argument("--skip-error-eval", action="store_true")
     parser.add_argument("--skip-question-eval", action="store_true")
+    parser.add_argument(
+        "--verifier-progress-interval",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Forwarded to run_verifier.py --progress-interval for each verifier pass (0 disables).",
+    )
     args = parser.parse_args()
 
     outdir = Path(args.output_dir)
@@ -115,16 +170,44 @@ def main() -> None:
             if not bool(quality.get("quality_gate_passed")):
                 raise SystemExit(f"Quality gate failed: {quality.get('quality_gate_issues')}")
 
+    cap_parts: List[str] = []
+    if int(args.max_per_sample) > 0:
+        cap_parts.append(f"--max-per-sample {int(args.max_per_sample)}")
+    else:
+        cap_parts.append("--max-per-sample 0")
+    if int(args.max_per_paragraph) > 0:
+        cap_parts.append(f"--max-per-paragraph {int(args.max_per_paragraph)}")
+    else:
+        cap_parts.append("--max-per-paragraph 0")
+    cap_flag = " ".join(cap_parts) + " "
+
+    vf_extra = ""
+    if args.unified_rule_top_n is not None:
+        vf_extra += f" --unified-rule-top-n {int(args.unified_rule_top_n)}"
+    if args.min_diagnostic_rule_score is not None:
+        vf_extra += f" --min-diagnostic-rule-score {float(args.min_diagnostic_rule_score)}"
+    vf_extra += f" --progress-interval {max(0, int(args.verifier_progress_interval))}"
+
     if not args.skip_run:
         catalog_flag = f"--unified-catalog {shlex.quote(args.unified_catalog)}" if args.unified_catalog else ""
+        symbolic_flag_parts: List[str] = [
+            f"--experience-code-manifest {shlex.quote(args.experience_code_manifest)}",
+            f"--experience-code-module {shlex.quote(args.experience_code_module)}",
+            f"--symbolic-topic-check-limit {int(args.symbolic_topic_check_limit)}",
+        ]
+        if args.no_symbolic_check:
+            symbolic_flag_parts.append("--no-symbolic-check")
+        symbolic_flag = " ".join(symbolic_flag_parts) + " "
         _run(
             f"{py} scripts/run_verifier.py "
             f"--input {shlex.quote(str(error_dataset))} "
             f"--output {shlex.quote(str(error_results))} "
             f"--symbolic-output {shlex.quote(str(error_audit))} "
             f"--model {shlex.quote(args.check_model)} "
-            + ("--no-agentic " if args.disable_agentic else "")
+            + cap_flag
+            + symbolic_flag
             + (catalog_flag + " " if catalog_flag else "")
+            + vf_extra
         )
         _run(
             f"{py} scripts/run_verifier.py "
@@ -132,8 +215,10 @@ def main() -> None:
             f"--output {shlex.quote(str(question_results))} "
             f"--symbolic-output {shlex.quote(str(question_audit))} "
             f"--model {shlex.quote(args.check_model)} "
-            + ("--no-agentic " if args.disable_agentic else "")
+            + cap_flag
+            + symbolic_flag
             + (catalog_flag + " " if catalog_flag else "")
+            + vf_extra
         )
     if not args.skip_error_eval:
         _run(

@@ -330,6 +330,8 @@ def _collect_pred_findings(pred_item: Dict[str, Any], audit_item: Optional[Dict[
                     "message": message,
                     "quote": quote,
                     "text": text,
+                    "rule_match": d.get("rule_match") if isinstance(d.get("rule_match"), dict) else {},
+                    "release_gate": d.get("release_gate") if isinstance(d.get("release_gate"), dict) else {},
                     "start_char": int(start) if start is not None else -1,
                     "end_char": int(end) if end is not None else -1,
                     "line_index": int(line_index) if line_index is not None else -1,
@@ -697,6 +699,7 @@ def main() -> None:
     total_unmatched_pred_locatable = 0
     total_matched_pred_locatable = 0
     iou_values: List[float] = []
+    false_positive_replay: List[Dict[str, Any]] = []
 
     for row in ds:
         if not isinstance(row, dict):
@@ -748,6 +751,25 @@ def main() -> None:
         pred_locatable_indices = [idx for idx, x in enumerate(findings) if bool(x.get("locatable_valid"))]
         unmatched_pred_loc_indices = sorted([idx for idx in pred_locatable_indices if idx not in used_pred_loc_idx])
         unmatched_pred_loc_items = [findings[idx] for idx in unmatched_pred_loc_indices]
+        for x in unmatched_pred_loc_items:
+            rule_match = x.get("rule_match") if isinstance(x.get("rule_match"), dict) else {}
+            publish_gate = rule_match.get("publish_gate") if isinstance(rule_match.get("publish_gate"), dict) else {}
+            release_gate = x.get("release_gate") if isinstance(x.get("release_gate"), dict) else {}
+            false_positive_replay.append(
+                {
+                    "id": sid,
+                    "rule": str(x.get("rule") or ""),
+                    "message": str(x.get("message") or ""),
+                    "quote": str(x.get("quote") or ""),
+                    "paragraph_index": int(x.get("paragraph_index") or -1),
+                    "rule_score": float(rule_match.get("score") or release_gate.get("rule_score") or 0.0),
+                    "min_score": float(rule_match.get("min_score") or 0.0),
+                    "topic_rank": int(rule_match.get("topic_rank") or -1),
+                    "topic_gap": float(rule_match.get("topic_gap") or 0.0),
+                    "publish_gate": publish_gate,
+                    "release_gate": release_gate,
+                }
+            )
 
         total_unmatched_gt_locatable += len(unmatched_gt_ids)
         total_unmatched_pred_locatable += len(unmatched_pred_loc_items)
@@ -778,6 +800,15 @@ def main() -> None:
                         "start_char": int(x.get("start_char") or -1),
                         "end_char": int(x.get("end_char") or -1),
                         "paragraph_index": int(x.get("paragraph_index") or -1),
+                        "rule_score": float((x.get("rule_match") or {}).get("score") or 0.0)
+                        if isinstance(x.get("rule_match"), dict)
+                        else 0.0,
+                        "topic_rank": int((x.get("rule_match") or {}).get("topic_rank") or -1)
+                        if isinstance(x.get("rule_match"), dict)
+                        else -1,
+                        "release_reasons": list(((x.get("release_gate") or {}).get("reasons") or []))
+                        if isinstance(x.get("release_gate"), dict)
+                        else [],
                     }
                     for x in unmatched_pred_loc_items[:3]
                 ],
@@ -816,6 +847,7 @@ def main() -> None:
             "mean_iou_matched": (sum(iou_values) / len(iou_values)) if iou_values else 0.0,
         },
         "details": detail_rows,
+        "false_positive_replay": false_positive_replay,
     }
 
     out_path = Path(args.output)

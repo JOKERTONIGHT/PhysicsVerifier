@@ -1,3 +1,4 @@
+import os
 import sys
 import argparse
 import json
@@ -50,6 +51,8 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
                     "symbol": d.get("symbol"),
                     "message": d.get("message"),
                     "evidence": d.get("evidence"),
+                    "rule_match": d.get("rule_match"),
+                    "release_gate": d.get("release_gate"),
                     "symbolic_cross_checks": d.get("symbolic_cross_checks") or [],
                     "symbolic_reconciliation": d.get("symbolic_reconciliation"),
                     "symbolic_status": recon.get("status"),
@@ -123,6 +126,10 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
                 "rule": cd.get("rule"),
                 "rule_id": cd.get("rule_id"),
                 "result": cd.get("result"),
+                "symbolic_result": cd.get("symbolic_result"),
+                "source": cd.get("source"),
+                "bridge_for_rule_id": cd.get("bridge_for_rule_id"),
+                "publish_skipped": cd.get("publish_skipped"),
                 "message": cd.get("message"),
                 "evidence": cd.get("evidence"),
             }
@@ -131,6 +138,7 @@ def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": sample_result.get("id"),
         "topic": sample_result.get("topic"),
+        "candidate_diagnostic_count": len(sample_result.get("candidate_diagnostics") or []),
         "checked_diagnostics": checked,
         "symbolic_summary": summary,
         "symbolic_checks": symbolic_checks,
@@ -159,53 +167,141 @@ def main() -> None:
     )
     parser.add_argument("--catalog", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
-    parser.add_argument("--no-agentic", action="store_true")
-    parser.add_argument("--agentic-max", type=int, default=2)
-    parser.add_argument("--experience", action="store_true", help="Enable experience-rule + symbolic hint pipeline.")
     parser.add_argument(
-        "--experience-rules",
-        type=str,
-        default="results/semantic_experience_distilled_300.json",
-        help="Path to distilled experience rules JSON.",
+        "--no-symbolic-check",
+        action="store_true",
+        help="Disable the deterministic experience-code symbolic verification (on by default).",
     )
     parser.add_argument(
         "--unified-catalog",
         type=str,
         default=None,
         help="Path to the unified rules catalog JSON. When set and the file exists, "
-             "this takes priority over --catalog and --experience-rules.",
+             "this takes priority over --catalog.",
     )
     parser.add_argument(
         "--experience-code-manifest",
         type=str,
-        default="results/experience_symbolic_program_manifest_300.json",
-        help="Manifest for generated experience code checks.",
+        default="results/experience_symbolic_program_manifest_v2_unified.json",
+        help="Manifest produced by scripts/generate_symbolic_checks.py mapping rule_id -> Python check function.",
     )
     parser.add_argument(
         "--experience-code-module",
         type=str,
-        default="symbolic.generated_experience_checks",
-        help="Python module path for generated experience code checks.",
+        default="symbolic.generated_experience_checks_v2_unified",
+        help="Python module path containing the generated experience-code check functions.",
+    )
+    parser.add_argument(
+        "--symbolic-topic-check-limit",
+        type=int,
+        default=40,
+        help="Max bottom-up experience-code checks to run per retrieved topic (<=0 disables the cap).",
+    )
+    # Legacy flags (accepted for backward compatibility, ignored).
+    parser.add_argument("--no-agentic", action="store_true", help="(deprecated, no-op)")
+    parser.add_argument("--agentic-max", type=int, default=2, help="(deprecated, no-op)")
+    parser.add_argument(
+        "--experience",
+        action="store_true",
+        help="(deprecated, no-op; experience-code symbolic check now runs by default)",
+    )
+    parser.add_argument(
+        "--experience-rules",
+        type=str,
+        default=None,
+        help="(deprecated, no-op; rule library is taken from --unified-catalog)",
+    )
+    parser.add_argument(
+        "--precision-mode",
+        type=str,
+        default="strict",
+        choices=["strict", "balanced", "score_only"],
+        help="Diagnostic publication policy for unified v2 rules.",
+    )
+    parser.add_argument(
+        "--min-diagnostic-rule-score",
+        type=float,
+        default=None,
+        help="Override the minimum rule score for diagnostic publication/sweeps.",
+    )
+    parser.add_argument(
+        "--unified-rule-top-n",
+        type=int,
+        default=None,
+        help="Unified v2: maximum rules to retrieve per sample for SRD injection (default 6).",
+    )
+    parser.add_argument(
+        "--topic-skip-prediction",
+        action="store_true",
+        help="For unified v2, exclude prediction from topic retrieval text (sets PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION).",
+    )
+    parser.add_argument(
+        "--max-per-sample",
+        type=int,
+        default=None,
+        help="Maximum diagnostics published per sample (precision cap). Set <=0 to disable.",
+    )
+    parser.add_argument(
+        "--max-per-paragraph",
+        type=int,
+        default=None,
+        help="Maximum diagnostics published per paragraph within a sample. Set <=0 to disable.",
+    )
+    parser.add_argument(
+        "--quote-symbol-ratio",
+        type=float,
+        default=None,
+        help="Minimum required-symbol overlap ratio in a diagnostic quote (strict mode only).",
+    )
+    parser.add_argument(
+        "--progress-interval",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Print a throughput summary every N completed samples; 0 disables.",
+    )
+    parser.add_argument(
+        "--verbose-per-sample",
+        action="store_true",
+        help="Print one line before each sample (very noisy; use for deep debugging).",
     )
 
     args = parser.parse_args()
 
+    if args.topic_skip_prediction:
+        os.environ["PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION"] = "1"
+
     with open(args.input, "r", encoding="utf-8") as f:
         samples = json.load(f)
+
+    n_samples = len(samples) if isinstance(samples, list) else 0
+    print(
+        f"[PhysicsVerifier] loaded {n_samples} samples from {args.input!r} | "
+        f"progress every {max(0, int(args.progress_interval))} (0=off)",
+        flush=True,
+    )
 
     verifier = PhysicsRuleVerifier(
         rules_catalog_path=args.catalog,
         llm_model=args.model,
-        enable_agentic_postcheck=not args.no_agentic,
-        agentic_max_checks_per_sample=args.agentic_max,
-        enable_experience_pipeline=args.experience,
-        experience_rules_path=args.experience_rules,
+        enable_symbolic_check=not args.no_symbolic_check,
         unified_rules_path=args.unified_catalog,
         experience_code_manifest_path=args.experience_code_manifest,
         experience_code_module=args.experience_code_module,
+        symbolic_topic_check_limit=args.symbolic_topic_check_limit,
+        precision_mode=args.precision_mode,
+        min_diagnostic_rule_score=args.min_diagnostic_rule_score,
+        max_diagnostics_per_sample=args.max_per_sample,
+        max_diagnostics_per_paragraph=args.max_per_paragraph,
+        quote_required_symbol_ratio=args.quote_symbol_ratio,
+        unified_rule_top_n=args.unified_rule_top_n,
     )
 
-    raw_results = verifier.run_batch(samples)
+    raw_results = verifier.run_batch(
+        samples,
+        progress_interval=max(0, int(args.progress_interval)),
+        verbose_per_sample=bool(args.verbose_per_sample),
+    )
 
     # Main output: only final diagnostics (after symbolic suppression), without symbolic metadata.
     results = [_build_main_result(r) for r in (raw_results or []) if isinstance(r, dict)]

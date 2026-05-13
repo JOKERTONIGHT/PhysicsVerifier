@@ -37,14 +37,33 @@ def safe_symbolic_hint(raw_hint: Any) -> Dict[str, Any]:
     }
 
 
+def normalize_match_surface(text: str) -> str:
+    """Lightweight surface normalisation for retrieval (not full LaTeX parsing)."""
+    raw = norm_text(text or "")
+    if not raw:
+        return ""
+    out = raw
+    for pat, repl in (
+        (r"\\mathrm\{([^}]*)\}", r"\1"),
+        (r"\\text\{([^}]*)\}", r"\1"),
+        (r"\\,|\~", " "),
+        (r"\s+", " "),
+    ):
+        out = re.sub(pat, repl, out, flags=re.I)
+    return out.strip()
+
+
 def build_match_features(title: str, trigger: str, check_logic: str, symbolic_hint: Dict[str, Any]) -> Dict[str, Any]:
     required_symbols = ordered_unique(str(item) for item in symbolic_hint.get("required_symbols", []))
     primitive = norm_text(symbolic_hint.get("primitive") or "none") or "none"
+    combined = " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)])
     return {
         "trigger_keywords": extract_keywords([title, trigger], max_keywords=8),
         "object_keywords": extract_keywords([check_logic], max_keywords=8),
         "required_symbols": required_symbols,
         "primitive": primitive,
+        "match_text_normalized": normalize_match_surface(combined),
+        "negative_keywords": [],
     }
 
 

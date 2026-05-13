@@ -1,0 +1,28 @@
+[
+  {
+    "rollout_id": 99,
+    "samples": [
+      {
+        "index": 0,
+        "prompt": "User: What is $F=ma$?\nAssistant:",
+        "response": "$F=ma$ by Newton.",
+        "label": ["\\boxed{F=ma}"],
+        "reward": "{'score': 1.0, 'acc': True}",
+        "metadata": "{'question': 'What is $F=ma$?', 'context': 'kinematics'}"
+      }
+    ]
+  },
+  {
+    "rollout_id": 100,
+    "samples": [
+      {
+        "index": 0,
+        "prompt": "User: Speed of light?\nAssistant:",
+        "response": "$c=3\\\\times 10^8$ m/s",
+        "label": ["\\boxed{c}"],
+        "reward": "{'score': 0.5, 'acc': False}",
+        "metadata": "{}"
+      }
+    ]
+  }
+]

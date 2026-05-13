@@ -43,6 +43,12 @@ def main() -> None:
     build.add_argument("--knowledge", type=str, default="catalogs/rules_catalog_top_down.json")
     build.add_argument("--experience-tagged", type=str, default="catalogs/rules_300_tagged.json")
     build.add_argument("--experience-distilled", type=str, default="catalogs/semantic_experience_distilled_300.json")
+    build.add_argument(
+        "--topic-alias",
+        type=str,
+        default="",
+        help="Optional JSON map of topic_key -> canonical topic_key for distilled rule routing when skeleton keys differ.",
+    )
     build.add_argument("--output", "-o", type=str, required=True)
 
     add = sub.add_parser("add", help="Add new experience rules into an existing catalog.")
@@ -86,14 +92,21 @@ def main() -> None:
     enhance.add_argument("--rule-batch-size", type=int, default=6,
                          help="Number of rules to process per LLM call (default 6).")
     enhance.add_argument("--sleep", type=float, default=0.0, help="Seconds to sleep between LLM calls.")
+    enhance.add_argument(
+        "--refresh-existing",
+        action="store_true",
+        help="Regenerate existing LLM hints instead of only filling missing coverage.",
+    )
 
     args = parser.parse_args()
 
     if args.command == "build":
+        alias_path = Path(args.topic_alias) if str(args.topic_alias or "").strip() else None
         catalog = build_unified_catalog(
             knowledge_path=Path(args.knowledge),
             distilled_path=Path(args.experience_distilled),
             tagged_path=Path(args.experience_tagged),
+            topic_alias_path=alias_path,
         )
         write_json(args.output, catalog)
         print(f"Built catalog: {args.output}")
@@ -152,6 +165,7 @@ def main() -> None:
             cluster_min_rules=args.cluster_min_rules,
             rule_batch_size=args.rule_batch_size,
             sleep_between_calls=args.sleep,
+            refresh_existing=args.refresh_existing,
             verbose=True,
         )
         write_json(args.output, catalog)
