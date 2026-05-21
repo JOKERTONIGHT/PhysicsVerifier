@@ -12,6 +12,7 @@ The persisted v2 catalog is a compact semantic navigation tree:
 - Domain -> Topic -> Scenario Cluster -> Rule
 - rule_groups are optional inside scenario clusters
 - old retrieval/debug fields are used only while building and are not stored
+- hand-written includes/excludes are not stored in the runtime navigation tree
 """
 
 from __future__ import annotations
@@ -742,8 +743,6 @@ def _project_navigation_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
         "title": norm_text(rule.get("title") or ""),
         "summary": _summarize_rule(rule),
         "trigger": trigger,
-        "applicability": trigger,
-        "negative_cues": [],
         "check_logic": norm_text(rule.get("check_logic") or ""),
         "error_type": norm_text(rule.get("error_type") or "logic") or "logic",
         "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
@@ -765,21 +764,13 @@ def _project_navigation_cluster(cluster: Dict[str, Any]) -> Dict[str, Any]:
         "id": norm_text(cluster.get("cluster_id") or ""),
         "name": norm_text(cluster.get("name") or ""),
         "summary": norm_text(cluster.get("description") or cluster.get("name") or ""),
-        "includes": ordered_unique(cluster.get("includes") or [])[:4],
-        "excludes": ordered_unique(cluster.get("excludes") or [])[:4],
         "rule_ids": ordered_unique(cluster.get("rule_ids") or []),
     }
-    entry_cues = ordered_unique(cluster.get("entry_cues") or [])[:5]
-    related_clusters = ordered_unique(cluster.get("related_clusters") or [])
     rule_groups = [
         _project_navigation_group(group)
         for group in (cluster.get("rule_groups") or [])
         if isinstance(group, dict)
     ]
-    if entry_cues:
-        projected["entry_cues"] = entry_cues
-    if related_clusters:
-        projected["related_clusters"] = related_clusters
     if rule_groups:
         projected["rule_groups"] = rule_groups
     return projected
@@ -791,8 +782,6 @@ def _project_navigation_topic(domain_id: str, domain_name: str, topic: Dict[str,
         "id": f"{domain_id}.{_slug(topic_name)}",
         "name": topic_name,
         "summary": norm_text(topic.get("description") or f"Topic for {topic_name} under {domain_name}."),
-        "includes": ordered_unique(topic.get("includes") or [])[:5],
-        "excludes": ordered_unique(topic.get("excludes") or [])[:5],
         "scenario_clusters": [
             _project_navigation_cluster(cluster)
             for cluster in (topic.get("scenario_clusters") or [])
@@ -804,9 +793,6 @@ def _project_navigation_topic(domain_id: str, domain_name: str, topic: Dict[str,
             if isinstance(rule, dict)
         ],
     }
-    related_topics = ordered_unique(topic.get("related_topics") or [])
-    if related_topics:
-        projected["related_topics"] = related_topics
     return projected
 
 
@@ -822,7 +808,6 @@ def _project_navigation_domains(domains: List[Dict[str, Any]]) -> List[Dict[str,
                 "id": domain_id,
                 "name": domain_name,
                 "summary": norm_text(domain.get("description") or f"Physics domain covering {domain_name}."),
-                "excludes": ordered_unique(domain.get("excludes") or [])[:5],
                 "topics": [
                     _project_navigation_topic(domain_id, domain_name, topic)
                     for topic in (domain.get("topics") or [])
@@ -932,7 +917,7 @@ def build_unified_catalog_from_data(
         "metadata": {
             "version": "2.0",
             "catalog_type": "unified_rules_v2",
-            "schema_profile": "semantic_navigation_tree",
+            "schema_profile": "semantic_navigation_tree_minimal",
             "generated_at": _dt.datetime.now().isoformat(),
             "total_domains": len(domains_out),
             "total_topics": total_topics,

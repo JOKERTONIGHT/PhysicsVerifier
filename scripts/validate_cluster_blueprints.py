@@ -50,20 +50,40 @@ def _collect_blueprint_rule_ids(cluster_defs: List[Dict[str, Any]]) -> List[str]
     for cluster in cluster_defs or []:
         if not isinstance(cluster, dict):
             continue
+        group_rule_ids: List[str] = []
         for group in cluster.get("rule_groups", []) or []:
             if not isinstance(group, dict):
                 continue
-            rule_ids.extend(
+            group_rule_ids.extend(
                 [
                     _norm_text(rule_id)
                     for rule_id in (group.get("rule_ids") or [])
                     if _norm_text(rule_id)
                 ]
             )
+        if group_rule_ids:
+            rule_ids.extend(group_rule_ids)
+            continue
+        rule_ids.extend(
+            [
+                _norm_text(rule_id)
+                for rule_id in (cluster.get("rule_ids") or [])
+                if _norm_text(rule_id)
+            ]
+        )
     return rule_ids
 
 
-def validate_blueprints_against_catalog(catalog: Dict[str, Any], blueprints: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+def validate_blueprints_against_catalog(
+    catalog: Dict[str, Any],
+    blueprints: Dict[str, List[Dict[str, Any]]],
+    *,
+    mode: str = "full",
+) -> Dict[str, Any]:
+    mode = _norm_text(mode).casefold() or "full"
+    if mode not in {"full", "subset"}:
+        raise ValueError("mode must be either 'full' or 'subset'.")
+
     topic_rule_index: Dict[str, List[str]] = {}
     for domain in catalog.get("domains", []) or []:
         if not isinstance(domain, dict):
@@ -82,8 +102,24 @@ def validate_blueprints_against_catalog(catalog: Dict[str, Any], blueprints: Dic
     topics_with_duplicate_rule_assignments: List[str] = []
     topics_with_unknown_rules: List[str] = []
     topics_with_uncovered_rules: List[str] = []
+    unknown_blueprint_topics: List[str] = []
 
-    for topic_key, rule_ids in topic_rule_index.items():
+    if mode == "full":
+        topics_to_validate = sorted(topic_rule_index.keys())
+    else:
+        topics_to_validate = []
+        for raw_key in blueprints.keys():
+            topic_key = _norm_text(raw_key).casefold()
+            if not topic_key:
+                continue
+            if topic_key not in topic_rule_index:
+                unknown_blueprint_topics.append(topic_key)
+                continue
+            topics_to_validate.append(topic_key)
+        topics_to_validate = sorted(_ordered_unique(topics_to_validate))
+
+    for topic_key in topics_to_validate:
+        rule_ids = topic_rule_index[topic_key]
         cluster_defs = blueprints.get(topic_key)
         if not cluster_defs:
             missing_topics.append(topic_key)
@@ -102,7 +138,7 @@ def validate_blueprints_against_catalog(catalog: Dict[str, Any], blueprints: Dic
         if not assigned_set.issubset(topic_rule_set):
             topics_with_unknown_rules.append(topic_key)
         if assigned_set != topic_rule_set:
-            topics_with_uncovered_rules.append(topic_key)
+                topics_with_uncovered_rules.append(topic_key)
 
     report = {
         "valid": not any(
@@ -112,11 +148,15 @@ def validate_blueprints_against_catalog(catalog: Dict[str, Any], blueprints: Dic
                 topics_with_duplicate_rule_assignments,
                 topics_with_unknown_rules,
                 topics_with_uncovered_rules,
+                unknown_blueprint_topics,
             ]
         ),
+        "mode": mode,
         "topic_count_with_rules": len(topic_rule_index),
         "blueprint_topic_count": len([key for key in blueprints.keys() if _norm_text(key)]),
+        "validated_topic_count": len(topics_to_validate),
         "missing_topics": sorted(missing_topics),
+        "unknown_blueprint_topics": sorted(unknown_blueprint_topics),
         "topics_with_empty_clusters": sorted(topics_with_empty_clusters),
         "topics_with_duplicate_rule_assignments": sorted(topics_with_duplicate_rule_assignments),
         "topics_with_unknown_rules": sorted(topics_with_unknown_rules),
@@ -130,6 +170,7 @@ def main() -> None:
     parser.add_argument("--catalog", type=str, required=True)
     parser.add_argument("--blueprints", type=str, required=True)
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--mode", choices=["full", "subset"], default="full")
     parser.add_argument("--fail-on-invalid", action="store_true")
     args = parser.parse_args()
 
@@ -137,7 +178,7 @@ def main() -> None:
     blueprints = _load_json(Path(args.blueprints))
     if not isinstance(blueprints, dict):
         raise RuntimeError("Blueprint payload must be a dict keyed by topic_key.")
-    report = validate_blueprints_against_catalog(catalog, blueprints)
+    report = validate_blueprints_against_catalog(catalog, blueprints, mode=args.mode)
     if args.output:
         _dump_json(Path(args.output), report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

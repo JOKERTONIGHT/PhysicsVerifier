@@ -34,7 +34,7 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
         meta = self.catalog["metadata"]
         self.assertEqual(meta["version"], "2.0")
         self.assertEqual(meta["catalog_type"], "unified_rules_v2")
-        self.assertEqual(meta["schema_profile"], "semantic_navigation_tree")
+        self.assertEqual(meta["schema_profile"], "semantic_navigation_tree_minimal")
         self.assertEqual(meta["total_domains"], 6)
         self.assertEqual(meta["total_topics"], 123)
         self.assertEqual(meta["topics_with_rules"], 70)
@@ -42,24 +42,42 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
         self.assertEqual(meta["knowledge_rule_references"], 1082)
 
     def test_catalog_stores_only_navigation_tree_fields(self) -> None:
-        legacy_topic_fields = {"knowledge_reference", "tagged_reference", "retrieval_hints", "description"}
-        legacy_rule_fields = {"scope", "support", "match_features", "retrieval_flags"}
-        legacy_cluster_fields = {"cluster_id", "description"}
+        removed_topic_fields = {
+            "knowledge_reference",
+            "tagged_reference",
+            "retrieval_hints",
+            "description",
+            "includes",
+            "excludes",
+            "related_topics",
+        }
+        removed_rule_fields = {
+            "scope",
+            "support",
+            "match_features",
+            "retrieval_flags",
+            "applicability",
+            "negative_cues",
+        }
+        removed_cluster_fields = {
+            "cluster_id",
+            "description",
+            "includes",
+            "excludes",
+            "entry_cues",
+            "related_clusters",
+        }
 
         for domain in self.catalog["domains"]:
-            self.assertEqual(set(domain.keys()), {"id", "name", "summary", "excludes", "topics"})
+            self.assertEqual(set(domain.keys()), {"id", "name", "summary", "topics"})
             for topic in domain["topics"]:
-                self.assertFalse(legacy_topic_fields.intersection(topic.keys()))
-                self.assertTrue(
-                    {"id", "name", "summary", "includes", "excludes", "scenario_clusters", "rules"}.issubset(
-                        topic.keys()
-                    )
-                )
+                self.assertFalse(removed_topic_fields.intersection(topic.keys()))
+                self.assertTrue({"id", "name", "summary", "scenario_clusters", "rules"}.issubset(topic.keys()))
                 for cluster in topic["scenario_clusters"]:
-                    self.assertFalse(legacy_cluster_fields.intersection(cluster.keys()))
-                    self.assertTrue({"id", "name", "summary", "includes", "excludes", "rule_ids"}.issubset(cluster.keys()))
+                    self.assertFalse(removed_cluster_fields.intersection(cluster.keys()))
+                    self.assertTrue({"id", "name", "summary", "rule_ids"}.issubset(cluster.keys()))
                 for rule in topic["rules"]:
-                    self.assertFalse(legacy_rule_fields.intersection(rule.keys()))
+                    self.assertFalse(removed_rule_fields.intersection(rule.keys()))
 
     def test_executable_rules_are_distilled_navigation_leaves(self) -> None:
         required_rule_keys = {
@@ -67,8 +85,6 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
             "title",
             "summary",
             "trigger",
-            "applicability",
-            "negative_cues",
             "check_logic",
             "error_type",
             "symbolic_hint",
@@ -78,8 +94,8 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
             for topic in domain["topics"]:
                 self.assertIn("scenario_clusters", topic)
                 self.assertIn("summary", topic)
-                self.assertIn("includes", topic)
-                self.assertIn("excludes", topic)
+                self.assertNotIn("includes", topic)
+                self.assertNotIn("excludes", topic)
                 for rule in topic["rules"]:
                     total_rules += 1
                     self.assertTrue(required_rule_keys.issubset(rule.keys()))
@@ -193,7 +209,8 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         catalog = build_unified_catalog_from_data(knowledge, distilled, [])
         rule = catalog["domains"][0]["topics"][0]["rules"][0]
         self.assertEqual(rule["summary"], "三角恒等式代换一致性: 方程中同时出现 sinθ, cosθ 且含有根式")
-        self.assertEqual(rule["negative_cues"], [])
+        self.assertNotIn("negative_cues", rule)
+        self.assertNotIn("applicability", rule)
         self.assertNotIn("match_features", rule)
         self.assertNotIn("retrieval_flags", rule)
 

@@ -51,8 +51,48 @@ class RefineClusterBlueprintsTests(unittest.TestCase):
             ]
         }
         blueprints = {"mechanics::kinematics": []}
-        report = validate_blueprints_against_catalog(catalog, blueprints)
+        report = validate_blueprints_against_catalog(catalog, blueprints, mode="full")
         self.assertIn("mechanics::dynamics", report["missing_topics"])
+
+    def test_validate_generated_blueprints_subset_mode_ignores_missing_topics(self) -> None:
+        catalog = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [
+                        {"name": "Kinematics", "rules": [{"rule_id": "exp_k1"}]},
+                        {"name": "Dynamics", "rules": [{"rule_id": "exp_d1"}]},
+                    ],
+                }
+            ]
+        }
+        blueprints = {
+            "mechanics::kinematics": [
+                {
+                    "cluster_id": "c1",
+                    "name": "Cluster 1",
+                    "description": "",
+                    "includes": [],
+                    "excludes": [],
+                    "entry_cues": [],
+                    "related_clusters": [],
+                    "rule_groups": [
+                        {
+                            "group_id": "g1",
+                            "name": "Group 1",
+                            "summary": "",
+                            "activation_condition": "",
+                            "rule_ids": ["exp_k1"],
+                        }
+                    ],
+                }
+            ]
+        }
+        report = validate_blueprints_against_catalog(catalog, blueprints, mode="subset")
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["mode"], "subset")
+        self.assertEqual(report["validated_topic_count"], 1)
+        self.assertEqual(report["missing_topics"], [])
 
     def test_validate_generated_blueprints_reports_duplicate_rule_assignments(self) -> None:
         catalog = {

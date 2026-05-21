@@ -98,7 +98,6 @@ class UnifiedSemanticMatcher:
                 {
                     "domain": norm_text(domain.get("name") or "Unknown"),
                     "summary": norm_text(domain.get("summary") or ""),
-                    "excludes": ordered_unique(domain.get("excludes") or [])[:4],
                     "topic_count": len(topics),
                     "sample_topics": topic_names[:5],
                 }
@@ -123,9 +122,6 @@ class UnifiedSemanticMatcher:
                         "domain": domain_name,
                         "topic": norm_text(topic.get("name") or "Unknown"),
                         "summary": norm_text(topic.get("summary") or ""),
-                        "includes": ordered_unique(topic.get("includes") or [])[:5],
-                        "excludes": ordered_unique(topic.get("excludes") or [])[:5],
-                        "related_topics": ordered_unique(topic.get("related_topics") or [])[:5],
                         "rule_count": len(topic.get("rules") or []),
                         "topic_obj": topic,
                     }
@@ -145,10 +141,8 @@ class UnifiedSemanticMatcher:
                     "title": norm_text(rule.get("title") or ""),
                     "summary": norm_text(rule.get("summary") or ""),
                     "trigger": norm_text(rule.get("trigger") or ""),
-                    "applicability": norm_text(rule.get("applicability") or ""),
-                    "negative_cues": ordered_unique(rule.get("negative_cues") or [])[:4],
                     "check_logic": norm_text(rule.get("check_logic") or ""),
-                    "scope": norm_text(rule.get("scope") or "domain") or "domain",
+                    "error_type": norm_text(rule.get("error_type") or "logic") or "logic",
                     "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
                     "rule_obj": rule,
                 }
@@ -188,10 +182,6 @@ class UnifiedSemanticMatcher:
                     "cluster_id": norm_text(cluster.get("id") or cluster.get("cluster_id") or ""),
                     "cluster": norm_text(cluster.get("name") or "Unknown"),
                     "summary": norm_text(cluster.get("summary") or ""),
-                    "includes": ordered_unique(cluster.get("includes") or []),
-                    "excludes": ordered_unique(cluster.get("excludes") or []),
-                    "entry_cues": ordered_unique(cluster.get("entry_cues") or []),
-                    "related_clusters": ordered_unique(cluster.get("related_clusters") or []),
                     "rule_groups": rule_groups,
                     "rule_ids": cluster_rule_ids,
                     "topic_obj": topic_obj,
@@ -258,9 +248,6 @@ class UnifiedSemanticMatcher:
                     "domain": item["domain"],
                     "topic": item["topic"],
                     "summary": item["summary"],
-                    "includes": item["includes"],
-                    "excludes": item["excludes"],
-                    "related_topics": item["related_topics"],
                     "rule_count": item["rule_count"],
                 }
                 for item in topic_candidates
@@ -286,8 +273,8 @@ class UnifiedSemanticMatcher:
                 "knowledge, downstream consequences, or weakly related by shared symbols or vocabulary. When one "
                 "topic is mechanism-specific and another is only a generic bookkeeping lens such as energy/accounting/"
                 "consistency, keep the mechanism-specific topic and reject the generic one unless it contributes an "
-                "independent error mode. Use the topic summary, includes, and excludes as hard semantic "
-                "boundaries. If uncertain, exclude rather than include. Return JSON only."
+                "independent error mode. Use topic summaries and rule/check semantics as hard semantic boundaries. "
+                "If uncertain, exclude rather than include. Return JSON only."
             ),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
         )
@@ -332,10 +319,6 @@ class UnifiedSemanticMatcher:
                         "cluster_id": item["cluster_id"],
                         "cluster": item["cluster"],
                         "summary": item["summary"],
-                        "includes": item["includes"],
-                        "excludes": item["excludes"],
-                        "entry_cues": item["entry_cues"],
-                        "related_clusters": item["related_clusters"],
                         "rule_group_summaries": [
                             {
                                 "group_id": group["group_id"],
@@ -369,9 +352,9 @@ class UnifiedSemanticMatcher:
                     "failure mode. Reject clusters that are generic approximations, neighboring derivation styles, "
                     "or merely weakly related through vocabulary. When one cluster captures the concrete physical "
                     "mechanism and another is only a generic accounting/consistency lens, keep the mechanism cluster "
-                    "and reject the generic one unless it exposes an independent failure mode. Respect the topic and "
-                    "cluster includes/excludes as hard boundaries. If uncertain, exclude rather than include. Return "
-                    "JSON only."
+                    "and reject the generic one unless it exposes an independent failure mode. Respect topic and "
+                    "cluster summaries and rule/check semantics as hard boundaries. If uncertain, exclude rather "
+                    "than include. Return JSON only."
                 ),
                 user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
             )
@@ -417,8 +400,6 @@ class UnifiedSemanticMatcher:
         cluster_id: str = "",
         cluster_name: str = "",
         cluster_description: str = "",
-        cluster_includes: List[str] | None = None,
-        cluster_excludes: List[str] | None = None,
         rule_group_summaries: List[Dict[str, Any]] | None = None,
     ) -> List[Dict[str, Any]]:
         prompt_payload = {
@@ -426,13 +407,9 @@ class UnifiedSemanticMatcher:
             "domain": context_domain,
             "topic": context_topic,
             "topic_summary": norm_text(topic_obj.get("summary") or ""),
-            "topic_includes": ordered_unique(topic_obj.get("includes") or []),
-            "topic_excludes": ordered_unique(topic_obj.get("excludes") or []),
             "cluster_id": cluster_id,
             "cluster": cluster_name,
             "cluster_summary": cluster_description,
-            "cluster_includes": ordered_unique(cluster_includes or []),
-            "cluster_excludes": ordered_unique(cluster_excludes or []),
             "rule_group_summaries": rule_group_summaries or [],
             "candidate_rules": [
                 {
@@ -440,10 +417,8 @@ class UnifiedSemanticMatcher:
                     "title": item["title"],
                     "summary": item["summary"],
                     "trigger": item["trigger"],
-                    "applicability": item["applicability"],
-                    "negative_cues": item["negative_cues"],
                     "check_logic": item["check_logic"],
-                    "scope": item["scope"],
+                    "error_type": item["error_type"],
                     "symbolic_hint": item["symbolic_hint"],
                 }
                 for item in rule_candidates
@@ -524,10 +499,8 @@ class UnifiedSemanticMatcher:
                         "title": norm_text(rule.get("title") or ""),
                         "summary": norm_text(rule.get("summary") or ""),
                         "trigger": norm_text(rule.get("trigger") or ""),
-                        "applicability": norm_text(rule.get("applicability") or ""),
-                        "negative_cues": ordered_unique(rule.get("negative_cues") or [])[:4],
                         "check_logic": norm_text(rule.get("check_logic") or ""),
-                        "scope": norm_text(rule.get("scope") or "domain") or "domain",
+                        "error_type": norm_text(rule.get("error_type") or "logic") or "logic",
                         "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
                         "rule_obj": rule,
                     }
@@ -544,8 +517,6 @@ class UnifiedSemanticMatcher:
                 cluster_id=item["cluster_id"],
                 cluster_name=item["cluster"],
                 cluster_description=norm_text(item.get("cluster_obj", {}).get("summary") or ""),
-                cluster_includes=item.get("cluster_obj", {}).get("includes") or [],
-                cluster_excludes=item.get("cluster_obj", {}).get("excludes") or [],
                 rule_group_summaries=[
                     {
                         "group_id": group["group_id"],
