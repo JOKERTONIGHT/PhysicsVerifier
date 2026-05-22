@@ -132,6 +132,28 @@ def _load_existing(path: Path) -> Dict[str, Any]:
     return {"samples": []}
 
 
+def _is_failure_placeholder(item: Dict[str, Any]) -> bool:
+    audit = item.get("semantic_audit") if isinstance(item.get("semantic_audit"), dict) else {}
+    text_parts = [str(audit.get("summary") or "")]
+    for err in audit.get("key_errors") or []:
+        if isinstance(err, dict):
+            text_parts.append(str(err.get("message") or ""))
+            text_parts.append(str(err.get("evidence") or ""))
+    joined = "\n".join(text_parts)
+    return "LLM调用失败" in joined or "LLM call failed" in joined
+
+
+def _resume_done_map(existing_payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    samples = existing_payload.get("samples", []) if isinstance(existing_payload, dict) else []
+    return {
+        str(item.get("sample_id")): item
+        for item in samples
+        if isinstance(item, dict)
+        and str(item.get("sample_id") or "")
+        and not _is_failure_placeholder(item)
+    }
+
+
 def _build_client() -> Any:
     if load_dotenv:
         load_dotenv()
@@ -319,7 +341,7 @@ def main() -> None:
     client = _build_client()
 
     existing_payload = _load_existing(output_path) if args.resume else {"samples": []}
-    done_map = {str(item.get("sample_id")): item for item in existing_payload.get("samples", []) if isinstance(item, dict)}
+    done_map = _resume_done_map(existing_payload)
 
     all_outputs: List[Dict[str, Any]] = []
     processed = 0

@@ -382,6 +382,50 @@ def _topic_key(domain: str, topic: str) -> str:
     return f"{_norm_key(domain)}::{_norm_key(topic)}"
 
 
+DISTILLED_TOPIC_ALIASES: Dict[Tuple[str, str], Tuple[str, str]] = {
+    (
+        "thermodynamics & statistical physics",
+        "thermodynamics / thermodynamic processes (isothermal, adiabatic, etc.)",
+    ): (
+        "Thermodynamics & Statistical Physics",
+        "Thermodynamic Processes (Isothermal, Adiabatic, etc.)",
+    ),
+    (
+        "electromagnetism",
+        "poynting vector and energy transport",
+    ): (
+        "Electromagnetism",
+        "Poynting Vector and Radiation Pressure",
+    ),
+    (
+        "mechanics",
+        "dimensional analysis and scaling",
+    ): (
+        "Experimental Physics",
+        "Dimensional Analysis and Scaling",
+    ),
+    (
+        "mechanics",
+        "central forces and orbital motion",
+    ): (
+        "Mechanics",
+        "Gravitation and Kepler's Laws",
+    ),
+}
+
+
+def _resolve_distilled_topic(domain: str, topic: str) -> Tuple[str, str]:
+    norm_domain = norm_text(domain) or "Unknown"
+    norm_topic = _normalize_topic(norm_domain, topic)
+    alias = DISTILLED_TOPIC_ALIASES.get((_norm_key(norm_domain), _norm_key(norm_topic)))
+    if alias:
+        return alias
+    alias = DISTILLED_TOPIC_ALIASES.get((_norm_key(norm_domain), _norm_key(topic)))
+    if alias:
+        return alias
+    return norm_domain, norm_topic
+
+
 def _safe_symbolic_hint(raw_hint: Any) -> Dict[str, Any]:
     hint = raw_hint if isinstance(raw_hint, dict) else {}
     primitive = norm_text(hint.get("primitive") or "none") or "none"
@@ -552,8 +596,10 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
         if not isinstance(raw_rule, dict):
             continue
 
-        domain = norm_text(raw_rule.get("domain") or "Unknown")
-        topic = _normalize_topic(domain, str(raw_rule.get("topic") or "Unknown"))
+        domain, topic = _resolve_distilled_topic(
+            str(raw_rule.get("domain") or "Unknown"),
+            str(raw_rule.get("topic") or "Unknown"),
+        )
         key = _topic_key(domain, topic)
         state = states.get(key)
         if state is None:

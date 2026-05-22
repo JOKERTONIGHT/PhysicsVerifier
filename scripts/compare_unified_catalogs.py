@@ -18,6 +18,10 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _console_json(data: Dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=True, indent=2)
+
+
 def _topic_key(domain_name: str, topic_name: str) -> str:
     return f"{domain_name}::{topic_name}"
 
@@ -160,7 +164,7 @@ def main() -> None:
         candidate_path=Path(args.candidate),
         output_path=Path(args.output) if args.output else None,
     )
-    print(json.dumps(comparison, ensure_ascii=False, indent=2))
+    print(_console_json(comparison))
 
 
 if __name__ == "__main__":

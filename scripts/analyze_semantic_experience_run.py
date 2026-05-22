@@ -163,6 +163,8 @@ def analyze_run(
         report["strict_failures"].append("duplicate_sample_ids")
     if missing_required:
         report["strict_failures"].append("missing_required_fields")
+    if failure_count:
+        report["strict_failures"].append("failure_placeholders")
 
     if output_path:
         _write_json(output_path, report)

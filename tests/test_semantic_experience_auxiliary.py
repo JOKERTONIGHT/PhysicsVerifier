@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.run_semantic_experience import _build_distilled_library, _semantic_prompt
+from scripts.run_semantic_experience import _build_distilled_library, _resume_done_map, _semantic_prompt
 
 
 class SemanticExperienceAuxiliaryTests(unittest.TestCase):
@@ -104,6 +104,32 @@ class SemanticExperienceAuxiliaryTests(unittest.TestCase):
         self.assertIn('"boundary_cues"', user_prompt)
         self.assertIn('"explore_cues"', user_prompt)
         self.assertIn("真实题目", user_prompt)
+
+    def test_resume_done_map_excludes_llm_failure_placeholders(self) -> None:
+        existing_payload = {
+            "samples": [
+                {
+                    "sample_id": "ok1",
+                    "topic_guess": {"domain": "Mechanics", "topic": "Kinematics"},
+                    "semantic_audit": {"summary": "valid", "key_errors": []},
+                    "experience_rules": [{"title": "Timing"}],
+                },
+                {
+                    "sample_id": "bad1",
+                    "topic_guess": {"domain": "Unknown", "topic": "Unknown"},
+                    "semantic_audit": {
+                        "summary": "LLM调用失败，已记录重试占位。",
+                        "key_errors": [{"message": "LLM调用失败", "evidence": "quota"}],
+                    },
+                    "experience_rules": [],
+                },
+            ]
+        }
+
+        done_map = _resume_done_map(existing_payload)
+
+        self.assertIn("ok1", done_map)
+        self.assertNotIn("bad1", done_map)
 
 
 if __name__ == "__main__":

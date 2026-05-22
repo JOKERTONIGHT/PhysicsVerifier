@@ -129,6 +129,40 @@ class AnalyzeSemanticExperienceRunTests(unittest.TestCase):
                 strict=True,
             )
 
+    def test_strict_mode_raises_on_failure_placeholders(self) -> None:
+        root = _case_dir()
+        semantic_path = root / "semantic.json"
+        distilled_path = root / "distilled.json"
+        semantic_path.write_text(
+            json.dumps(
+                {
+                    "samples": [
+                        {
+                            "sample_id": "s1",
+                            "topic_guess": {"domain": "Unknown", "topic": "Unknown"},
+                            "semantic_audit": {
+                                "summary": "LLM调用失败，已记录重试占位。",
+                                "key_errors": [{"message": "LLM调用失败", "evidence": "empty response"}],
+                            },
+                            "experience_rules": [],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        distilled_path.write_text(json.dumps({"rules": []}), encoding="utf-8")
+
+        with self.assertRaises(SystemExit):
+            analyze_run(
+                semantic_path=semantic_path,
+                distilled_path=distilled_path,
+                expected_samples=1,
+                output_path=None,
+                strict=True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

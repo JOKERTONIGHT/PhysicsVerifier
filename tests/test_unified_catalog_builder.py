@@ -248,6 +248,108 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_unified_catalog_from_data(knowledge, distilled, [])
 
+    def test_build_unified_catalog_maps_known_3000_topic_aliases(self) -> None:
+        knowledge = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [
+                        {"name": "Gravitation and Kepler's Laws", "rules": []},
+                    ],
+                },
+                {
+                    "name": "Electromagnetism",
+                    "topics": [
+                        {"name": "Poynting Vector and Radiation Pressure", "rules": []},
+                    ],
+                },
+                {
+                    "name": "Experimental Physics",
+                    "topics": [
+                        {"name": "Dimensional Analysis and Scaling", "rules": []},
+                    ],
+                },
+                {
+                    "name": "Thermodynamics & Statistical Physics",
+                    "topics": [
+                        {"name": "Thermodynamic Processes (Isothermal, Adiabatic, etc.)", "rules": []},
+                    ],
+                },
+            ]
+        }
+        distilled = {
+            "rules": [
+                {
+                    "rule_id": "exp_poynting",
+                    "domain": "Electromagnetism",
+                    "topic": "Poynting Vector and Energy Transport",
+                    "title": "Poynting check",
+                    "trigger": "energy flux",
+                    "check_logic": "check radiation pressure relation",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                    "count": 1,
+                    "sample_ids": ["1"],
+                },
+                {
+                    "rule_id": "exp_central",
+                    "domain": "Mechanics",
+                    "topic": "Central Forces and Orbital Motion",
+                    "title": "Central force check",
+                    "trigger": "orbital force",
+                    "check_logic": "check gravitation relation",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                    "count": 1,
+                    "sample_ids": ["2"],
+                },
+                {
+                    "rule_id": "exp_dimensional",
+                    "domain": "Mechanics",
+                    "topic": "Dimensional Analysis and Scaling",
+                    "title": "Dimensional check",
+                    "trigger": "scaling law",
+                    "check_logic": "check dimensions",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                    "count": 1,
+                    "sample_ids": ["3"],
+                },
+                {
+                    "rule_id": "exp_thermo",
+                    "domain": "Thermodynamics & Statistical Physics",
+                    "topic": "Thermodynamics / Thermodynamic Processes (Isothermal, Adiabatic, etc.)",
+                    "title": "Thermodynamic process check",
+                    "trigger": "isothermal process",
+                    "check_logic": "check process relation",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                    "count": 1,
+                    "sample_ids": ["4"],
+                },
+            ]
+        }
+
+        catalog = build_unified_catalog_from_data(knowledge, distilled, [])
+        topic_rules = {
+            (domain["name"], topic["name"]): {rule["rule_id"] for rule in topic["rules"]}
+            for domain in catalog["domains"]
+            for topic in domain["topics"]
+        }
+
+        self.assertIn("exp_poynting", topic_rules[("Electromagnetism", "Poynting Vector and Radiation Pressure")])
+        self.assertIn("exp_central", topic_rules[("Mechanics", "Gravitation and Kepler's Laws")])
+        self.assertIn("exp_dimensional", topic_rules[("Experimental Physics", "Dimensional Analysis and Scaling")])
+        self.assertIn(
+            "exp_thermo",
+            topic_rules[
+                (
+                    "Thermodynamics & Statistical Physics",
+                    "Thermodynamic Processes (Isothermal, Adiabatic, etc.)",
+                )
+            ],
+        )
+
     def test_build_unified_catalog_accepts_multiple_blueprint_paths(self) -> None:
         knowledge = {
             "domains": [

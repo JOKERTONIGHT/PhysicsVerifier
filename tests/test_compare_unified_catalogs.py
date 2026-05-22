@@ -5,7 +5,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from scripts.compare_unified_catalogs import compare_catalogs
+from scripts.compare_unified_catalogs import _console_json, compare_catalogs
 
 TMP_ROOT = Path("results/test_tmp")
 TMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -18,6 +18,12 @@ def _case_dir() -> Path:
 
 
 class CompareUnifiedCatalogsTests(unittest.TestCase):
+    def test_console_json_is_ascii_safe_for_windows_shells(self) -> None:
+        text = _console_json({"topic": "Schrödinger Equation"})
+
+        self.assertTrue(all(ord(char) < 128 for char in text))
+        self.assertIn("\\u00f6", text)
+
     def test_compare_catalogs_reports_growth_and_cluster_coverage(self) -> None:
         baseline = {
             "metadata": {"total_executable_rules": 1, "topics_with_rules": 1, "total_scenario_clusters": 1},
