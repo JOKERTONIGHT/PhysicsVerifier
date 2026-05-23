@@ -38,6 +38,37 @@ class RefineClusterBlueprintsTests(unittest.TestCase):
         )
         self.assertEqual(blueprints["mechanics::kinematics"][1]["cluster_id"], "general_reasoning")
 
+    def test_build_generated_blueprints_maps_navigation_cues_to_builder_compat_fields(self) -> None:
+        proposals = {
+            "proposals": [
+                {
+                    "domain": "Mechanics",
+                    "topic": "Fluid Dynamics",
+                    "topic_key": "mechanics::fluid dynamics",
+                    "clusters": [
+                        {
+                            "cluster_id": "bernoulli_path",
+                            "name": "Bernoulli Path",
+                            "summary": "Bernoulli energy path checks",
+                            "description": "Pressure-speed-height reasoning.",
+                            "scene_cues": ["pipe narrowing", "height change"],
+                            "boundary_cues": ["viscous loss dominates"],
+                            "explore_cues": ["continuity coupling"],
+                            "candidate_rule_ids": ["exp_f1"],
+                        }
+                    ],
+                    "residual_rule_ids": [],
+                }
+            ]
+        }
+
+        blueprints = build_generated_blueprints_from_refined_proposals(proposals)
+        cluster = blueprints["mechanics::fluid dynamics"][0]
+
+        self.assertEqual(cluster["entry_cues"], ["pipe narrowing", "height change"])
+        self.assertEqual(cluster["excludes"], ["viscous loss dominates"])
+        self.assertIn("continuity coupling", cluster["description"])
+
     def test_validate_generated_blueprints_reports_missing_topic_coverage(self) -> None:
         catalog = {
             "domains": [

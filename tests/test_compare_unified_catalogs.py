@@ -86,6 +86,12 @@ class CompareUnifiedCatalogsTests(unittest.TestCase):
         self.assertEqual(dyn["baseline_rule_count"], 0)
         self.assertEqual(dyn["candidate_rule_count"], 1)
         self.assertEqual(dyn["candidate_cluster_rule_coverage"], 0.0)
+        self.assertEqual(comparison["cluster_coverage"]["unclustered_topic_count"], 1)
+        self.assertEqual(comparison["cluster_coverage"]["unclustered_rule_count"], 1)
+        self.assertEqual(
+            comparison["cluster_coverage"]["top_unclustered_topics"][0],
+            {"topic": "Mechanics::Dynamics", "rule_count": 1},
+        )
         self.assertTrue(output_path.exists())
 
 

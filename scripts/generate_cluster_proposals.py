@@ -116,10 +116,9 @@ def _assert_english_only_proposal(raw: Dict[str, Any]) -> None:
                 _norm_text(cluster.get("name") or ""),
                 _norm_text(cluster.get("summary") or ""),
                 _norm_text(cluster.get("description") or ""),
-                *[_norm_text(item) for item in (cluster.get("includes") or [])],
-                *[_norm_text(item) for item in (cluster.get("excludes") or [])],
-                *[_norm_text(item) for item in (cluster.get("entry_cues") or [])],
-                *[_norm_text(item) for item in (cluster.get("related_clusters") or [])],
+                *[_norm_text(item) for item in (cluster.get("scene_cues") or cluster.get("includes") or [])],
+                *[_norm_text(item) for item in (cluster.get("boundary_cues") or cluster.get("excludes") or [])],
+                *[_norm_text(item) for item in (cluster.get("explore_cues") or cluster.get("entry_cues") or [])],
             ]
         )
     offenders = [text for text in fields_to_check if _contains_cjk(text)]
@@ -155,6 +154,27 @@ def _parse_csv_values(raw_values: Sequence[str] | None) -> set[str]:
             text = _norm_text(part)
             if text:
                 out.add(text)
+    return out
+
+
+def _build_distilled_auxiliary_index(distilled_payload: Dict[str, Any] | None) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(distilled_payload, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for rule in distilled_payload.get("rules", []) or []:
+        if not isinstance(rule, dict):
+            continue
+        rule_id = _norm_text(rule.get("rule_id") or "")
+        aux = rule.get("auxiliary") if isinstance(rule.get("auxiliary"), dict) else {}
+        if not rule_id:
+            continue
+        out[rule_id] = {
+            "node_summary": _norm_text(aux.get("node_summary") or ""),
+            "scene_cues": _ordered_unique(aux.get("scene_cues") or []),
+            "boundary_cues": _ordered_unique(aux.get("boundary_cues") or []),
+            "explore_cues": _ordered_unique(aux.get("explore_cues") or []),
+            "evidence_sample_ids": _ordered_unique(aux.get("evidence_sample_ids") or []),
+        }
     return out
 
 
@@ -201,16 +221,18 @@ def _collect_topic_candidates(
     return topics
 
 
-def _build_topic_prompt_payload(topic_match: Dict[str, Any]) -> Dict[str, Any]:
+def _build_topic_prompt_payload(
+    topic_match: Dict[str, Any],
+    *,
+    auxiliary_by_rule: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     topic = topic_match["topic_obj"]
     rules = [item for item in (topic.get("rules") or []) if isinstance(item, dict)]
+    auxiliary_by_rule = auxiliary_by_rule or {}
     return {
         "domain": topic_match["domain"],
         "topic": topic_match["topic"],
         "topic_summary": _norm_text(topic.get("summary") or topic.get("description") or ""),
-        "topic_includes": _ordered_unique(topic.get("includes") or []),
-        "topic_excludes": _ordered_unique(topic.get("excludes") or []),
-        "related_topics": _ordered_unique(topic.get("related_topics") or []),
         "existing_scenario_clusters": [
             {
                 "cluster_id": _norm_text(cluster.get("id") or cluster.get("cluster_id") or ""),
@@ -225,12 +247,12 @@ def _build_topic_prompt_payload(topic_match: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "rule_id": _norm_text(rule.get("rule_id") or ""),
                 "title": _norm_text(rule.get("title") or ""),
+                "summary": _norm_text(rule.get("summary") or ""),
                 "trigger": _norm_text(rule.get("trigger") or ""),
                 "check_logic": _norm_text(rule.get("check_logic") or ""),
                 "error_type": _norm_text(rule.get("error_type") or ""),
-                "scope": _norm_text(rule.get("scope") or ""),
-                "support_count": int((rule.get("support") or {}).get("count") or 0),
-                "sample_ids": _ordered_unique((rule.get("support") or {}).get("sample_ids") or [])[:5],
+                "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
+                "auxiliary": auxiliary_by_rule.get(_norm_text(rule.get("rule_id") or ""), {}),
             }
             for rule in rules
         ],
@@ -244,10 +266,9 @@ def _build_topic_prompt_payload(topic_match: Dict[str, Any]) -> Dict[str, Any]:
                     "name": "string",
                     "summary": "string",
                     "description": "string",
-                    "includes": ["string"],
-                    "excludes": ["string"],
-                    "entry_cues": ["string"],
-                    "related_clusters": ["string"],
+                    "scene_cues": ["string"],
+                    "boundary_cues": ["string"],
+                    "explore_cues": ["string"],
                     "candidate_rule_ids": ["string"],
                 }
             ],
@@ -270,10 +291,9 @@ def _normalize_cluster_proposal(raw: Dict[str, Any], valid_rule_ids: set[str]) -
                 "name": _norm_text(item.get("name") or ""),
                 "summary": _norm_text(item.get("summary") or ""),
                 "description": _norm_text(item.get("description") or ""),
-                "includes": _ordered_unique(item.get("includes") or []),
-                "excludes": _ordered_unique(item.get("excludes") or []),
-                "entry_cues": _ordered_unique(item.get("entry_cues") or []),
-                "related_clusters": _ordered_unique(item.get("related_clusters") or []),
+                "scene_cues": _ordered_unique(item.get("scene_cues") or item.get("entry_cues") or []),
+                "boundary_cues": _ordered_unique(item.get("boundary_cues") or item.get("excludes") or []),
+                "explore_cues": _ordered_unique(item.get("explore_cues") or []),
                 "candidate_rule_ids": candidate_rule_ids,
             }
         )
@@ -298,6 +318,7 @@ def generate_cluster_proposals(
     topic_filters: set[str],
     max_topics: int,
     min_rule_count: int,
+    auxiliary_by_rule: Dict[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     topic_candidates = _collect_topic_candidates(
         catalog,
@@ -318,7 +339,7 @@ def generate_cluster_proposals(
         "mixed-language phrases. Return JSON only."
     )
     for topic_match in topic_candidates:
-        payload = _build_topic_prompt_payload(topic_match)
+        payload = _build_topic_prompt_payload(topic_match, auxiliary_by_rule=auxiliary_by_rule)
         raw = _chat_json(
             client,
             model=model,
@@ -353,6 +374,7 @@ def generate_cluster_proposals(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate scenario-cluster proposals from the current unified rules catalog.")
     parser.add_argument("--catalog", type=str, default="catalogs/rules_unified.json")
+    parser.add_argument("--distilled-experience", type=str, default=None)
     parser.add_argument("--output", type=str, default="results/cluster_proposals.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b-instruct-2507")
     parser.add_argument("--base-url", type=str, default=None)
@@ -376,6 +398,7 @@ def main() -> None:
         base_url=args.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or None,
         trust_env=bool(args.trust_env),
     )
+    distilled_payload = _load_json(Path(args.distilled_experience)) if args.distilled_experience else None
     result = generate_cluster_proposals(
         catalog=catalog,
         client=client,
@@ -386,6 +409,7 @@ def main() -> None:
         topic_filters=_parse_csv_values(args.topics),
         max_topics=int(args.max_topics),
         min_rule_count=int(args.min_rule_count),
+        auxiliary_by_rule=_build_distilled_auxiliary_index(distilled_payload),
     )
     _dump_json(Path(args.output), result)
     print(f"Wrote cluster proposals to {args.output}")

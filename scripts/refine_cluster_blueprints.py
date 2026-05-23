@@ -87,10 +87,9 @@ def _assert_english_only(raw: Dict[str, Any]) -> None:
                 _norm_text(cluster.get("name") or ""),
                 _norm_text(cluster.get("summary") or ""),
                 _norm_text(cluster.get("description") or ""),
-                *[_norm_text(item) for item in (cluster.get("includes") or [])],
-                *[_norm_text(item) for item in (cluster.get("excludes") or [])],
-                *[_norm_text(item) for item in (cluster.get("entry_cues") or [])],
-                *[_norm_text(item) for item in (cluster.get("related_clusters") or [])],
+                *[_norm_text(item) for item in (cluster.get("scene_cues") or cluster.get("includes") or [])],
+                *[_norm_text(item) for item in (cluster.get("boundary_cues") or cluster.get("excludes") or [])],
+                *[_norm_text(item) for item in (cluster.get("explore_cues") or cluster.get("entry_cues") or [])],
             ]
         )
     offenders = [item for item in fields if _contains_cjk(item)]
@@ -141,10 +140,9 @@ def _normalize_refined_cluster_proposal(raw: Dict[str, Any], valid_rule_ids: set
                 "name": _norm_text(item.get("name") or ""),
                 "summary": _norm_text(item.get("summary") or ""),
                 "description": _norm_text(item.get("description") or ""),
-                "includes": _ordered_unique(item.get("includes") or []),
-                "excludes": _ordered_unique(item.get("excludes") or []),
-                "entry_cues": _ordered_unique(item.get("entry_cues") or []),
-                "related_clusters": _ordered_unique(item.get("related_clusters") or []),
+                "scene_cues": _ordered_unique(item.get("scene_cues") or item.get("includes") or []),
+                "boundary_cues": _ordered_unique(item.get("boundary_cues") or item.get("excludes") or []),
+                "explore_cues": _ordered_unique(item.get("explore_cues") or item.get("entry_cues") or []),
                 "candidate_rule_ids": candidate_rule_ids,
             }
         )
@@ -190,14 +188,13 @@ def refine_cluster_proposals(
                     {
                         "cluster_id": "string",
                         "name": "string",
-                        "summary": "string",
-                        "description": "string",
-                        "includes": ["string"],
-                        "excludes": ["string"],
-                        "entry_cues": ["string"],
-                        "related_clusters": ["string"],
-                        "candidate_rule_ids": ["string"],
-                    }
+                    "summary": "string",
+                    "description": "string",
+                    "scene_cues": ["string"],
+                    "boundary_cues": ["string"],
+                    "explore_cues": ["string"],
+                    "candidate_rule_ids": ["string"],
+                }
                 ],
                 "residual_rule_ids": ["string"],
             },
@@ -252,14 +249,20 @@ def build_generated_blueprints_from_refined_proposals(refined_payload: Dict[str,
                 continue
             cluster_id = _norm_text(cluster.get("cluster_id") or "")
             cluster_name = _norm_text(cluster.get("name") or "")
+            scene_cues = _ordered_unique(cluster.get("scene_cues") or cluster.get("entry_cues") or [])
+            boundary_cues = _ordered_unique(cluster.get("boundary_cues") or cluster.get("excludes") or [])
+            explore_cues = _ordered_unique(cluster.get("explore_cues") or [])
+            description = _norm_text(cluster.get("description") or cluster.get("summary") or "")
+            if explore_cues:
+                description = f"{description} Explore cues: {'; '.join(explore_cues)}".strip()
             topic_clusters.append(
                 {
                     "cluster_id": cluster_id,
                     "name": cluster_name,
-                    "description": _norm_text(cluster.get("description") or cluster.get("summary") or ""),
+                    "description": description,
                     "includes": _ordered_unique(cluster.get("includes") or []),
-                    "excludes": _ordered_unique(cluster.get("excludes") or []),
-                    "entry_cues": _ordered_unique(cluster.get("entry_cues") or []),
+                    "excludes": boundary_cues,
+                    "entry_cues": scene_cues,
                     "related_clusters": _ordered_unique(cluster.get("related_clusters") or []),
                     "rule_groups": [
                         {

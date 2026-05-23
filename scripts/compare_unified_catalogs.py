@@ -148,6 +148,17 @@ def compare_catalogs(baseline_path: Path, candidate_path: Path, output_path: Pat
         },
         "topics": topic_rows,
     }
+    unclustered_topics = [
+        {"topic": key, "rule_count": row["candidate_rule_count"]}
+        for key, row in topic_rows.items()
+        if row["candidate_rule_count"] > 0 and row["candidate_cluster_count"] == 0
+    ]
+    unclustered_topics.sort(key=lambda item: (-int(item["rule_count"]), str(item["topic"])))
+    comparison["cluster_coverage"] = {
+        "unclustered_topic_count": len(unclustered_topics),
+        "unclustered_rule_count": sum(int(item["rule_count"]) for item in unclustered_topics),
+        "top_unclustered_topics": unclustered_topics[:20],
+    }
     if output_path:
         _write_json(output_path, comparison)
     return comparison
