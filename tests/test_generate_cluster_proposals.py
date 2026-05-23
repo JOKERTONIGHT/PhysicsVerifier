@@ -7,6 +7,7 @@ from scripts.generate_cluster_proposals import (
     _build_distilled_auxiliary_index,
     _build_topic_prompt_payload,
     _collect_topic_candidates,
+    _chat_json,
     _extract_json_object,
 )
 
@@ -138,6 +139,36 @@ class GenerateClusterProposalTests(unittest.TestCase):
         )
 
         self.assertEqual([(item["domain"], item["topic"], item["rule_count"]) for item in candidates], [("Mechanics", "Large Missing", 80)])
+
+    def test_chat_json_passes_explicit_max_tokens(self) -> None:
+        class _Message:
+            content = '{"topic_summary":"x","should_add_clusters":false,"clusters":[]}'
+
+        class _Choice:
+            message = _Message()
+
+        class _Completions:
+            def __init__(self) -> None:
+                self.kwargs = None
+
+            def create(self, **kwargs):
+                self.kwargs = kwargs
+                return type("Response", (), {"choices": [_Choice()]})()
+
+        completions = _Completions()
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+
+        result = _chat_json(
+            client,
+            model="test-model",
+            temperature=0.0,
+            system_prompt="system",
+            user_prompt="user",
+            max_output_tokens=8192,
+        )
+
+        self.assertFalse(result["should_add_clusters"])
+        self.assertEqual(completions.kwargs["max_tokens"], 8192)
 
 
 if __name__ == "__main__":

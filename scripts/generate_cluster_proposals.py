@@ -94,7 +94,10 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
             pass
 
     preview = raw[:300]
-    raise RuntimeError(f"Cluster proposal model did not return a valid JSON object. Preview: {preview}")
+    hint = ""
+    if raw.startswith("{") and not raw.endswith("}"):
+        hint = " The response looks truncated; increase --max-output-tokens or reduce the topic batch."
+    raise RuntimeError(f"Cluster proposal model did not return a valid JSON object.{hint} Preview: {preview}")
 
 
 def _contains_cjk(text: str) -> bool:
@@ -129,16 +132,27 @@ def _assert_english_only_proposal(raw: Dict[str, Any]) -> None:
         )
 
 
-def _chat_json(client: Any, *, model: str, temperature: float, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-    response = client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        messages=[
+def _chat_json(
+    client: Any,
+    *,
+    model: str,
+    temperature: float,
+    system_prompt: str,
+    user_prompt: str,
+    max_output_tokens: int | None = None,
+) -> Dict[str, Any]:
+    request: Dict[str, Any] = {
+        "model": model,
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-    )
+    }
+    if max_output_tokens:
+        request["max_tokens"] = int(max_output_tokens)
+    response = client.chat.completions.create(**request)
     content = response.choices[0].message.content if response.choices else ""
     parsed = _extract_json_object(_norm_text(content))
     _assert_english_only_proposal(parsed)
@@ -319,6 +333,7 @@ def generate_cluster_proposals(
     max_topics: int,
     min_rule_count: int,
     auxiliary_by_rule: Dict[str, Dict[str, Any]] | None = None,
+    max_output_tokens: int | None = None,
 ) -> Dict[str, Any]:
     topic_candidates = _collect_topic_candidates(
         catalog,
@@ -335,7 +350,7 @@ def generate_cluster_proposals(
         "Each cluster must represent a materially different reasoning scene, have clear semantic boundaries, and map "
         "to concrete rule_ids. Avoid over-fragmentation. If a topic is too small or too homogeneous to justify "
         "clusters, set should_add_clusters to false. Use English only for every generated field, including cluster "
-        "names, summaries, descriptions, includes, excludes, entry_cues, and rationale. Do not output Chinese or "
+        "names, summaries, descriptions, scene_cues, boundary_cues, explore_cues, and rationale. Do not output Chinese or "
         "mixed-language phrases. Return JSON only."
     )
     for topic_match in topic_candidates:
@@ -346,6 +361,7 @@ def generate_cluster_proposals(
             temperature=temperature,
             system_prompt=system_prompt,
             user_prompt=json.dumps(payload, ensure_ascii=False, indent=2),
+            max_output_tokens=max_output_tokens,
         )
         valid_rule_ids = {item["rule_id"] for item in payload["rules"]}
         normalized = _normalize_cluster_proposal(raw, valid_rule_ids)
@@ -381,6 +397,7 @@ def main() -> None:
     parser.add_argument("--api-key", type=str, default=None)
     parser.add_argument("--trust-env", action="store_true")
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--max-output-tokens", type=int, default=8192)
     parser.add_argument("--domains", action="append", default=[], help="Repeat or comma-separate domain filters.")
     parser.add_argument("--topics", action="append", default=[], help="Repeat or comma-separate topic filters. Topic key format domain::topic is also accepted.")
     parser.add_argument("--max-topics", type=int, default=12)
@@ -410,6 +427,7 @@ def main() -> None:
         max_topics=int(args.max_topics),
         min_rule_count=int(args.min_rule_count),
         auxiliary_by_rule=_build_distilled_auxiliary_index(distilled_payload),
+        max_output_tokens=int(args.max_output_tokens),
     )
     _dump_json(Path(args.output), result)
     print(f"Wrote cluster proposals to {args.output}")
