@@ -54,12 +54,12 @@ def _dump_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _build_client(*, api_key: str, base_url: str | None, trust_env: bool) -> Any:
+def _build_client(*, api_key: str, base_url: str | None, trust_env: bool, request_timeout: float) -> Any:
     if not OpenAI:
         raise RuntimeError("OpenAI package is not available.")
-    kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url, "timeout": request_timeout}
     if httpx is not None:
-        kwargs["http_client"] = httpx.Client(trust_env=trust_env)
+        kwargs["http_client"] = httpx.Client(trust_env=trust_env, timeout=request_timeout)
     return OpenAI(**kwargs)
 
 
@@ -353,8 +353,15 @@ def generate_cluster_proposals(
         "names, summaries, descriptions, scene_cues, boundary_cues, explore_cues, and rationale. Do not output Chinese or "
         "mixed-language phrases. Return JSON only."
     )
-    for topic_match in topic_candidates:
+    total_topics = len(topic_candidates)
+    for index, topic_match in enumerate(topic_candidates, start=1):
         payload = _build_topic_prompt_payload(topic_match, auxiliary_by_rule=auxiliary_by_rule)
+        print(
+            f"[cluster-proposal] {index}/{total_topics} "
+            f"{topic_match['domain']} / {topic_match['topic']} "
+            f"rules={topic_match['rule_count']}",
+            flush=True,
+        )
         raw = _chat_json(
             client,
             model=model,
@@ -365,6 +372,11 @@ def generate_cluster_proposals(
         )
         valid_rule_ids = {item["rule_id"] for item in payload["rules"]}
         normalized = _normalize_cluster_proposal(raw, valid_rule_ids)
+        print(
+            f"[cluster-proposal] done {index}/{total_topics} "
+            f"clusters={len(normalized.get('clusters') or [])}",
+            flush=True,
+        )
         proposals.append(
             {
                 "domain": topic_match["domain"],
@@ -398,6 +410,7 @@ def main() -> None:
     parser.add_argument("--trust-env", action="store_true")
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-output-tokens", type=int, default=8192)
+    parser.add_argument("--request-timeout", type=float, default=180.0)
     parser.add_argument("--domains", action="append", default=[], help="Repeat or comma-separate domain filters.")
     parser.add_argument("--topics", action="append", default=[], help="Repeat or comma-separate topic filters. Topic key format domain::topic is also accepted.")
     parser.add_argument("--max-topics", type=int, default=12)
@@ -414,6 +427,7 @@ def main() -> None:
         api_key=api_key,
         base_url=args.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or None,
         trust_env=bool(args.trust_env),
+        request_timeout=float(args.request_timeout),
     )
     distilled_payload = _load_json(Path(args.distilled_experience)) if args.distilled_experience else None
     result = generate_cluster_proposals(

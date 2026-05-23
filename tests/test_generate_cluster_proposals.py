@@ -4,6 +4,7 @@ import unittest
 
 from scripts.generate_cluster_proposals import (
     _assert_english_only_proposal,
+    _build_client,
     _build_distilled_auxiliary_index,
     _build_topic_prompt_payload,
     _collect_topic_candidates,
@@ -169,6 +170,35 @@ class GenerateClusterProposalTests(unittest.TestCase):
 
         self.assertFalse(result["should_add_clusters"])
         self.assertEqual(completions.kwargs["max_tokens"], 8192)
+
+    def test_build_client_passes_request_timeout(self) -> None:
+        import scripts.generate_cluster_proposals as module
+
+        original_openai = module.OpenAI
+        original_httpx = module.httpx
+
+        class _Httpx:
+            class Client:
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+        captured = {}
+
+        class _OpenAI:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        try:
+            module.OpenAI = _OpenAI
+            module.httpx = _Httpx
+            _build_client(api_key="key", base_url="https://example.test", trust_env=True, request_timeout=123.0)
+        finally:
+            module.OpenAI = original_openai
+            module.httpx = original_httpx
+
+        self.assertEqual(captured["timeout"], 123.0)
+        self.assertEqual(captured["http_client"].kwargs["timeout"], 123.0)
+        self.assertTrue(captured["http_client"].kwargs["trust_env"])
 
 
 if __name__ == "__main__":
