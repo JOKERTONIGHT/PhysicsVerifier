@@ -109,7 +109,7 @@ def _contains_cjk(text: str) -> bool:
     return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", src))
 
 
-def _assert_english_only_proposal(raw: Dict[str, Any]) -> None:
+def _find_cjk_proposal_fields(raw: Dict[str, Any]) -> List[str]:
     fields_to_check: List[str] = [
         _norm_text(raw.get("topic_summary") or ""),
         _norm_text(raw.get("rationale") or ""),
@@ -128,7 +128,11 @@ def _assert_english_only_proposal(raw: Dict[str, Any]) -> None:
                 *[_norm_text(item) for item in (cluster.get("explore_cues") or cluster.get("entry_cues") or [])],
             ]
         )
-    offenders = [text for text in fields_to_check if _contains_cjk(text)]
+    return [text for text in fields_to_check if _contains_cjk(text)]
+
+
+def _assert_english_only_proposal(raw: Dict[str, Any]) -> None:
+    offenders = _find_cjk_proposal_fields(raw)
     if offenders:
         raise RuntimeError(
             "Cluster proposal must be English-only for all generated semantic fields. "
@@ -159,7 +163,6 @@ def _chat_json(
     response = client.chat.completions.create(**request)
     content = response.choices[0].message.content if response.choices else ""
     parsed = _extract_json_object(_norm_text(content))
-    _assert_english_only_proposal(parsed)
     if not isinstance(parsed, dict):
         raise RuntimeError("Cluster proposal model must return a JSON object.")
     return parsed
@@ -578,6 +581,9 @@ def generate_cluster_proposals_from_embedding_clusters(
                 "topic_count": len(proposals),
                 "target_topic_count": total_topics,
                 "failure_count": len(failures),
+                "cjk_warning_count": sum(
+                    1 for item in proposals if item.get("contains_cjk_generated_text")
+                ),
                 "min_rule_count": min_rule_count,
                 "max_rules_per_cluster": max_rules_per_cluster,
             },
@@ -628,6 +634,7 @@ def generate_cluster_proposals_from_embedding_clusters(
                 continue
             raise
         normalized = _normalize_embedding_cluster_labels(raw, topic_item)
+        cjk_offenders = _find_cjk_proposal_fields(raw)
         proposals.append(
             {
                 "domain": _norm_text(topic_item.get("domain") or ""),
@@ -635,6 +642,8 @@ def generate_cluster_proposals_from_embedding_clusters(
                 "topic_key": _norm_text(topic_item.get("topic_key") or "").casefold(),
                 "rule_count": int(topic_item.get("rule_count") or 0),
                 "existing_cluster_count": 0,
+                "contains_cjk_generated_text": bool(cjk_offenders),
+                "cjk_generated_text_preview": cjk_offenders[0][:120] if cjk_offenders else "",
                 **normalized,
             }
         )

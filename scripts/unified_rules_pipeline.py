@@ -14,6 +14,8 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.analyze_semantic_experience_run import analyze_run
 from scripts.analyze_rule_embedding_clusters import analyze_embedding_clusters
 from scripts.check_server_run_inputs import check_inputs
+from scripts.evaluate_unified_rules_quality import evaluate_catalog_quality
+from scripts.evaluate_top_down_runtime import evaluate_top_down_runtime
 from scripts.prepare_rules_for_cluster import prepare_rules_for_cluster
 from scripts.refine_cluster_blueprints import build_generated_blueprints_from_refined_proposals
 
@@ -48,6 +50,8 @@ def dataset_paths(dataset: str = DEFAULT_DATASET, *, root: Path | None = None) -
         "cluster_proposals": result_dir / "cluster_proposals.json",
         "cluster_proposals_refined": result_dir / "cluster_proposals_refined.json",
         "cluster_blueprints_validation": result_dir / "cluster_blueprints_validation.json",
+        "quality_report": result_dir / "rules_unified_quality_report.json",
+        "runtime_eval": result_dir / "top_down_runtime_eval.json",
         "catalog": base / f"catalogs/rules_unified_{dataset}.json",
         "generated_blueprints": base / f"catalogs/scenario_cluster_blueprints_generated_{dataset}.json",
     }
@@ -115,6 +119,7 @@ def build_cluster_proposal_command(
         "--request-timeout",
         str(request_timeout),
         "--resume",
+        "--continue-on-error",
     ]
     return " ".join(shlex.quote(part) for part in parts)
 
@@ -150,6 +155,28 @@ def build_rebuild_catalog_command(*, dataset: str = DEFAULT_DATASET) -> str:
         str(paths["generated_blueprints"]).replace("\\", "/"),
         "--output",
         str(paths["catalog"]).replace("\\", "/"),
+    ]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def build_runtime_eval_command(
+    *,
+    dataset: str = DEFAULT_DATASET,
+    samples: str = "data/evaluation_sample_debug_30.json",
+    limit: int = 30,
+) -> str:
+    paths = dataset_paths(dataset)
+    parts = [
+        "python",
+        "scripts/evaluate_top_down_runtime.py",
+        "--samples",
+        samples.replace("\\", "/"),
+        "--catalog",
+        str(paths["catalog"]).replace("\\", "/"),
+        "--output",
+        str(paths["runtime_eval"]).replace("\\", "/"),
+        "--limit",
+        str(limit),
     ]
     return " ".join(shlex.quote(part) for part in parts)
 
@@ -271,6 +298,30 @@ def run_build_blueprints(*, dataset: str = DEFAULT_DATASET, root: Path | None = 
     }
 
 
+def run_quality_report(*, dataset: str = DEFAULT_DATASET, root: Path | None = None) -> Dict[str, Any]:
+    paths = dataset_paths(dataset, root=root)
+    return evaluate_catalog_quality(
+        catalog_path=paths["catalog"],
+        cluster_proposals_path=paths["cluster_proposals"],
+        output_path=paths["quality_report"],
+    )
+
+
+def run_runtime_eval(
+    *,
+    dataset: str = DEFAULT_DATASET,
+    samples_path: Path = Path("data/evaluation_sample_debug_30.json"),
+    limit: int = 30,
+) -> Dict[str, Any]:
+    paths = dataset_paths(dataset)
+    return evaluate_top_down_runtime(
+        samples_path=samples_path,
+        catalog_path=paths["catalog"],
+        output_path=paths["runtime_eval"],
+        limit=limit,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Canonical unified_rules workflow entrypoint.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -328,6 +379,14 @@ def main() -> None:
 
     rebuild_command_parser = subparsers.add_parser("rebuild-command", help="Print catalog rebuild command using generated blueprints.")
     rebuild_command_parser.add_argument("--dataset", default=DEFAULT_DATASET)
+
+    quality_parser = subparsers.add_parser("quality-report", help="Evaluate unified rules catalog quality.")
+    quality_parser.add_argument("--dataset", default=DEFAULT_DATASET)
+
+    runtime_command_parser = subparsers.add_parser("runtime-eval-command", help="Print top-down runtime evaluation command; this step calls API.")
+    runtime_command_parser.add_argument("--dataset", default=DEFAULT_DATASET)
+    runtime_command_parser.add_argument("--samples", default="data/evaluation_sample_debug_30.json")
+    runtime_command_parser.add_argument("--limit", type=int, default=30)
 
     args = parser.parse_args()
 
@@ -404,6 +463,25 @@ def main() -> None:
         print(build_blueprint_validation_command(dataset=args.dataset))
     elif args.command == "rebuild-command":
         print(build_rebuild_catalog_command(dataset=args.dataset))
+    elif args.command == "quality-report":
+        report = run_quality_report(dataset=args.dataset)
+        print(_console_json({
+            "overall": report["overall"],
+            "schema": report["schema"],
+            "cluster_quality": {
+                key: value
+                for key, value in report["cluster_quality"].items()
+                if key != "topics"
+            },
+        }))
+    elif args.command == "runtime-eval-command":
+        print(
+            build_runtime_eval_command(
+                dataset=args.dataset,
+                samples=args.samples,
+                limit=int(args.limit),
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -9,12 +9,14 @@ from scripts.unified_rules_pipeline import (
     build_blueprint_validation_command,
     build_cluster_proposal_command,
     build_rebuild_catalog_command,
+    build_runtime_eval_command,
     build_rule_embedding_cluster_command,
     build_server_command,
     dataset_paths,
     run_analyze_embedding_clusters,
     run_build_blueprints,
     run_prepare_cluster,
+    run_quality_report,
 )
 
 TMP_ROOT = Path("results/test_tmp")
@@ -38,6 +40,8 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertEqual(paths["rule_embedding_input"], Path("results/unified_rules_3000/rule_embedding_input.json"))
         self.assertEqual(paths["rule_embedding_clusters"], Path("results/unified_rules_3000/rule_embedding_clusters.json"))
         self.assertEqual(paths["rule_embedding_cluster_report"], Path("results/unified_rules_3000/rule_embedding_cluster_report.json"))
+        self.assertEqual(paths["quality_report"], Path("results/unified_rules_3000/rules_unified_quality_report.json"))
+        self.assertEqual(paths["runtime_eval"], Path("results/unified_rules_3000/top_down_runtime_eval.json"))
         self.assertEqual(paths["cluster_proposals"], Path("results/unified_rules_3000/cluster_proposals.json"))
         self.assertEqual(paths["precluster_report"], Path("results/unified_rules_3000/precluster_report.json"))
         self.assertEqual(paths["catalog"], Path("catalogs/rules_unified_3000.json"))
@@ -69,6 +73,8 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("scripts/generate_cluster_proposals.py", command)
         self.assertIn("--embedding-clusters results/unified_rules_3000/rule_embedding_clusters.json", command)
         self.assertIn("--rule-input results/unified_rules_3000/rule_embedding_input.json", command)
+        self.assertIn("--resume", command)
+        self.assertIn("--continue-on-error", command)
         self.assertNotIn("--distilled-experience", command)
 
     def test_validation_and_rebuild_commands_use_generated_blueprints(self) -> None:
@@ -80,6 +86,15 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("scripts/build_unified_catalog.py", rebuild)
         self.assertIn("results/unified_rules_3000/semantic_experience_distilled_for_cluster.json", rebuild)
         self.assertIn("catalogs/scenario_cluster_blueprints_generated_3000.json", rebuild)
+
+    def test_runtime_eval_command_uses_canonical_catalog_and_output(self) -> None:
+        command = build_runtime_eval_command(dataset="3000", samples="data/evaluation_sample_debug_30.json", limit=30)
+
+        self.assertIn("scripts/evaluate_top_down_runtime.py", command)
+        self.assertIn("--samples data/evaluation_sample_debug_30.json", command)
+        self.assertIn("--catalog catalogs/rules_unified_3000.json", command)
+        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval.json", command)
+        self.assertIn("--limit 30", command)
 
     def test_build_blueprints_subcommand_uses_canonical_proposal_output(self) -> None:
         root = _case_dir()
@@ -137,6 +152,40 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
 
         self.assertEqual(report["total_rule_count"], 4)
         self.assertTrue(paths["rule_embedding_cluster_report"].exists())
+
+    def test_quality_report_subcommand_uses_canonical_outputs(self) -> None:
+        root = _case_dir()
+        paths = dataset_paths("mini", root=root)
+        paths["result_dir"].mkdir(parents=True, exist_ok=True)
+        paths["catalog"].parent.mkdir(parents=True, exist_ok=True)
+        paths["catalog"].write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "catalog_type": "unified_rules_v2",
+                        "schema_profile": "semantic_navigation_tree_minimal",
+                    },
+                    "domains": [
+                        {
+                            "id": "mechanics",
+                            "name": "Mechanics",
+                            "summary": "Mechanics domain.",
+                            "topics": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        paths["cluster_proposals"].write_text(
+            json.dumps({"proposals": [], "failures": []}),
+            encoding="utf-8",
+        )
+
+        report = run_quality_report(dataset="mini", root=root)
+
+        self.assertEqual(report["schema"]["schema_profile"], "semantic_navigation_tree_minimal")
+        self.assertTrue(paths["quality_report"].exists())
 
     def test_prepare_cluster_subcommand_builds_canonical_outputs(self) -> None:
         root = _case_dir()

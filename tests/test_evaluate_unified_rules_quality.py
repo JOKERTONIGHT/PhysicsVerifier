@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import json
+import unittest
+import uuid
+from pathlib import Path
+
+from scripts.evaluate_unified_rules_quality import evaluate_catalog_quality
+
+
+TMP_ROOT = Path("results/test_tmp")
+TMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _case_dir() -> Path:
+    path = TMP_ROOT / f"quality_eval_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
+    def test_evaluate_catalog_quality_reports_schema_summary_and_cluster_gaps(self) -> None:
+        root = _case_dir()
+        catalog_path = root / "catalog.json"
+        proposals_path = root / "cluster_proposals.json"
+        output_path = root / "quality.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "catalog_type": "unified_rules_v2",
+                        "schema_profile": "semantic_navigation_tree_minimal",
+                        "total_domains": 1,
+                        "total_topics": 2,
+                        "topics_with_rules": 2,
+                        "total_executable_rules": 3,
+                        "total_scenario_clusters": 1,
+                    },
+                    "domains": [
+                        {
+                            "id": "mechanics",
+                            "name": "Mechanics",
+                            "summary": "Classical mechanics navigation domain.",
+                            "topics": [
+                                {
+                                    "id": "kinematics",
+                                    "name": "Kinematics",
+                                    "summary": "Motion relations.",
+                                    "scenario_clusters": [
+                                        {
+                                            "id": "timing",
+                                            "name": "Timing",
+                                            "summary": "Timing and displacement checks.",
+                                            "rule_ids": ["r1"],
+                                        }
+                                    ],
+                                    "rules": [
+                                        {
+                                            "rule_id": "r1",
+                                            "title": "Timing relation",
+                                            "summary": "Check timing relation.",
+                                            "trigger": "time and displacement",
+                                            "check_logic": "Verify kinematic relation.",
+                                            "error_type": "calculation",
+                                            "symbolic_hint": {"canonical": "x=vt"},
+                                        },
+                                        {
+                                            "rule_id": "r2",
+                                            "title": "Timing relation",
+                                            "summary": "Check timing relation.",
+                                            "trigger": "time and displacement",
+                                            "check_logic": "Verify kinematic relation.",
+                                            "error_type": "calculation",
+                                            "symbolic_hint": {"canonical": "x=vt"},
+                                        },
+                                    ],
+                                },
+                                {
+                                    "id": "dynamics",
+                                    "name": "Dynamics",
+                                    "summary": "Force reasoning.",
+                                    "scenario_clusters": [],
+                                    "rules": [
+                                        {
+                                            "rule_id": "r3",
+                                            "title": "Force balance",
+                                            "summary": "Check force balance.",
+                                            "trigger": "forces",
+                                            "check_logic": "Verify net force.",
+                                            "error_type": "concept",
+                                            "symbolic_hint": {},
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        proposals_path.write_text(
+            json.dumps({"proposals": [], "failures": [{"topic_key": "mechanics::dynamics"}]}),
+            encoding="utf-8",
+        )
+
+        report = evaluate_catalog_quality(
+            catalog_path=catalog_path,
+            cluster_proposals_path=proposals_path,
+            output_path=output_path,
+        )
+
+        self.assertEqual(report["schema"]["schema_profile"], "semantic_navigation_tree_minimal")
+        self.assertEqual(report["summary_quality"]["rules"]["missing"], 0)
+        self.assertEqual(report["cluster_quality"]["unclustered_topic_count"], 1)
+        self.assertEqual(report["duplication"]["duplicate_summary_group_count"], 1)
+        self.assertEqual(report["cluster_proposals"]["failure_count"], 1)
+        self.assertTrue(output_path.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

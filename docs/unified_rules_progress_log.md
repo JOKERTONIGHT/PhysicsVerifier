@@ -57,13 +57,44 @@
    - 现在改为每完成一个 topic 就增量写入，并支持 `--resume` 跳过已完成 topic。
    - 如果再次失败，可保留已有结果后继续补跑。
 
+10. 放宽 cluster 标签的英文硬限制。
+   - 3000 规则本身包含中文经验描述，强模型可能把中文物理短语带入 summary/cues。
+   - 这不应阻断流程；现在改为记录 `contains_cjk_generated_text` 和 warning 计数，不再抛错。
+   - 已下载的 partial `cluster_proposals.json` 包含 18 个成功 topic 和 1 个失败记录，可在服务器 resume 继续补跑。
+
+11. 继续增强 cluster 标签容错。
+   - 个别 topic 仍可能返回非法或不完整 JSON。
+   - 统一 `cluster-command` 现在默认带 `--continue-on-error`，单 topic 失败会记录到 `failures`，不再阻断后续 topic。
+   - 后续对少量失败 topic 单独补跑或人工审查，不影响已成功 topic 进入 blueprint 生成。
+
+12. 完成 3000 规则库的 cluster blueprint 生成与重建。
+   - `cluster_proposals.json` 当前成功 `37` 个 topic，失败记录 `3` 条。
+   - 已生成 `catalogs/scenario_cluster_blueprints_generated_3000.json`。
+   - blueprint 校验通过：无未知 topic、未知 rule、重复 rule 分配。
+   - 已重建 `catalogs/rules_unified_3000.json`。
+   - 重建后 executable rules 为 `4361`，scenario clusters 为 `219`，clustered topics 为 `43`。
+   - runtime schema 仍是 `semantic_navigation_tree_minimal`，未恢复旧的 `includes/excludes/applicability/negative_cues` 字段。
+
+13. 完成第一轮规则库质量评估与本地优化。
+   - 新增 `scripts/evaluate_unified_rules_quality.py` 和 `quality-report` 统一命令。
+   - 首轮质量评分为 `67`，问题集中在 cluster summary 过长和未聚类 topic 过多。
+   - 修复 builder 投影逻辑：cluster runtime `summary` 优先取 rule group 的 concise summary，不再直接取长 description。
+   - 调整中文 summary 质量判定，避免把有效的中文短摘要误判为过短。
+   - 重新评估后质量评分提升到 `86`，状态为 `usable_with_known_gaps`。
+   - 当前剩余主要问题：50 个有规则 topic 无 scenario cluster，general_reasoning rule 占比约 `30.06%`，3 条 cluster proposal 失败记录。
+
+14. 补齐端到端 runtime 评估入口。
+   - 新增 `scripts/evaluate_top_down_runtime.py`，用于批量运行 `TopDownVerifier` 并统计 topic/cluster/rule 选择率、空规则选择率和诊断数量。
+   - `scripts/unified_rules_pipeline.py` 新增 `runtime-eval-command`，统一生成服务器运行命令。
+   - 该步骤会调用语义匹配 API，应在服务器 conda 环境运行。
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。
 
 ### 下一步
 
-现在已经推进到第 3 步：topic 内 rule embedding 聚类。该步骤需要调用 embedding API，需放到服务器执行。
+当前 1-6 步主流程已跑通，且第一轮质量评估达到“可用但有已知缺口”状态。
 
 当前 embedding 输入为：
 
@@ -79,7 +110,7 @@
 D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embedding-command --dataset 3000
 ```
 
-embedding 聚类产出后，再进入强模型给 cluster 打标签和 summary。
+下一步建议：先在服务器跑 30 条 `top_down_verifier` 端到端检索质量评估；根据空规则选择率和错误 topic 分布，再决定优先补哪些无 cluster topic。
 
 后续固定顺序为：
 

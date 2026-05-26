@@ -193,6 +193,29 @@ class GenerateClusterProposalTests(unittest.TestCase):
         self.assertFalse(result["should_add_clusters"])
         self.assertEqual(completions.kwargs["max_tokens"], 8192)
 
+    def test_chat_json_allows_cjk_generated_text_for_bilingual_rules(self) -> None:
+        class _Message:
+            content = '{"topic_summary":"中文 summary","should_add_clusters":false,"clusters":[]}'
+
+        class _Choice:
+            message = _Message()
+
+        class _Completions:
+            def create(self, **kwargs):
+                return type("Response", (), {"choices": [_Choice()]})()
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+
+        result = _chat_json(
+            client,
+            model="test-model",
+            temperature=0.0,
+            system_prompt="system",
+            user_prompt="user",
+        )
+
+        self.assertEqual(result["topic_summary"], "中文 summary")
+
     def test_build_client_passes_request_timeout(self) -> None:
         import scripts.generate_cluster_proposals as module
 
@@ -295,6 +318,48 @@ class GenerateClusterProposalTests(unittest.TestCase):
         self.assertEqual(proposal["clusters"][0]["candidate_rule_ids"], ["r1", "r2"])
         self.assertEqual(proposal["residual_rule_ids"], ["r3"])
         self.assertEqual(result["metadata"]["generator"], "embedding_cluster_labeling_v1")
+
+    def test_generate_from_embedding_clusters_records_cjk_warning_without_failure(self) -> None:
+        class _Message:
+            content = (
+                '{"topic_summary":"中文场景","rationale":"fixed",'
+                '"clusters":[{"source_cluster_id":"embedding_cluster_01","cluster_id":"gas_escape",'
+                '"name":"Gas Escape","summary":"流出分子的平均能量为 2kT","description":"gas escape",'
+                '"scene_cues":[],"boundary_cues":[],"explore_cues":[]}]}'
+            )
+
+        class _Choice:
+            message = _Message()
+
+        class _Completions:
+            def create(self, **kwargs):
+                return type("Response", (), {"choices": [_Choice()]})()
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+        result = generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters={
+                "topics": [
+                    {
+                        "domain": "Thermodynamics",
+                        "topic": "Kinetic Theory",
+                        "topic_key": "Thermodynamics::Kinetic Theory",
+                        "rule_count": 4,
+                        "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
+                        "residual_rule_ids": [],
+                    }
+                ]
+            },
+            rule_input={"rules": [{"rule_id": "r1", "summary": "s1"}, {"rule_id": "r2", "summary": "s2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+        )
+
+        self.assertTrue(result["proposals"][0]["contains_cjk_generated_text"])
+        self.assertEqual(result["metadata"]["cjk_warning_count"], 1)
 
     def test_generate_from_embedding_clusters_saves_incremental_output_and_resumes(self) -> None:
         root = _case_dir()

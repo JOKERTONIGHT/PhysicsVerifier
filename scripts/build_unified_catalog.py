@@ -810,16 +810,18 @@ def _project_navigation_group(group: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _project_navigation_cluster(cluster: Dict[str, Any]) -> Dict[str, Any]:
+    groups = [group for group in (cluster.get("rule_groups") or []) if isinstance(group, dict)]
+    group_summary = norm_text(groups[0].get("summary") or "") if groups else ""
+    summary = group_summary or norm_text(cluster.get("summary") or cluster.get("description") or cluster.get("name") or "")
     projected: Dict[str, Any] = {
         "id": norm_text(cluster.get("cluster_id") or ""),
         "name": norm_text(cluster.get("name") or ""),
-        "summary": norm_text(cluster.get("description") or cluster.get("name") or ""),
+        "summary": summary,
         "rule_ids": ordered_unique(cluster.get("rule_ids") or []),
     }
     rule_groups = [
         _project_navigation_group(group)
-        for group in (cluster.get("rule_groups") or [])
-        if isinstance(group, dict)
+        for group in groups
     ]
     if rule_groups:
         projected["rule_groups"] = rule_groups
