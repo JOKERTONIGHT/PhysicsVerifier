@@ -139,6 +139,16 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
 
         self.assertEqual(result["domains"][0]["domain"], "Mechanics")
 
+    def test_chat_json_wraps_array_response_for_expected_selection_key(self) -> None:
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=_FakeClient(['[{"domain":"Mechanics","topic":"Gravitation and Kepler\'s Laws","relevant":true,"score":0.95,"reason":"orbit"}]']),
+        )
+
+        result = matcher._chat_json(system_prompt="system", user_prompt="user", list_key="topics")
+
+        self.assertEqual(result["topics"][0]["topic"], "Gravitation and Kepler's Laws")
+
     def test_select_tree_semantically_returns_structured_results(self) -> None:
         matcher = UnifiedSemanticMatcher(
             model="fake-model",

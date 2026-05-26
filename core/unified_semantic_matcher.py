@@ -59,7 +59,7 @@ class UnifiedSemanticMatcher:
         return self._client
 
     @staticmethod
-    def _extract_json_object(text: str) -> Dict[str, Any]:
+    def _extract_json_object(text: str, *, list_key: str | None = None) -> Dict[str, Any]:
         raw = norm_text(text)
         if not raw:
             raise RuntimeError("Semantic matcher returned empty content.")
@@ -70,14 +70,18 @@ class UnifiedSemanticMatcher:
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
                 return parsed
+            if list_key and isinstance(parsed, list):
+                return {list_key: parsed}
         except Exception:
             pass
-        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S | re.I)
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", raw, flags=re.S | re.I)
         if fenced:
             try:
                 parsed = json.loads(fenced.group(1))
                 if isinstance(parsed, dict):
                     return parsed
+                if list_key and isinstance(parsed, list):
+                    return {list_key: parsed}
             except Exception:
                 pass
         loose = re.search(r"\{.*\}", raw, flags=re.S)
@@ -88,13 +92,23 @@ class UnifiedSemanticMatcher:
                     return parsed
             except Exception:
                 pass
+        if list_key:
+            loose_list = re.search(r"\[.*\]", raw, flags=re.S)
+            if loose_list:
+                try:
+                    parsed = json.loads(loose_list.group(0))
+                    if isinstance(parsed, list):
+                        return {list_key: parsed}
+                except Exception:
+                    pass
         preview = raw[:300]
         hint = ""
         if raw.startswith("{") and not raw.endswith("}"):
             hint = " The response looks truncated."
-        raise RuntimeError(f"Semantic matcher must return a JSON object.{hint} Preview: {preview}")
+        expected = f" or a JSON array for '{list_key}'" if list_key else ""
+        raise RuntimeError(f"Semantic matcher must return a JSON object{expected}.{hint} Preview: {preview}")
 
-    def _chat_json(self, *, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+    def _chat_json(self, *, system_prompt: str, user_prompt: str, list_key: str | None = None) -> Dict[str, Any]:
         client = self._get_client()
         response = client.chat.completions.create(
             model=self.model,
@@ -106,7 +120,7 @@ class UnifiedSemanticMatcher:
             ],
         )
         content = norm_text(response.choices[0].message.content if response.choices else "")
-        return self._extract_json_object(content)
+        return self._extract_json_object(content, list_key=list_key)
 
     @staticmethod
     def _sample_text(sample: Dict[str, Any]) -> str:
@@ -247,6 +261,7 @@ class UnifiedSemanticMatcher:
                 "or weakly related by vocabulary. If uncertain, exclude rather than include. Return JSON only."
             ),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+            list_key="domains",
         )
         judgments: List[Dict[str, Any]] = []
         valid_domains = {item["domain"] for item in domain_candidates}
@@ -309,6 +324,7 @@ class UnifiedSemanticMatcher:
                 "If uncertain, exclude rather than include. Return JSON only."
             ),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+            list_key="topics",
         )
         candidate_index = {(item["domain"], item["topic"]): item for item in topic_candidates}
         judgments: List[Dict[str, Any]] = []
@@ -389,6 +405,7 @@ class UnifiedSemanticMatcher:
                     "than include. Return JSON only."
                 ),
                 user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+                list_key="clusters",
             )
             cluster_index = {item["cluster_id"]: item for item in cluster_candidates}
             topic_judgments: List[Dict[str, Any]] = []
@@ -475,6 +492,7 @@ class UnifiedSemanticMatcher:
                 "rules. If no rule is clearly applicable, return an empty list. Return JSON only."
             ),
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+            list_key="rules",
         )
         rule_index = {item["rule_id"]: item for item in rule_candidates}
         judgments: List[Dict[str, Any]] = []
