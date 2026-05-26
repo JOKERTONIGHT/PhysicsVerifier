@@ -51,12 +51,17 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("--model gemini-3-flash-preview-thinking", command)
 
     def test_rule_embedding_cluster_command_uses_canonical_paths(self) -> None:
-        command = build_rule_embedding_cluster_command(dataset="3000", embedding_model="text-embedding-3-large")
+        command = build_rule_embedding_cluster_command(
+            dataset="3000",
+            embedding_model="text-embedding-3-large",
+            similarity_threshold=0.74,
+        )
 
         self.assertIn("scripts/run_rule_embedding_clustering.py", command)
         self.assertIn("results/unified_rules_3000/rule_embedding_input.json", command)
         self.assertIn("results/unified_rules_3000/rule_embedding_clusters.json", command)
         self.assertIn("--embedding-model text-embedding-3-large", command)
+        self.assertIn("--similarity-threshold 0.74", command)
 
     def test_cluster_proposal_command_uses_embedding_clusters_not_full_topic_rules(self) -> None:
         command = build_cluster_proposal_command(dataset="3000", model="gemini-3-flash-preview-thinking")

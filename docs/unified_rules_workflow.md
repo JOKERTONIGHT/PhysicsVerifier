@@ -82,6 +82,8 @@ D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embed
 results/unified_rules_3000/rule_embedding_clusters.json
 ```
 
+当前推荐阈值为 `--similarity-threshold 0.74`。如果服务器已有 `rule_embedding_cache.json`，重跑该步骤会复用缓存，主要只是重新聚类。
+
 服务器回传 embedding 聚类结果后，先验收聚类覆盖：
 
 ```powershell

@@ -46,6 +46,12 @@
    - 新增 `analyze-embedding`，用于统计 cluster 覆盖率、residual 比例、高 residual topic。
    - 服务器回传 `rule_embedding_clusters.json` 后，先验收再进入强模型打标签。
 
+8. 第一次 embedding 聚类验收结果。
+   - 使用 `similarity_threshold=0.78`，总规则 `4361`。
+   - 聚入 cluster 的规则为 `1137`，覆盖率 `26.07%`。
+   - residual 规则为 `3224`，覆盖偏低。
+   - 结论：0.78 阈值偏保守，不建议直接进入强模型标签；应在服务器复用 embedding cache，用较低阈值重聚类。
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。
@@ -57,6 +63,10 @@
 当前 embedding 输入为：
 
 - `results/unified_rules_3000/rule_embedding_input.json`
+
+推荐重聚类阈值：
+
+- `similarity_threshold=0.74`
 
 执行前先运行：
 

@@ -157,6 +157,7 @@ def build_rule_embedding_cluster_command(
     *,
     dataset: str = DEFAULT_DATASET,
     embedding_model: str = "text-embedding-3-large",
+    similarity_threshold: float = 0.74,
     min_cluster_size: int = 4,
 ) -> str:
     paths = dataset_paths(dataset)
@@ -169,6 +170,8 @@ def build_rule_embedding_cluster_command(
         str(paths["rule_embedding_clusters"]).replace("\\", "/"),
         "--embedding-model",
         embedding_model,
+        "--similarity-threshold",
+        str(similarity_threshold),
         "--min-cluster-size",
         str(min_cluster_size),
         "--resume",
@@ -308,6 +311,7 @@ def main() -> None:
     embedding_parser = subparsers.add_parser("embedding-command", help="Print the rule embedding clustering command; this step calls API.")
     embedding_parser.add_argument("--dataset", default=DEFAULT_DATASET)
     embedding_parser.add_argument("--embedding-model", default="text-embedding-3-large")
+    embedding_parser.add_argument("--similarity-threshold", type=float, default=0.74)
     embedding_parser.add_argument("--min-cluster-size", type=int, default=4)
 
     analyze_embedding_parser = subparsers.add_parser("analyze-embedding", help="Analyze rule embedding clustering output.")
@@ -382,6 +386,7 @@ def main() -> None:
             build_rule_embedding_cluster_command(
                 dataset=args.dataset,
                 embedding_model=args.embedding_model,
+                similarity_threshold=float(args.similarity_threshold),
                 min_cluster_size=args.min_cluster_size,
             )
         )
