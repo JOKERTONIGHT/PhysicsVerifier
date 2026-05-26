@@ -1,0 +1,490 @@
+"""Implementation module for deterministic pre-cluster rule preparation.
+
+User-facing workflow commands should go through scripts/unified_rules_pipeline.py.
+This module stays importable for focused tests and lower-level debugging.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.build_unified_catalog import (
+    DEFAULT_SCENARIO_CLUSTER_BLUEPRINTS_PATH,
+    _load_scenario_cluster_blueprints,
+    _resolve_distilled_topic,
+    build_unified_catalog_from_data,
+    merge_scenario_cluster_blueprints,
+)
+from scripts.compare_unified_catalogs import compare_catalogs
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _console_json(data: Dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=True, indent=2)
+
+
+def _text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _key_text(value: Any) -> str:
+    return _text(value).casefold()
+
+
+def _ordered_unique(values: Iterable[Any]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _rules(payload: Any) -> List[Dict[str, Any]]:
+    raw_rules = payload.get("rules") if isinstance(payload, dict) else payload
+    if not isinstance(raw_rules, list):
+        return []
+    return [item for item in raw_rules if isinstance(item, dict)]
+
+
+def _topic_key(domain: str, topic: str) -> str:
+    return f"{domain}::{topic}"
+
+
+def _safe_symbolic_hint(rule: Dict[str, Any]) -> Dict[str, Any]:
+    raw = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+    return {
+        "primitive": _text(raw.get("primitive") or "none") or "none",
+        "canonical": _text(raw.get("canonical") or ""),
+        "required_symbols": sorted(_ordered_unique(raw.get("required_symbols") or [])),
+    }
+
+
+def _symbolic_empty(rule: Dict[str, Any]) -> bool:
+    hint = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+    primitive = _text(hint.get("primitive") or "")
+    canonical = _text(hint.get("canonical") or "")
+    symbols = _ordered_unique(hint.get("required_symbols") or [])
+    return not primitive and not canonical and not symbols
+
+
+def _auxiliary(rule: Dict[str, Any]) -> Dict[str, Any]:
+    raw = rule.get("auxiliary") if isinstance(rule.get("auxiliary"), dict) else {}
+    return {
+        "node_summary": _text(raw.get("node_summary") or ""),
+        "scene_cues": _ordered_unique(raw.get("scene_cues") or []),
+        "boundary_cues": _ordered_unique(raw.get("boundary_cues") or []),
+        "explore_cues": _ordered_unique(raw.get("explore_cues") or []),
+        "evidence_sample_ids": _ordered_unique(raw.get("evidence_sample_ids") or []),
+    }
+
+
+def _has_text(aux: Dict[str, Any], key: str) -> bool:
+    return bool(_text(aux.get(key)))
+
+
+def _has_list(aux: Dict[str, Any], key: str) -> bool:
+    return isinstance(aux.get(key), list) and any(_text(item) for item in aux.get(key) or [])
+
+
+def _stable_rule_id(parts: Tuple[str, ...]) -> str:
+    digest = hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    return f"norm_{digest}"
+
+
+def _rule_summary(*, title: str, trigger: str, check_logic: str, auxiliary: Dict[str, Any]) -> str:
+    """NaviRAG-style rule summary: short node-level meaning, not a static boundary list."""
+    node_summary = _text(auxiliary.get("node_summary") or "")
+    if node_summary:
+        return node_summary[:160]
+    if title and check_logic:
+        return f"{title}: {check_logic}"[:160]
+    if title and trigger:
+        return f"{title}: {trigger}"[:160]
+    return (title or trigger or check_logic)[:160]
+
+
+def _canonical_rule(raw: Dict[str, Any]) -> Dict[str, Any]:
+    raw_domain = _text(raw.get("domain") or "Unknown")
+    raw_topic = _text(raw.get("topic") or "Unknown")
+    domain, topic = _resolve_distilled_topic(raw_domain, raw_topic)
+    aux = _auxiliary(raw)
+    sample_ids = _ordered_unique(raw.get("sample_ids") or [])
+    aux["evidence_sample_ids"] = _ordered_unique(list(aux.get("evidence_sample_ids") or []) + sample_ids)
+    return {
+        "source_rule_id": _text(raw.get("rule_id") or ""),
+        "domain": domain,
+        "topic": topic,
+        "title": _text(raw.get("title") or ""),
+        "trigger": _text(raw.get("trigger") or ""),
+        "check_logic": _text(raw.get("check_logic") or ""),
+        "error_type": _text(raw.get("error_type") or "logic") or "logic",
+        "symbolic_hint": _safe_symbolic_hint(raw),
+        "auxiliary": aux,
+        "count": int(raw.get("count") or 0),
+        "sample_ids": sample_ids,
+        "_raw_domain": raw_domain,
+        "_raw_topic": raw_topic,
+    }
+
+
+def _merge_key(rule: Dict[str, Any]) -> Tuple[str, ...]:
+    hint = rule["symbolic_hint"]
+    return (
+        _topic_key(rule["domain"], rule["topic"]),
+        _key_text(rule["title"]),
+        _key_text(rule["trigger"]),
+        _key_text(rule["check_logic"]),
+        _key_text(rule["error_type"]),
+        _key_text(hint.get("primitive")),
+        _key_text(hint.get("canonical")),
+        ",".join(hint.get("required_symbols") or []),
+    )
+
+
+def _merge_auxiliary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    node_summary = next((_text(item.get("node_summary") or "") for item in items if _text(item.get("node_summary"))), "")
+    return {
+        "node_summary": node_summary,
+        "scene_cues": _ordered_unique(cue for item in items for cue in item.get("scene_cues") or []),
+        "boundary_cues": _ordered_unique(cue for item in items for cue in item.get("boundary_cues") or []),
+        "explore_cues": _ordered_unique(cue for item in items for cue in item.get("explore_cues") or []),
+        "evidence_sample_ids": _ordered_unique(sid for item in items for sid in item.get("evidence_sample_ids") or []),
+    }
+
+
+def _merge_group(key: Tuple[str, ...], items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    first = items[0]
+    sample_ids = _ordered_unique(sid for item in items for sid in item.get("sample_ids") or [])
+    count = sum(int(item.get("count") or 0) for item in items)
+    auxiliary = _merge_auxiliary([item["auxiliary"] for item in items])
+    return {
+        "rule_id": _stable_rule_id(key),
+        "domain": first["domain"],
+        "topic": first["topic"],
+        "title": first["title"],
+        "summary": _rule_summary(
+            title=first["title"],
+            trigger=first["trigger"],
+            check_logic=first["check_logic"],
+            auxiliary=auxiliary,
+        ),
+        "trigger": first["trigger"],
+        "check_logic": first["check_logic"],
+        "error_type": first["error_type"],
+        "symbolic_hint": first["symbolic_hint"],
+        "auxiliary": auxiliary,
+        "count": count if count > 0 else len(sample_ids),
+        "sample_ids": sample_ids,
+        "source_rule_ids": _ordered_unique(item.get("source_rule_id") for item in items),
+    }
+
+
+def _embedding_text(rule: Dict[str, Any]) -> str:
+    hint = rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {}
+    aux = rule.get("auxiliary") if isinstance(rule.get("auxiliary"), dict) else {}
+    parts = [
+        f"summary: {_text(rule.get('summary') or '')}",
+        f"title: {_text(rule.get('title') or '')}",
+        f"trigger: {_text(rule.get('trigger') or '')}",
+        f"check_logic: {_text(rule.get('check_logic') or '')}",
+        f"error_type: {_text(rule.get('error_type') or '')}",
+        f"symbolic: {_text(hint.get('canonical') or '')}",
+        f"scene_cues: {'; '.join(_ordered_unique(aux.get('scene_cues') or []))}",
+        f"explore_cues: {'; '.join(_ordered_unique(aux.get('explore_cues') or []))}",
+    ]
+    return "\n".join(part for part in parts if part.split(": ", 1)[-1].strip())
+
+
+def _embedding_input_payload(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = []
+    skipped = 0
+    for rule in rules:
+        if not rule.get("rule_id") or not rule.get("summary"):
+            skipped += 1
+            continue
+        topic_key = _topic_key(str(rule.get("domain") or ""), str(rule.get("topic") or ""))
+        rows.append(
+            {
+                "rule_id": rule["rule_id"],
+                "domain": rule["domain"],
+                "topic": rule["topic"],
+                "topic_key": topic_key,
+                "title": rule["title"],
+                "summary": rule["summary"],
+                "trigger": rule["trigger"],
+                "check_logic": rule["check_logic"],
+                "error_type": rule["error_type"],
+                "symbolic_hint": rule["symbolic_hint"],
+                "auxiliary": rule["auxiliary"],
+                "sample_ids": rule["sample_ids"],
+                "source_rule_ids": rule["source_rule_ids"],
+                "near_duplicate_key": f"{topic_key}::{rule['title']}",
+                "embedding_text": _embedding_text(rule),
+            }
+        )
+    return {
+        "metadata": {
+            "purpose": "topic_local_rule_embedding_clustering",
+            "summary_source": "auxiliary.node_summary preferred; fallback to title/check_logic",
+            "input_rule_count": len(rules),
+            "rule_count": len(rows),
+            "skipped_rule_count": skipped,
+        },
+        "rules": rows,
+    }
+
+
+def _catalog_topic_keys(catalog: Dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for domain in catalog.get("domains", []) or []:
+        if not isinstance(domain, dict):
+            continue
+        domain_name = _text(domain.get("name") or "Unknown")
+        for topic in domain.get("topics", []) or []:
+            if isinstance(topic, dict):
+                keys.add(_topic_key(domain_name, _text(topic.get("name") or "Unknown")))
+    return keys
+
+
+def _quality_report(
+    *,
+    canonical_rules: List[Dict[str, Any]],
+    catalog_topic_keys: set[str],
+    duplicate_groups: List[List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    topic_stats: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {
+            "rule_count": 0,
+            "missing_symbolic_hint_count": 0,
+            "rules_with_all_auxiliary_fields": 0,
+            "error_types": Counter(),
+        }
+    )
+    near_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    unmatched_topics: set[str] = set()
+    normalization_changes = 0
+    sample_ids: List[str] = []
+    aux_counts = Counter()
+    missing_symbolic = 0
+
+    for rule in canonical_rules:
+        topic_key = _topic_key(rule["domain"], rule["topic"])
+        topic_stats[topic_key]["rule_count"] += 1
+        topic_stats[topic_key]["error_types"][rule["error_type"]] += 1
+        sample_ids.extend(rule.get("sample_ids") or [])
+        if rule["_raw_domain"] != rule["domain"] or rule["_raw_topic"] != rule["topic"]:
+            normalization_changes += 1
+        if catalog_topic_keys and topic_key not in catalog_topic_keys:
+            unmatched_topics.add(topic_key)
+        if _symbolic_empty(rule):
+            missing_symbolic += 1
+            topic_stats[topic_key]["missing_symbolic_hint_count"] += 1
+
+        aux = rule["auxiliary"]
+        aux_fields = {
+            "node_summary": _has_text(aux, "node_summary"),
+            "scene_cues": _has_list(aux, "scene_cues"),
+            "boundary_cues": _has_list(aux, "boundary_cues"),
+            "explore_cues": _has_list(aux, "explore_cues"),
+            "evidence_sample_ids": _has_list(aux, "evidence_sample_ids"),
+        }
+        for key, value in aux_fields.items():
+            if value:
+                aux_counts[f"rules_with_{key}"] += 1
+        if all(aux_fields.values()):
+            aux_counts["rules_with_all_auxiliary_fields"] += 1
+            topic_stats[topic_key]["rules_with_all_auxiliary_fields"] += 1
+        if rule["title"]:
+            near_groups[(topic_key, _key_text(rule["title"]))].append(rule)
+
+    near_duplicate_group_count = sum(1 for items in near_groups.values() if len(items) > 1)
+    topics = {}
+    for key, stat in topic_stats.items():
+        topics[key] = {
+            "rule_count": stat["rule_count"],
+            "missing_symbolic_hint_count": stat["missing_symbolic_hint_count"],
+            "rules_with_all_auxiliary_fields": stat["rules_with_all_auxiliary_fields"],
+            "error_types": dict(sorted(stat["error_types"].items())),
+        }
+    topics = dict(sorted(topics.items(), key=lambda item: (-item[1]["rule_count"], item[0])))
+    return {
+        "total_rules": len(canonical_rules),
+        "topic_bucket_count": len(topic_stats),
+        "sample_id_count": len(set(sample_ids)),
+        "topic_normalization_change_count": normalization_changes,
+        "unmatched_topic_count": len(unmatched_topics),
+        "unmatched_topics": sorted(unmatched_topics),
+        "exact_duplicate_group_count": len(duplicate_groups),
+        "near_duplicate_group_count": near_duplicate_group_count,
+        "symbolic_hint": {
+            "missing_or_empty_count": missing_symbolic,
+            "coverage": ((len(canonical_rules) - missing_symbolic) / len(canonical_rules)) if canonical_rules else 0.0,
+        },
+        "auxiliary": {
+            "rules_with_node_summary": int(aux_counts["rules_with_node_summary"]),
+            "rules_with_scene_cues": int(aux_counts["rules_with_scene_cues"]),
+            "rules_with_boundary_cues": int(aux_counts["rules_with_boundary_cues"]),
+            "rules_with_explore_cues": int(aux_counts["rules_with_explore_cues"]),
+            "rules_with_evidence_sample_ids": int(aux_counts["rules_with_evidence_sample_ids"]),
+            "rules_with_all_auxiliary_fields": int(aux_counts["rules_with_all_auxiliary_fields"]),
+        },
+        "topics": topics,
+    }
+
+
+def _load_blueprints(paths: Sequence[Path] | None) -> Dict[str, List[Dict[str, Any]]]:
+    if paths is None:
+        paths = [DEFAULT_SCENARIO_CLUSTER_BLUEPRINTS_PATH]
+    return merge_scenario_cluster_blueprints(*[_load_scenario_cluster_blueprints(path) for path in paths])
+
+
+def prepare_rules_for_cluster(
+    *,
+    distilled_input: Path,
+    knowledge_path: Path,
+    tagged_path: Path,
+    baseline_catalog_path: Path | None,
+    distilled_output: Path,
+    catalog_output: Path,
+    report_output: Path,
+    embedding_input_output: Path | None = None,
+    scenario_cluster_blueprints_paths: Sequence[Path] | None = None,
+) -> Dict[str, Any]:
+    raw_rules = _rules(_load_json(distilled_input))
+    canonical_rules = [_canonical_rule(rule) for rule in raw_rules]
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = defaultdict(list)
+    for rule in canonical_rules:
+        groups[_merge_key(rule)].append(rule)
+    duplicate_groups = [items for items in groups.values() if len(items) > 1]
+    normalized_rules = [_merge_group(key, items) for key, items in groups.items()]
+    normalized_rules.sort(key=lambda item: (item["domain"], item["topic"], item["title"], item["rule_id"]))
+
+    normalized_payload = {
+        "summary": {
+            "source": str(distilled_input),
+            "input_rules": len(raw_rules),
+            "output_rules": len(normalized_rules),
+            "topic_bucket_count": len({_topic_key(rule["domain"], rule["topic"]) for rule in canonical_rules}),
+            "topic_normalization_change_count": sum(
+                1
+                for rule in canonical_rules
+                if rule["_raw_domain"] != rule["domain"] or rule["_raw_topic"] != rule["topic"]
+            ),
+            "merged_exact_duplicate_groups": len(duplicate_groups),
+            "merged_exact_duplicate_rules": sum(len(items) for items in duplicate_groups),
+        },
+        "rules": normalized_rules,
+    }
+    _write_json(distilled_output, normalized_payload)
+    embedding_payload = _embedding_input_payload(normalized_rules)
+    if embedding_input_output:
+        _write_json(embedding_input_output, embedding_payload)
+
+    knowledge_data = _load_json(knowledge_path)
+    tagged_data = _load_json(tagged_path)
+    blueprints = _load_blueprints(scenario_cluster_blueprints_paths)
+    catalog = build_unified_catalog_from_data(knowledge_data, normalized_payload, tagged_data, blueprints)
+    _write_json(catalog_output, catalog)
+
+    catalog_topics = _catalog_topic_keys(catalog)
+    quality = _quality_report(
+        canonical_rules=canonical_rules,
+        catalog_topic_keys=catalog_topics,
+        duplicate_groups=duplicate_groups,
+    )
+    comparison = (
+        compare_catalogs(baseline_catalog_path, catalog_output, output_path=None)
+        if baseline_catalog_path
+        else {}
+    )
+    meta = catalog.get("metadata") if isinstance(catalog.get("metadata"), dict) else {}
+    report = {
+        "inputs": {
+            "distilled": str(distilled_input),
+            "knowledge": str(knowledge_path),
+            "tagged": str(tagged_path),
+            "baseline_catalog": str(baseline_catalog_path) if baseline_catalog_path else "",
+        },
+        "outputs": {
+            "distilled_for_cluster": str(distilled_output),
+            "catalog_for_cluster": str(catalog_output),
+            "embedding_input": str(embedding_input_output) if embedding_input_output else "",
+            "report": str(report_output),
+        },
+        "normalization": normalized_payload["summary"],
+        "embedding_input": embedding_payload["metadata"],
+        "quality": quality,
+        "catalog": {
+            "schema_profile": meta.get("schema_profile"),
+            "topics_with_rules": meta.get("topics_with_rules"),
+            "total_executable_rules": meta.get("total_executable_rules"),
+            "total_scenario_clusters": meta.get("total_scenario_clusters"),
+        },
+        "comparison": comparison.get("summary", {}),
+        "cluster_coverage": comparison.get("cluster_coverage", {}),
+    }
+    _write_json(report_output, report)
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Prepare the single deterministic rule set used before cluster completion.")
+    parser.add_argument("--distilled-input", default="results/unified_rules_3000/semantic_experience_distilled.json")
+    parser.add_argument("--knowledge", default="catalogs/rules_catalog_top_down.json")
+    parser.add_argument("--tagged", default="catalogs/rules_300_tagged.json")
+    parser.add_argument("--baseline-catalog", default="catalogs/rules_unified.json")
+    parser.add_argument("--distilled-output", default="results/unified_rules_3000/semantic_experience_distilled_for_cluster.json")
+    parser.add_argument("--catalog-output", default="catalogs/rules_unified_3000.json")
+    parser.add_argument("--report-output", default="results/unified_rules_3000/precluster_report.json")
+    parser.add_argument("--embedding-input-output", default="results/unified_rules_3000/rule_embedding_input.json")
+    parser.add_argument(
+        "--scenario-cluster-blueprints",
+        action="append",
+        default=None,
+        help="Repeat to merge blueprint sources. Defaults to catalogs/scenario_cluster_blueprints.json.",
+    )
+    args = parser.parse_args()
+
+    report = prepare_rules_for_cluster(
+        distilled_input=Path(args.distilled_input),
+        knowledge_path=Path(args.knowledge),
+        tagged_path=Path(args.tagged),
+        baseline_catalog_path=Path(args.baseline_catalog) if args.baseline_catalog else None,
+        distilled_output=Path(args.distilled_output),
+        catalog_output=Path(args.catalog_output),
+        report_output=Path(args.report_output),
+        embedding_input_output=Path(args.embedding_input_output) if args.embedding_input_output else None,
+        scenario_cluster_blueprints_paths=(
+            [Path(item) for item in args.scenario_cluster_blueprints]
+            if args.scenario_cluster_blueprints is not None
+            else None
+        ),
+    )
+    print(_console_json({"normalization": report["normalization"], "catalog": report["catalog"]}))
+
+
+if __name__ == "__main__":
+    main()

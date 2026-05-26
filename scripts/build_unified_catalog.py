@@ -613,6 +613,7 @@ def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: D
         rule_leaf = {
             "rule_id": norm_text(raw_rule.get("rule_id") or ""),
             "title": title,
+            "summary": norm_text(raw_rule.get("summary") or ""),
             "trigger": trigger,
             "check_logic": check_logic,
             "error_type": norm_text(raw_rule.get("error_type") or "logic") or "logic",
@@ -775,6 +776,9 @@ def _build_scenario_clusters(rules: List[Dict[str, Any]], cluster_blueprints: Li
 
 
 def _summarize_rule(rule: Dict[str, Any]) -> str:
+    summary = norm_text(rule.get("summary") or "")
+    if summary:
+        return summary
     title = norm_text(rule.get("title") or "")
     trigger = norm_text(rule.get("trigger") or "")
     if title and trigger:

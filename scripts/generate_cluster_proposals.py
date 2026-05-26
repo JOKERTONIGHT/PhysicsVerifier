@@ -192,6 +192,19 @@ def _build_distilled_auxiliary_index(distilled_payload: Dict[str, Any] | None) -
     return out
 
 
+def _build_rule_index(rule_input_payload: Dict[str, Any] | None) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(rule_input_payload, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for rule in rule_input_payload.get("rules", []) or []:
+        if not isinstance(rule, dict):
+            continue
+        rule_id = _norm_text(rule.get("rule_id") or "")
+        if rule_id:
+            out[rule_id] = rule
+    return out
+
+
 def _collect_topic_candidates(
     catalog: Dict[str, Any],
     *,
@@ -291,6 +304,70 @@ def _build_topic_prompt_payload(
     }
 
 
+def _build_embedding_topic_prompt_payload(
+    topic_item: Dict[str, Any],
+    *,
+    rule_index: Dict[str, Dict[str, Any]],
+    max_rules_per_cluster: int,
+) -> Dict[str, Any]:
+    clusters = []
+    for cluster in topic_item.get("clusters", []) or []:
+        if not isinstance(cluster, dict):
+            continue
+        rule_ids = _ordered_unique(cluster.get("rule_ids") or [])
+        sampled_rules = []
+        for rule_id in rule_ids[:max_rules_per_cluster]:
+            rule = rule_index.get(rule_id, {})
+            sampled_rules.append(
+                {
+                    "rule_id": rule_id,
+                    "title": _norm_text(rule.get("title") or ""),
+                    "summary": _norm_text(rule.get("summary") or ""),
+                    "trigger": _norm_text(rule.get("trigger") or ""),
+                    "check_logic": _norm_text(rule.get("check_logic") or ""),
+                    "error_type": _norm_text(rule.get("error_type") or ""),
+                    "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
+                    "auxiliary": rule.get("auxiliary") if isinstance(rule.get("auxiliary"), dict) else {},
+                }
+            )
+        clusters.append(
+            {
+                "source_cluster_id": _norm_text(cluster.get("cluster_id") or ""),
+                "size": int(cluster.get("size") or len(rule_ids)),
+                "representative_rules": cluster.get("representative_rules") or [],
+                "sampled_rules": sampled_rules,
+            }
+        )
+    return {
+        "domain": _norm_text(topic_item.get("domain") or ""),
+        "topic": _norm_text(topic_item.get("topic") or ""),
+        "topic_key": _norm_text(topic_item.get("topic_key") or ""),
+        "rule_count": int(topic_item.get("rule_count") or 0),
+        "embedding_clusters": clusters,
+        "residual_rule_count": len(_ordered_unique(topic_item.get("residual_rule_ids") or [])),
+        "task": (
+            "Name and summarize each embedding cluster as a scenario cluster. Do not change rule assignments. "
+            "Use concise NaviRAG-style summaries for tree navigation."
+        ),
+        "output_schema": {
+            "topic_summary": "string",
+            "rationale": "string",
+            "clusters": [
+                {
+                    "source_cluster_id": "must match one input source_cluster_id",
+                    "cluster_id": "stable snake_case id",
+                    "name": "short scenario cluster name",
+                    "summary": "1-2 sentence navigation summary",
+                    "description": "slightly fuller scenario description",
+                    "scene_cues": ["typical problem scenes"],
+                    "boundary_cues": ["semantic boundaries or common confusions"],
+                    "explore_cues": ["when navigation should explore this cluster"],
+                }
+            ],
+        },
+    }
+
+
 def _normalize_cluster_proposal(raw: Dict[str, Any], valid_rule_ids: set[str]) -> Dict[str, Any]:
     clusters: List[Dict[str, Any]] = []
     used_rule_ids: set[str] = set()
@@ -318,6 +395,45 @@ def _normalize_cluster_proposal(raw: Dict[str, Any], valid_rule_ids: set[str]) -
         "rationale": _norm_text(raw.get("rationale") or ""),
         "clusters": clusters,
         "residual_rule_ids": residual_rule_ids,
+    }
+
+
+def _normalize_embedding_cluster_labels(raw: Dict[str, Any], topic_item: Dict[str, Any]) -> Dict[str, Any]:
+    source_clusters = [
+        item for item in (topic_item.get("clusters") or []) if isinstance(item, dict)
+    ]
+    labels_by_source: Dict[str, Dict[str, Any]] = {}
+    for item in raw.get("clusters", []) or []:
+        if not isinstance(item, dict):
+            continue
+        source_id = _norm_text(item.get("source_cluster_id") or "")
+        if source_id:
+            labels_by_source[source_id] = item
+
+    clusters: List[Dict[str, Any]] = []
+    for index, source in enumerate(source_clusters, start=1):
+        source_id = _norm_text(source.get("cluster_id") or f"embedding_cluster_{index:02d}")
+        label = labels_by_source.get(source_id, {})
+        fallback_name = source_id.replace("_", " ").title()
+        cluster_id = _norm_text(label.get("cluster_id") or source_id)
+        clusters.append(
+            {
+                "cluster_id": re.sub(r"[^a-z0-9_]+", "_", cluster_id.lower()).strip("_") or source_id,
+                "name": _norm_text(label.get("name") or fallback_name),
+                "summary": _norm_text(label.get("summary") or fallback_name),
+                "description": _norm_text(label.get("description") or label.get("summary") or fallback_name),
+                "scene_cues": _ordered_unique(label.get("scene_cues") or []),
+                "boundary_cues": _ordered_unique(label.get("boundary_cues") or []),
+                "explore_cues": _ordered_unique(label.get("explore_cues") or []),
+                "candidate_rule_ids": _ordered_unique(source.get("rule_ids") or []),
+            }
+        )
+    return {
+        "topic_summary": _norm_text(raw.get("topic_summary") or ""),
+        "should_add_clusters": bool(clusters),
+        "rationale": _norm_text(raw.get("rationale") or ""),
+        "clusters": clusters,
+        "residual_rule_ids": _ordered_unique(topic_item.get("residual_rule_ids") or []),
     }
 
 
@@ -399,10 +515,92 @@ def generate_cluster_proposals(
     }
 
 
+def generate_cluster_proposals_from_embedding_clusters(
+    *,
+    embedding_clusters: Dict[str, Any],
+    rule_input: Dict[str, Any],
+    client: Any,
+    model: str,
+    temperature: float,
+    max_topics: int,
+    min_rule_count: int,
+    max_rules_per_cluster: int,
+    max_output_tokens: int | None = None,
+) -> Dict[str, Any]:
+    rule_index = _build_rule_index(rule_input)
+    topics = [
+        item
+        for item in (embedding_clusters.get("topics") or [])
+        if isinstance(item, dict)
+        and int(item.get("rule_count") or 0) >= min_rule_count
+        and item.get("clusters")
+    ]
+    topics.sort(key=lambda item: (-int(item.get("rule_count") or 0), _norm_text(item.get("topic_key") or "")))
+    if max_topics > 0:
+        topics = topics[:max_topics]
+
+    system_prompt = (
+        "You are labeling embedding-derived scenario clusters for a physics rule navigation tree. The cluster "
+        "membership is fixed; do not add, remove, or move rules. Produce concise English names and summaries that "
+        "help a top-down semantic navigator choose the right cluster. Use scene_cues, boundary_cues, and explore_cues "
+        "as auxiliary navigation notes. Return JSON only."
+    )
+    proposals: List[Dict[str, Any]] = []
+    total_topics = len(topics)
+    for index, topic_item in enumerate(topics, start=1):
+        print(
+            f"[cluster-label] {index}/{total_topics} "
+            f"{topic_item.get('domain')} / {topic_item.get('topic')} "
+            f"embedding_clusters={len(topic_item.get('clusters') or [])}",
+            flush=True,
+        )
+        payload = _build_embedding_topic_prompt_payload(
+            topic_item,
+            rule_index=rule_index,
+            max_rules_per_cluster=max_rules_per_cluster,
+        )
+        raw = _chat_json(
+            client,
+            model=model,
+            temperature=temperature,
+            system_prompt=system_prompt,
+            user_prompt=json.dumps(payload, ensure_ascii=False, indent=2),
+            max_output_tokens=max_output_tokens,
+        )
+        normalized = _normalize_embedding_cluster_labels(raw, topic_item)
+        proposals.append(
+            {
+                "domain": _norm_text(topic_item.get("domain") or ""),
+                "topic": _norm_text(topic_item.get("topic") or ""),
+                "topic_key": _norm_text(topic_item.get("topic_key") or "").casefold(),
+                "rule_count": int(topic_item.get("rule_count") or 0),
+                "existing_cluster_count": 0,
+                **normalized,
+            }
+        )
+        print(
+            f"[cluster-label] done {index}/{total_topics} "
+            f"clusters={len(normalized.get('clusters') or [])}",
+            flush=True,
+        )
+    return {
+        "metadata": {
+            "generator": "embedding_cluster_labeling_v1",
+            "model": model,
+            "topic_count": len(proposals),
+            "min_rule_count": min_rule_count,
+            "max_rules_per_cluster": max_rules_per_cluster,
+        },
+        "proposals": proposals,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate scenario-cluster proposals from the current unified rules catalog.")
     parser.add_argument("--catalog", type=str, default="catalogs/rules_unified.json")
     parser.add_argument("--distilled-experience", type=str, default=None)
+    parser.add_argument("--embedding-clusters", type=str, default=None)
+    parser.add_argument("--rule-input", type=str, default=None)
     parser.add_argument("--output", type=str, default="results/cluster_proposals.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b-instruct-2507")
     parser.add_argument("--base-url", type=str, default=None)
@@ -416,6 +614,7 @@ def main() -> None:
     parser.add_argument("--max-topics", type=int, default=12)
     parser.add_argument("--min-rule-count", type=int, default=1)
     parser.add_argument("--all-topics", action="store_true", help="Include topics that already have scenario clusters.")
+    parser.add_argument("--max-rules-per-cluster", type=int, default=8)
     args = parser.parse_args()
 
     api_key = args.api_key or os.getenv("OPENAI_API_KEY") or ""
@@ -429,6 +628,24 @@ def main() -> None:
         trust_env=bool(args.trust_env),
         request_timeout=float(args.request_timeout),
     )
+    if args.embedding_clusters:
+        rule_input_path = Path(args.rule_input) if args.rule_input else None
+        if rule_input_path is None:
+            raise RuntimeError("--rule-input is required when --embedding-clusters is used.")
+        result = generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters=_load_json(Path(args.embedding_clusters)),
+            rule_input=_load_json(rule_input_path),
+            client=client,
+            model=_norm_text(args.model),
+            temperature=float(args.temperature),
+            max_topics=int(args.max_topics),
+            min_rule_count=int(args.min_rule_count),
+            max_rules_per_cluster=int(args.max_rules_per_cluster),
+            max_output_tokens=int(args.max_output_tokens),
+        )
+        _dump_json(Path(args.output), result)
+        print(f"Wrote cluster proposals to {args.output}")
+        return
     distilled_payload = _load_json(Path(args.distilled_experience)) if args.distilled_experience else None
     result = generate_cluster_proposals(
         catalog=catalog,

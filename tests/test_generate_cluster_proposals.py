@@ -4,12 +4,14 @@ import unittest
 
 from scripts.generate_cluster_proposals import (
     _assert_english_only_proposal,
+    _build_embedding_topic_prompt_payload,
     _build_client,
     _build_distilled_auxiliary_index,
     _build_topic_prompt_payload,
     _collect_topic_candidates,
     _chat_json,
     _extract_json_object,
+    generate_cluster_proposals_from_embedding_clusters,
 )
 
 
@@ -199,6 +201,80 @@ class GenerateClusterProposalTests(unittest.TestCase):
         self.assertEqual(captured["timeout"], 123.0)
         self.assertEqual(captured["http_client"].kwargs["timeout"], 123.0)
         self.assertTrue(captured["http_client"].kwargs["trust_env"])
+
+    def test_embedding_cluster_payload_samples_rules_without_reassigning_membership(self) -> None:
+        payload = _build_embedding_topic_prompt_payload(
+            {
+                "domain": "Mechanics",
+                "topic": "Kinematics",
+                "topic_key": "Mechanics::Kinematics",
+                "rule_count": 3,
+                "clusters": [
+                    {
+                        "cluster_id": "embedding_cluster_01",
+                        "size": 2,
+                        "rule_ids": ["r1", "r2"],
+                        "representative_rules": [{"rule_id": "r1", "summary": "motion summary"}],
+                    }
+                ],
+                "residual_rule_ids": ["r3"],
+            },
+            rule_index={
+                "r1": {"title": "t1", "summary": "s1", "trigger": "tr1", "check_logic": "c1"},
+                "r2": {"title": "t2", "summary": "s2", "trigger": "tr2", "check_logic": "c2"},
+            },
+            max_rules_per_cluster=1,
+        )
+
+        self.assertEqual(payload["embedding_clusters"][0]["source_cluster_id"], "embedding_cluster_01")
+        self.assertEqual([item["rule_id"] for item in payload["embedding_clusters"][0]["sampled_rules"]], ["r1"])
+        self.assertNotIn("candidate_rule_ids", payload["output_schema"]["clusters"][0])
+        self.assertIn("source_cluster_id", payload["output_schema"]["clusters"][0])
+
+    def test_generate_from_embedding_clusters_keeps_rule_membership_deterministic(self) -> None:
+        class _Message:
+            content = (
+                '{"topic_summary":"Kinematics timing scenes","rationale":"embedding groups are fixed",'
+                '"clusters":[{"source_cluster_id":"embedding_cluster_01","cluster_id":"timing_checks",'
+                '"name":"Timing Checks","summary":"Checks timing relations.","description":"Time relation scenarios.",'
+                '"scene_cues":["time interval"],"boundary_cues":["force dynamics"],"explore_cues":["piecewise motion"]}]}'
+            )
+
+        class _Choice:
+            message = _Message()
+
+        class _Completions:
+            def create(self, **kwargs):
+                return type("Response", (), {"choices": [_Choice()]})()
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+        result = generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters={
+                "topics": [
+                    {
+                        "domain": "Mechanics",
+                        "topic": "Kinematics",
+                        "topic_key": "Mechanics::Kinematics",
+                        "rule_count": 3,
+                        "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
+                        "residual_rule_ids": ["r3"],
+                    }
+                ]
+            },
+            rule_input={"rules": [{"rule_id": "r1", "summary": "s1"}, {"rule_id": "r2", "summary": "s2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+            max_output_tokens=2048,
+        )
+
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["clusters"][0]["candidate_rule_ids"], ["r1", "r2"])
+        self.assertEqual(proposal["residual_rule_ids"], ["r3"])
+        self.assertEqual(result["metadata"]["generator"], "embedding_cluster_labeling_v1")
 
 
 if __name__ == "__main__":
