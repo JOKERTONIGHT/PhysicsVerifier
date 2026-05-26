@@ -68,6 +68,10 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     if not raw:
         raise RuntimeError("Cluster proposal model returned empty content.")
 
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+
     try:
         data = json.loads(raw)
         if isinstance(data, dict):
@@ -526,6 +530,9 @@ def generate_cluster_proposals_from_embedding_clusters(
     min_rule_count: int,
     max_rules_per_cluster: int,
     max_output_tokens: int | None = None,
+    output_path: Path | None = None,
+    resume: bool = False,
+    continue_on_error: bool = False,
 ) -> Dict[str, Any]:
     rule_index = _build_rule_index(rule_input)
     topics = [
@@ -546,8 +553,44 @@ def generate_cluster_proposals_from_embedding_clusters(
         "as auxiliary navigation notes. Return JSON only."
     )
     proposals: List[Dict[str, Any]] = []
+    failures: List[Dict[str, str]] = []
+    if resume and output_path and output_path.exists():
+        existing_payload = _load_json(output_path)
+        proposals = [
+            item for item in (existing_payload.get("proposals") or [])
+            if isinstance(item, dict)
+        ]
+        failures = [
+            item for item in (existing_payload.get("failures") or [])
+            if isinstance(item, dict)
+        ]
+    completed_topic_keys = {
+        _norm_text(item.get("topic_key") or "").casefold()
+        for item in proposals
+        if isinstance(item, dict)
+    }
+
+    def _current_payload() -> Dict[str, Any]:
+        return {
+            "metadata": {
+                "generator": "embedding_cluster_labeling_v1",
+                "model": model,
+                "topic_count": len(proposals),
+                "target_topic_count": total_topics,
+                "failure_count": len(failures),
+                "min_rule_count": min_rule_count,
+                "max_rules_per_cluster": max_rules_per_cluster,
+            },
+            "proposals": proposals,
+            "failures": failures,
+        }
+
     total_topics = len(topics)
     for index, topic_item in enumerate(topics, start=1):
+        topic_key = _norm_text(topic_item.get("topic_key") or "").casefold()
+        if topic_key in completed_topic_keys:
+            print(f"[cluster-label] skip {index}/{total_topics} {topic_key}", flush=True)
+            continue
         print(
             f"[cluster-label] {index}/{total_topics} "
             f"{topic_item.get('domain')} / {topic_item.get('topic')} "
@@ -559,14 +602,31 @@ def generate_cluster_proposals_from_embedding_clusters(
             rule_index=rule_index,
             max_rules_per_cluster=max_rules_per_cluster,
         )
-        raw = _chat_json(
-            client,
-            model=model,
-            temperature=temperature,
-            system_prompt=system_prompt,
-            user_prompt=json.dumps(payload, ensure_ascii=False, indent=2),
-            max_output_tokens=max_output_tokens,
-        )
+        try:
+            raw = _chat_json(
+                client,
+                model=model,
+                temperature=temperature,
+                system_prompt=system_prompt,
+                user_prompt=json.dumps(payload, ensure_ascii=False, indent=2),
+                max_output_tokens=max_output_tokens,
+            )
+        except Exception as exc:
+            failures.append(
+                {
+                    "topic_key": topic_key,
+                    "domain": _norm_text(topic_item.get("domain") or ""),
+                    "topic": _norm_text(topic_item.get("topic") or ""),
+                    "error": str(exc),
+                }
+            )
+            if output_path:
+                _dump_json(output_path, _current_payload())
+                print(f"[cluster-label] partial output saved to {output_path}", flush=True)
+            if continue_on_error:
+                print(f"[cluster-label] failed {index}/{total_topics} {topic_key}: {exc}", flush=True)
+                continue
+            raise
         normalized = _normalize_embedding_cluster_labels(raw, topic_item)
         proposals.append(
             {
@@ -578,21 +638,15 @@ def generate_cluster_proposals_from_embedding_clusters(
                 **normalized,
             }
         )
+        completed_topic_keys.add(topic_key)
+        if output_path:
+            _dump_json(output_path, _current_payload())
         print(
             f"[cluster-label] done {index}/{total_topics} "
             f"clusters={len(normalized.get('clusters') or [])}",
             flush=True,
         )
-    return {
-        "metadata": {
-            "generator": "embedding_cluster_labeling_v1",
-            "model": model,
-            "topic_count": len(proposals),
-            "min_rule_count": min_rule_count,
-            "max_rules_per_cluster": max_rules_per_cluster,
-        },
-        "proposals": proposals,
-    }
+    return _current_payload()
 
 
 def main() -> None:
@@ -615,6 +669,8 @@ def main() -> None:
     parser.add_argument("--min-rule-count", type=int, default=1)
     parser.add_argument("--all-topics", action="store_true", help="Include topics that already have scenario clusters.")
     parser.add_argument("--max-rules-per-cluster", type=int, default=8)
+    parser.add_argument("--resume", action="store_true", help="Resume from an existing output file and skip completed topics.")
+    parser.add_argument("--continue-on-error", action="store_true", help="Save failures and continue with remaining topics.")
     args = parser.parse_args()
 
     api_key = args.api_key or os.getenv("OPENAI_API_KEY") or ""
@@ -642,6 +698,9 @@ def main() -> None:
             min_rule_count=int(args.min_rule_count),
             max_rules_per_cluster=int(args.max_rules_per_cluster),
             max_output_tokens=int(args.max_output_tokens),
+            output_path=Path(args.output),
+            resume=bool(args.resume),
+            continue_on_error=bool(args.continue_on_error),
         )
         _dump_json(Path(args.output), result)
         print(f"Wrote cluster proposals to {args.output}")

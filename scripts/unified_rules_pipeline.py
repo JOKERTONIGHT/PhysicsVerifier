@@ -114,6 +114,7 @@ def build_cluster_proposal_command(
         str(max_output_tokens),
         "--request-timeout",
         str(request_timeout),
+        "--resume",
     ]
     return " ".join(shlex.quote(part) for part in parts)
 

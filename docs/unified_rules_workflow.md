@@ -97,6 +97,7 @@ D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py clust
 ```
 
 该命令使用 `rule_embedding_clusters.json` 和 `rule_embedding_input.json`，只让强模型给 embedding 簇命名、写 summary 和导航辅助线索；不再让模型直接阅读整个 topic 的所有规则并自行分簇。
+该步骤会增量写入 `cluster_proposals.json`，并默认带 `--resume`，中途失败后可直接重跑命令继续。
 
 强模型输出回传后，生成 builder 可读的 scenario cluster blueprints：
 

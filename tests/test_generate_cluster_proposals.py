@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import uuid
+from pathlib import Path
 
 from scripts.generate_cluster_proposals import (
     _assert_english_only_proposal,
@@ -13,6 +15,16 @@ from scripts.generate_cluster_proposals import (
     _extract_json_object,
     generate_cluster_proposals_from_embedding_clusters,
 )
+
+
+TMP_ROOT = Path("results/test_tmp")
+TMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _case_dir() -> Path:
+    path = TMP_ROOT / f"cluster_proposal_test_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class GenerateClusterProposalTests(unittest.TestCase):
@@ -31,6 +43,14 @@ class GenerateClusterProposalTests(unittest.TestCase):
         )
         self.assertEqual(data["topic_summary"], "mechanics summary")
         self.assertFalse(data["should_add_clusters"])
+
+    def test_extract_json_object_accepts_unclosed_fenced_json(self) -> None:
+        data = _extract_json_object(
+            """```json
+{"topic_summary":"mechanics summary","should_add_clusters":true}"""
+        )
+        self.assertEqual(data["topic_summary"], "mechanics summary")
+        self.assertTrue(data["should_add_clusters"])
 
     def test_extract_json_object_accepts_loose_wrapped_json(self) -> None:
         data = _extract_json_object(
@@ -275,6 +295,72 @@ class GenerateClusterProposalTests(unittest.TestCase):
         self.assertEqual(proposal["clusters"][0]["candidate_rule_ids"], ["r1", "r2"])
         self.assertEqual(proposal["residual_rule_ids"], ["r3"])
         self.assertEqual(result["metadata"]["generator"], "embedding_cluster_labeling_v1")
+
+    def test_generate_from_embedding_clusters_saves_incremental_output_and_resumes(self) -> None:
+        root = _case_dir()
+        output_path = root / "cluster_proposals.json"
+
+        class _Message:
+            content = (
+                '{"topic_summary":"summary","rationale":"fixed embedding clusters",'
+                '"clusters":[{"source_cluster_id":"embedding_cluster_01","cluster_id":"timing_checks",'
+                '"name":"Timing Checks","summary":"Checks timing.","description":"Timing scenarios.",'
+                '"scene_cues":[],"boundary_cues":[],"explore_cues":[]}]}'
+            )
+
+        class _Choice:
+            message = _Message()
+
+        class _Completions:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def create(self, **kwargs):
+                self.calls += 1
+                return type("Response", (), {"choices": [_Choice()]})()
+
+        completions = _Completions()
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+        embedding_clusters = {
+            "topics": [
+                {
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "topic_key": "Mechanics::Kinematics",
+                    "rule_count": 3,
+                    "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
+                    "residual_rule_ids": ["r3"],
+                }
+            ]
+        }
+
+        generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters=embedding_clusters,
+            rule_input={"rules": [{"rule_id": "r1", "summary": "s1"}, {"rule_id": "r2", "summary": "s2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+            output_path=output_path,
+            resume=False,
+        )
+        generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters=embedding_clusters,
+            rule_input={"rules": [{"rule_id": "r1", "summary": "s1"}, {"rule_id": "r2", "summary": "s2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+            output_path=output_path,
+            resume=True,
+        )
+
+        self.assertEqual(completions.calls, 1)
+        self.assertTrue(output_path.exists())
 
 
 if __name__ == "__main__":
