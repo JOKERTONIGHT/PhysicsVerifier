@@ -303,6 +303,7 @@ def run_quality_report(*, dataset: str = DEFAULT_DATASET, root: Path | None = No
     return evaluate_catalog_quality(
         catalog_path=paths["catalog"],
         cluster_proposals_path=paths["cluster_proposals"],
+        runtime_eval_path=paths["runtime_eval"],
         output_path=paths["quality_report"],
     )
 
@@ -473,6 +474,7 @@ def main() -> None:
                 for key, value in report["cluster_quality"].items()
                 if key != "topics"
             },
+            "runtime_eval": report["runtime_eval"],
         }))
     elif args.command == "runtime-eval-command":
         print(

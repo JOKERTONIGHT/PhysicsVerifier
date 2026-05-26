@@ -69,6 +69,49 @@ def _rules(payload: Any) -> List[Dict[str, Any]]:
     return [item for item in raw_rules if isinstance(item, dict)]
 
 
+def _rules_from_baseline_catalog(payload: Any) -> List[Dict[str, Any]]:
+    """Keep the previously validated executable catalog as seed coverage."""
+    if not isinstance(payload, dict):
+        return []
+    out: List[Dict[str, Any]] = []
+    for domain in payload.get("domains", []) or []:
+        if not isinstance(domain, dict):
+            continue
+        domain_name = _text(domain.get("name") or "")
+        for topic in domain.get("topics", []) or []:
+            if not isinstance(topic, dict):
+                continue
+            topic_name = _text(topic.get("name") or "")
+            for rule in topic.get("rules", []) or []:
+                if not isinstance(rule, dict):
+                    continue
+                summary = _text(rule.get("summary") or "")
+                support = rule.get("support") if isinstance(rule.get("support"), dict) else {}
+                out.append(
+                    {
+                        "rule_id": _text(rule.get("rule_id") or ""),
+                        "domain": domain_name,
+                        "topic": topic_name,
+                        "title": _text(rule.get("title") or ""),
+                        "summary": summary,
+                        "trigger": _text(rule.get("trigger") or ""),
+                        "check_logic": _text(rule.get("check_logic") or ""),
+                        "error_type": _text(rule.get("error_type") or "logic") or "logic",
+                        "symbolic_hint": rule.get("symbolic_hint") if isinstance(rule.get("symbolic_hint"), dict) else {},
+                        "auxiliary": {
+                            "node_summary": summary,
+                            "scene_cues": [],
+                            "boundary_cues": [],
+                            "explore_cues": [],
+                            "evidence_sample_ids": support.get("sample_ids") or [],
+                        },
+                        "count": int(support.get("count") or 1),
+                        "sample_ids": support.get("sample_ids") or [],
+                    }
+                )
+    return out
+
+
 def _topic_key(domain: str, topic: str) -> str:
     return f"{domain}::{topic}"
 
@@ -374,7 +417,13 @@ def prepare_rules_for_cluster(
     scenario_cluster_blueprints_paths: Sequence[Path] | None = None,
 ) -> Dict[str, Any]:
     raw_rules = _rules(_load_json(distilled_input))
-    canonical_rules = [_canonical_rule(rule) for rule in raw_rules]
+    baseline_rules = (
+        _rules_from_baseline_catalog(_load_json(baseline_catalog_path))
+        if baseline_catalog_path and baseline_catalog_path.exists()
+        else []
+    )
+    all_raw_rules = raw_rules + baseline_rules
+    canonical_rules = [_canonical_rule(rule) for rule in all_raw_rules]
     groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = defaultdict(list)
     for rule in canonical_rules:
         groups[_merge_key(rule)].append(rule)
@@ -385,7 +434,9 @@ def prepare_rules_for_cluster(
     normalized_payload = {
         "summary": {
             "source": str(distilled_input),
-            "input_rules": len(raw_rules),
+            "input_rules": len(all_raw_rules),
+            "distilled_input_rules": len(raw_rules),
+            "baseline_seed_rules": len(baseline_rules),
             "output_rules": len(normalized_rules),
             "topic_bucket_count": len({_topic_key(rule["domain"], rule["topic"]) for rule in canonical_rules}),
             "topic_normalization_change_count": sum(

@@ -302,6 +302,34 @@ def _proposal_stats(path: Path | None) -> Dict[str, Any]:
     }
 
 
+def _runtime_eval_stats(path: Path | None, *, catalog_path: Path) -> Dict[str, Any]:
+    if not path or not path.exists():
+        return {"available": False}
+    payload = _load_json(path)
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    rows = [item for item in (payload.get("rows") or []) if isinstance(item, dict)]
+    empty_rows = [row for row in rows if int(row.get("rule_count") or 0) == 0]
+    high_rule_rows = [row for row in rows if int(row.get("rule_count") or 0) > 5]
+    broad_topic_rows = [row for row in rows if int(row.get("topic_count") or 0) > 2]
+    broad_cluster_rows = [row for row in rows if int(row.get("cluster_count") or 0) > 3]
+    semantic_error_rows = [row for row in rows if _text(row.get("semantic_selection_error"))]
+    stale = False
+    if catalog_path.exists():
+        stale = path.stat().st_mtime < catalog_path.stat().st_mtime
+    return {
+        "available": True,
+        "stale": stale,
+        "sample_count": int(summary.get("sample_count") or len(rows)),
+        "semantic_error_count": int(summary.get("semantic_error_count") or len(semantic_error_rows)),
+        "rule_selection_rate": float(summary.get("rule_selection_rate") or 0.0),
+        "average_selected_rules": float(summary.get("average_selected_rules") or 0.0),
+        "empty_rule_sample_ids": _ordered_unique(row.get("sample_id") for row in empty_rows),
+        "high_rule_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in high_rule_rows),
+        "broad_topic_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in broad_topic_rows),
+        "broad_cluster_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in broad_cluster_rows),
+    }
+
+
 def _score(report: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
     score = 100
     issues: List[Dict[str, Any]] = []
@@ -311,6 +339,7 @@ def _score(report: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
     clusters = report["cluster_quality"]
     duplication = report["duplication"]
     proposals = report["cluster_proposals"]
+    runtime = report["runtime_eval"]
 
     if schema["schema_profile"] != "semantic_navigation_tree_minimal":
         score -= 20
@@ -341,6 +370,24 @@ def _score(report: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
     if duplication["duplicate_summary_group_count"] > 100:
         score -= 5
         issues.append(_issue("low", "duplicate_summaries", "many rules share identical summaries; review for over-fine or near-duplicate rules", duplication["duplicate_summary_group_count"]))
+    if runtime.get("available") and runtime.get("stale"):
+        score -= 5
+        issues.append(_issue("medium", "runtime_eval_stale", "runtime evaluation was produced before the current catalog and must be rerun", runtime))
+    elif runtime.get("available"):
+        if runtime["semantic_error_count"]:
+            score -= 20
+            issues.append(_issue("high", "runtime_semantic_errors", "runtime semantic tree selection still has model/parsing errors", runtime["semantic_error_count"]))
+        if runtime["empty_rule_sample_ids"]:
+            score -= min(10, len(runtime["empty_rule_sample_ids"]) * 3)
+            issues.append(_issue("medium", "runtime_empty_rules", "some runtime samples reach the tree but select no rules", runtime["empty_rule_sample_ids"]))
+        broad_samples = _ordered_unique(
+            list(runtime["high_rule_selection_sample_ids"])
+            + list(runtime["broad_topic_selection_sample_ids"])
+            + list(runtime["broad_cluster_selection_sample_ids"])
+        )
+        if broad_samples:
+            score -= min(8, len(broad_samples) * 2)
+            issues.append(_issue("low", "runtime_overbroad_selection", "some runtime samples select too many topics, clusters, or rules", broad_samples))
     return max(0, score), issues
 
 
@@ -349,6 +396,7 @@ def evaluate_catalog_quality(
     catalog_path: Path,
     output_path: Path | None = None,
     cluster_proposals_path: Path | None = None,
+    runtime_eval_path: Path | None = None,
 ) -> Dict[str, Any]:
     catalog = _load_json(catalog_path)
     collected = _collect_catalog(catalog)
@@ -377,6 +425,7 @@ def evaluate_catalog_quality(
         "cluster_quality": _cluster_stats(collected["topic_rows"]),
         "duplication": _duplication_stats(collected["topic_rows"]),
         "cluster_proposals": _proposal_stats(cluster_proposals_path),
+        "runtime_eval": _runtime_eval_stats(runtime_eval_path, catalog_path=catalog_path),
     }
     score, issues = _score(report)
     report["overall"] = {
@@ -388,6 +437,7 @@ def evaluate_catalog_quality(
             "优先处理低 cluster 覆盖且规则数高的 topic。",
             "抽样审查 duplicate summary/title 组，判断是否需要语义合并。",
             "用 top_down_verifier 做 30-100 条端到端检索命中率评估。",
+            "优先复盘 runtime empty_rule_sample_ids 和 overbroad selection 样本。",
         ],
     }
     if output_path:
@@ -399,11 +449,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate unified rules catalog quality for full pipeline readiness.")
     parser.add_argument("--catalog", default="catalogs/rules_unified_3000.json")
     parser.add_argument("--cluster-proposals", default="results/unified_rules_3000/cluster_proposals.json")
+    parser.add_argument("--runtime-eval", default="results/unified_rules_3000/top_down_runtime_eval_30_fixed.json")
     parser.add_argument("--output", default="results/unified_rules_3000/rules_unified_quality_report.json")
     args = parser.parse_args()
     report = evaluate_catalog_quality(
         catalog_path=Path(args.catalog),
         cluster_proposals_path=Path(args.cluster_proposals) if args.cluster_proposals else None,
+        runtime_eval_path=Path(args.runtime_eval) if args.runtime_eval else None,
         output_path=Path(args.output) if args.output else None,
     )
     compact = {
@@ -419,6 +471,7 @@ def main() -> None:
             for key, value in report["duplication"].items()
             if not key.endswith("_examples")
         },
+        "runtime_eval": report["runtime_eval"],
     }
     print(json.dumps(compact, ensure_ascii=True, indent=2))
 

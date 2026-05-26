@@ -469,6 +469,65 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             ["seed_cluster", "generated_cluster"],
         )
 
+    def test_fallback_rules_merge_into_existing_general_reasoning_cluster(self) -> None:
+        knowledge = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [{"name": "Kinematics", "rules": []}],
+                }
+            ]
+        }
+        distilled = {
+            "rules": [
+                {
+                    "rule_id": "exp_k1",
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "title": "Timing relation",
+                    "trigger": "timing",
+                    "check_logic": "check timing",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                },
+                {
+                    "rule_id": "exp_k2",
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "title": "Projection relation",
+                    "trigger": "projection",
+                    "check_logic": "check projection",
+                    "error_type": "logic",
+                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                },
+            ]
+        }
+        blueprints = {
+            "mechanics::kinematics": [
+                {
+                    "cluster_id": "general_reasoning",
+                    "name": "General Topic Reasoning",
+                    "description": "Generated residual cluster.",
+                    "rule_groups": [
+                        {
+                            "group_id": "generated_general",
+                            "name": "Generated General",
+                            "summary": "Generated residual checks.",
+                            "activation_condition": "Use for residual cases.",
+                            "rule_ids": ["exp_k1"],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        catalog = build_unified_catalog_from_data(knowledge, distilled, [], blueprints)
+        topic = catalog["domains"][0]["topics"][0]
+        general_clusters = [cluster for cluster in topic["scenario_clusters"] if cluster["id"] == "general_reasoning"]
+
+        self.assertEqual(len(general_clusters), 1)
+        self.assertEqual(set(general_clusters[0]["rule_ids"]), {"exp_k1", "exp_k2"})
+
 
 if __name__ == "__main__":
     unittest.main()

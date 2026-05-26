@@ -23,6 +23,7 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
         root = _case_dir()
         catalog_path = root / "catalog.json"
         proposals_path = root / "cluster_proposals.json"
+        runtime_path = root / "runtime_eval.json"
         output_path = root / "quality.json"
         catalog_path.write_text(
             json.dumps(
@@ -103,10 +104,23 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
             json.dumps({"proposals": [], "failures": [{"topic_key": "mechanics::dynamics"}]}),
             encoding="utf-8",
         )
+        runtime_path.write_text(
+            json.dumps(
+                {
+                    "summary": {"sample_count": 2, "semantic_error_count": 0, "rule_selection_rate": 0.5, "average_selected_rules": 3.0},
+                    "rows": [
+                        {"sample_id": "s1", "topic_count": 1, "cluster_count": 1, "rule_count": 0, "semantic_selection_error": ""},
+                        {"sample_id": "s2", "topic_count": 3, "cluster_count": 4, "rule_count": 6, "semantic_selection_error": ""},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
 
         report = evaluate_catalog_quality(
             catalog_path=catalog_path,
             cluster_proposals_path=proposals_path,
+            runtime_eval_path=runtime_path,
             output_path=output_path,
         )
 
@@ -115,6 +129,11 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
         self.assertEqual(report["cluster_quality"]["unclustered_topic_count"], 1)
         self.assertEqual(report["duplication"]["duplicate_summary_group_count"], 1)
         self.assertEqual(report["cluster_proposals"]["failure_count"], 1)
+        self.assertFalse(report["runtime_eval"]["stale"])
+        self.assertEqual(report["runtime_eval"]["empty_rule_sample_ids"], ["s1"])
+        self.assertEqual(report["runtime_eval"]["high_rule_selection_sample_ids"], ["s2"])
+        self.assertEqual(report["runtime_eval"]["broad_topic_selection_sample_ids"], ["s2"])
+        self.assertEqual(report["runtime_eval"]["broad_cluster_selection_sample_ids"], ["s2"])
         self.assertTrue(output_path.exists())
 
 

@@ -94,6 +94,63 @@
    - 已新增 JSON object 提取兜底，支持 ` ```json ... ``` ` 和 loose JSON object。
    - 需要服务器重新跑 runtime 评估，验证 topic/cluster/rule 真实选择率。
 
+16. 修复 runtime smoke1 中模型直接返回数组的问题。
+   - 服务器重新跑 1 条后，错误变为模型返回 JSON array，而不是 `{ "topics": [...] }` object。
+   - 已将 semantic matcher 改为按选择阶段包装数组响应：`domains/topics/clusters/rules`。
+   - 最新 `top_down_runtime_eval_smoke1_fixed.json` 已成功进入 `semantic_tree_selection`。
+   - smoke1 结果：topic 命中 1 个，cluster 命中 1 个，rule 命中 3 条，semantic error 为 0。
+   - 下一步应在服务器继续跑 30 条 runtime eval，观察整体 topic/cluster/rule 选择率和空规则率。
+
+17. 完成 30 条端到端 runtime 评估。
+   - 最新文件：`results/unified_rules_3000/top_down_runtime_eval_30_fixed.json`。
+   - 30/30 均进入 `semantic_tree_selection`，`semantic_error_count=0`。
+   - topic 命中率 `100%`，cluster 命中率 `100%`，rule 命中率 `96.67%`。
+   - 总共选择 84 条规则，平均每题 2.8 条；20/30 题产生 diagnostic。
+   - 唯一空规则样本为 `170364`：heat-transfer 冷却曲线积分题，topic/cluster 命中正确，但对应 cluster 只有 2 条规则，未覆盖“按 P(T) 图像积分冷却时间”的经验规则。
+   - 少数跨学科样本存在过宽选择，例如 `157816` 选 8 条 rule、`142965` 选 3 个 topic 和 4 个 cluster。
+   - 已增强 `scripts/evaluate_top_down_runtime.py`，后续 summary 会直接列出空规则、高规则数、过宽 topic/cluster 样本，减少手工排查。
+
+18. 将 runtime 评估并入规则库质量报告。
+   - `scripts/evaluate_unified_rules_quality.py` 现在支持读取 `--runtime-eval`。
+   - 质量报告不再只看静态 catalog，也会纳入端到端语义树检索问题：
+     - `runtime_empty_rules`
+     - `runtime_overbroad_selection`
+     - `runtime_semantic_errors`
+   - 当前综合质量分为 `77`，状态仍是 `usable_with_known_gaps`。
+   - 分数低于此前静态结构评估的 `86`，原因是新增了真实 runtime 问题作为扣分项；这个口径更适合判断是否能进入全流程。
+   - 当前必须优先处理的实证问题：
+     - `170364`：正确 topic/cluster 下无 rule，属于覆盖缺口。
+     - `157816`、`142965`、`147128`：选择过宽，属于检索噪声控制问题。
+
+19. 修复旧 300 规则在 3000 扩展库中的覆盖回归。
+   - 排查 `170364` 后发现：旧 `catalogs/rules_unified.json` 中已有精确规则，例如“变功率冷却时间积分规则”“图表信息提取完整性校验”。
+   - 当前 3000 构建链路只把旧 300 作为 tagged reference/对比输入，没有把旧 300 的 executable rules 合入 3000 distilled，因此出现覆盖回归。
+   - 已修改 `scripts/prepare_rules_for_cluster.py`：默认将 baseline catalog 的 executable rules 作为 seed coverage 合入规范化规则集。
+   - 重新生成后：
+     - `distilled_input_rules=4361`
+     - `baseline_seed_rules=514`
+     - `total_executable_rules=4875`
+     - `total_scenario_clusters=220`
+   - `170364` 对应的 heat-transfer 规则已重新进入 `rules_unified_3000.json`，并被放入 `heating_cooling_and_capacity_model` cluster。
+   - 同时修复 `build_unified_catalog.py` 中重复生成 `general_reasoning` cluster 的问题：如果 blueprint 已有 general fallback，剩余规则会合并进去，不再生成重复 cluster。
+   - `validate_cluster_blueprints.py` 的 subset 模式已修正：允许未覆盖规则由 builder fallback 承接，只把未知 topic/rule、重复分配等结构错误判为 invalid。
+   - 当前 30 条 runtime 报告已被标记为 stale，因为 catalog 已重建；需要在服务器重新跑 30 条验证，确认 `170364` 是否已消除空规则。
+
+20. 统一 pipeline 质量报告口径。
+   - `scripts/unified_rules_pipeline.py quality-report` 已接入 canonical runtime eval 文件：`results/unified_rules_3000/top_down_runtime_eval.json`。
+   - 后续运行 `quality-report` 会自动判断 runtime eval 是否早于当前 catalog。
+   - 当前报告中 `runtime_eval.stale=true`，说明必须重跑 runtime eval 后才能把 runtime 结果作为当前 catalog 的有效证据。
+   - 推荐后续不再手写 `evaluate_unified_rules_quality.py` 参数，统一使用：
+     - `python scripts/unified_rules_pipeline.py runtime-eval-command --dataset 3000 --limit 30`
+     - `python scripts/unified_rules_pipeline.py quality-report --dataset 3000`
+
+21. 增加 3000 catalog 覆盖回归测试。
+   - 新增 `tests/test_unified_3000_catalog_regression.py`。
+   - 固定检查两类问题：
+     - `170364` 对应的 heat-transfer 旧规则必须存在于当前 3000 catalog。
+     - 任意 topic 下不得出现重复 `scenario_cluster.id`。
+   - 这可以防止后续重建 catalog 时再次丢掉旧 300 的高价值规则，或再次生成重复 `general_reasoning` cluster。
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。

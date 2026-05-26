@@ -75,6 +75,10 @@ class EvaluateTopDownRuntimeTests(unittest.TestCase):
         self.assertEqual(report["summary"]["empty_rule_selection_count"], 1)
         self.assertEqual(report["summary"]["total_selected_rules"], 2)
         self.assertEqual(report["summary"]["diagnostic_sample_count"], 1)
+        self.assertEqual(report["summary"]["empty_rule_sample_ids"], ["s2"])
+        self.assertEqual(report["summary"]["high_rule_selection_sample_ids"], [])
+        self.assertEqual(report["summary"]["broad_topic_selection_sample_ids"], [])
+        self.assertEqual(report["summary"]["broad_cluster_selection_sample_ids"], [])
         self.assertTrue(output_path.exists())
 
 

@@ -751,27 +751,31 @@ def _build_scenario_clusters(rules: List[Dict[str, Any]], cluster_blueprints: Li
 
     remaining_rule_ids = [str(rule.get("rule_id") or "") for rule in rules if str(rule.get("rule_id") or "") not in assigned_rule_ids]
     if remaining_rule_ids:
-        clusters.append(
-            {
-                "cluster_id": "general_reasoning",
-                "name": "General Topic Reasoning",
-                "description": "Fallback cluster for rules that belong to the topic but do not fit the first-pass scenario-specific buckets.",
-                "includes": ["topic-specific residual checks"],
-                "excludes": [],
-                "entry_cues": [],
-                "related_clusters": [],
-                "rule_groups": [
-                    {
-                        "group_id": "general_reasoning_checks",
-                        "name": "General Topic Reasoning Checks",
-                        "summary": "Residual topic-specific checks kept outside the first-pass scenario clusters.",
-                        "activation_condition": "Use only if the problem is clearly in this topic but not in a more specific scenario cluster.",
-                        "rule_ids": remaining_rule_ids,
-                    }
-                ],
-                "rule_ids": remaining_rule_ids,
-            }
-        )
+        fallback_group = {
+            "group_id": "general_reasoning_checks",
+            "name": "General Topic Reasoning Checks",
+            "summary": "Residual topic-specific checks kept outside the first-pass scenario clusters.",
+            "activation_condition": "Use only if the problem is clearly in this topic but not in a more specific scenario cluster.",
+            "rule_ids": remaining_rule_ids,
+        }
+        existing_general = next((cluster for cluster in clusters if cluster.get("cluster_id") == "general_reasoning"), None)
+        if existing_general is not None:
+            existing_general.setdefault("rule_groups", []).append(fallback_group)
+            existing_general["rule_ids"] = ordered_unique(list(existing_general.get("rule_ids") or []) + remaining_rule_ids)
+        else:
+            clusters.append(
+                {
+                    "cluster_id": "general_reasoning",
+                    "name": "General Topic Reasoning",
+                    "description": "Fallback cluster for rules that belong to the topic but do not fit the first-pass scenario-specific buckets.",
+                    "includes": ["topic-specific residual checks"],
+                    "excludes": [],
+                    "entry_cues": [],
+                    "related_clusters": [],
+                    "rule_groups": [fallback_group],
+                    "rule_ids": remaining_rule_ids,
+                }
+            )
     return clusters
 
 

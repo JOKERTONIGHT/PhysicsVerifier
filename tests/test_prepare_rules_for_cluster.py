@@ -64,7 +64,17 @@ class PrepareRulesForClusterTests(unittest.TestCase):
                             "topics": [
                                 {
                                     "name": "Fluid Dynamics (Bernoulli's Equation, Continuity)",
-                                    "rules": [],
+                                    "rules": [
+                                        {
+                                            "rule_id": "exp_old",
+                                            "title": "旧版伯努利规则",
+                                            "summary": "旧版流体能量规则",
+                                            "trigger": "旧版样本触发",
+                                            "check_logic": "检查伯努利能量项。",
+                                            "error_type": "logic",
+                                            "symbolic_hint": {"primitive": "formula_pattern", "canonical": "p+rho g h+rho v^2/2", "required_symbols": ["p", "v"]},
+                                        }
+                                    ],
                                     "scenario_clusters": [],
                                 }
                             ],
@@ -120,24 +130,28 @@ class PrepareRulesForClusterTests(unittest.TestCase):
             scenario_cluster_blueprints_paths=[],
         )
 
-        self.assertEqual(report["normalization"]["input_rules"], 1)
-        self.assertEqual(report["normalization"]["output_rules"], 1)
+        self.assertEqual(report["normalization"]["distilled_input_rules"], 1)
+        self.assertEqual(report["normalization"]["baseline_seed_rules"], 1)
+        self.assertEqual(report["normalization"]["input_rules"], 2)
+        self.assertEqual(report["normalization"]["output_rules"], 2)
         self.assertEqual(report["quality"]["unmatched_topic_count"], 0)
         self.assertEqual(report["catalog"]["schema_profile"], "semantic_navigation_tree_minimal")
-        self.assertEqual(report["catalog"]["total_executable_rules"], 1)
-        self.assertEqual(report["embedding_input"]["rule_count"], 1)
+        self.assertEqual(report["catalog"]["total_executable_rules"], 2)
+        self.assertEqual(report["embedding_input"]["rule_count"], 2)
         self.assertTrue(normalized_output.exists())
         self.assertTrue(catalog_output.exists())
         self.assertTrue(report_output.exists())
         self.assertTrue(embedding_output.exists())
 
         normalized = json.loads(normalized_output.read_text(encoding="utf-8"))
-        rule = normalized["rules"][0]
+        rules_by_title = {rule["title"]: rule for rule in normalized["rules"]}
+        rule = rules_by_title["连续性方程截面积校验"]
         self.assertEqual(rule["summary"], "流体连续性检查")
         self.assertNotIn("Mechanics /", rule["topic"])
+        self.assertEqual(rules_by_title["旧版伯努利规则"]["summary"], "旧版流体能量规则")
 
         embedding_payload = json.loads(embedding_output.read_text(encoding="utf-8"))
-        record = embedding_payload["rules"][0]
+        record = next(item for item in embedding_payload["rules"] if item["title"] == "连续性方程截面积校验")
         self.assertEqual(record["rule_id"], rule["rule_id"])
         self.assertEqual(record["summary"], "流体连续性检查")
         self.assertIn("流体连续性检查", record["embedding_text"])
@@ -145,7 +159,8 @@ class PrepareRulesForClusterTests(unittest.TestCase):
         self.assertEqual(record["near_duplicate_key"], "Mechanics::Fluid Dynamics (Bernoulli's Equation, Continuity)::连续性方程截面积校验")
 
         catalog = json.loads(catalog_output.read_text(encoding="utf-8"))
-        catalog_rule = catalog["domains"][0]["topics"][0]["rules"][0]
+        catalog_rules = catalog["domains"][0]["topics"][0]["rules"]
+        catalog_rule = next(item for item in catalog_rules if item["title"] == "连续性方程截面积校验")
         self.assertEqual(catalog_rule["summary"], "流体连续性检查")
 
 

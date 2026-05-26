@@ -138,19 +138,19 @@ def validate_blueprints_against_catalog(
         if not assigned_set.issubset(topic_rule_set):
             topics_with_unknown_rules.append(topic_key)
         if assigned_set != topic_rule_set:
-                topics_with_uncovered_rules.append(topic_key)
+            topics_with_uncovered_rules.append(topic_key)
 
+    invalid_items = [
+        missing_topics,
+        topics_with_empty_clusters,
+        topics_with_duplicate_rule_assignments,
+        topics_with_unknown_rules,
+        unknown_blueprint_topics,
+    ]
+    if mode == "full":
+        invalid_items.append(topics_with_uncovered_rules)
     report = {
-        "valid": not any(
-            [
-                missing_topics,
-                topics_with_empty_clusters,
-                topics_with_duplicate_rule_assignments,
-                topics_with_unknown_rules,
-                topics_with_uncovered_rules,
-                unknown_blueprint_topics,
-            ]
-        ),
+        "valid": not any(invalid_items),
         "mode": mode,
         "topic_count_with_rules": len(topic_rule_index),
         "blueprint_topic_count": len([key for key in blueprints.keys() if _norm_text(key)]),

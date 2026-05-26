@@ -181,10 +181,31 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
             json.dumps({"proposals": [], "failures": []}),
             encoding="utf-8",
         )
+        paths["runtime_eval"].write_text(
+            json.dumps(
+                {
+                    "summary": {"sample_count": 1, "semantic_error_count": 0, "rule_selection_rate": 1.0, "average_selected_rules": 1.0},
+                    "rows": [
+                        {
+                            "sample_id": "s1",
+                            "selection_strategy": "semantic_tree_selection",
+                            "semantic_selection_error": "",
+                            "topic_count": 1,
+                            "cluster_count": 1,
+                            "rule_count": 1,
+                            "diagnostic_count": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
 
         report = run_quality_report(dataset="mini", root=root)
 
         self.assertEqual(report["schema"]["schema_profile"], "semantic_navigation_tree_minimal")
+        self.assertTrue(report["runtime_eval"]["available"])
+        self.assertFalse(report["runtime_eval"]["stale"])
         self.assertTrue(paths["quality_report"].exists())
 
     def test_prepare_cluster_subcommand_builds_canonical_outputs(self) -> None:

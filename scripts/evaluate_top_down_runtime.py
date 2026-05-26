@@ -51,6 +51,10 @@ def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     rule_selected = [row for row in rows if row["rule_count"] > 0]
     diagnostics = [row for row in rows if row["diagnostic_count"] > 0]
     total_rules = sum(int(row["rule_count"]) for row in rows)
+    empty_rule_rows = [row for row in rows if row["rule_count"] == 0]
+    high_rule_rows = [row for row in rows if row["rule_count"] > 5]
+    broad_topic_rows = [row for row in rows if row["topic_count"] > 2]
+    broad_cluster_rows = [row for row in rows if row["cluster_count"] > 3]
     return {
         "sample_count": sample_count,
         "selection_strategy_counts": dict(strategy_counts),
@@ -66,6 +70,10 @@ def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "topic_selection_rate": round(len(topic_selected) / sample_count, 4) if sample_count else 0.0,
         "cluster_selection_rate": round(len(cluster_selected) / sample_count, 4) if sample_count else 0.0,
         "rule_selection_rate": round(len(rule_selected) / sample_count, 4) if sample_count else 0.0,
+        "empty_rule_sample_ids": [str(row["sample_id"]) for row in empty_rule_rows],
+        "high_rule_selection_sample_ids": [str(row["sample_id"]) for row in high_rule_rows],
+        "broad_topic_selection_sample_ids": [str(row["sample_id"]) for row in broad_topic_rows],
+        "broad_cluster_selection_sample_ids": [str(row["sample_id"]) for row in broad_cluster_rows],
     }
 
 
