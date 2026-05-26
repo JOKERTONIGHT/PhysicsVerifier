@@ -129,6 +129,16 @@ def _catalog() -> dict:
 
 
 class UnifiedSemanticMatcherTests(unittest.TestCase):
+    def test_chat_json_accepts_fenced_json_object(self) -> None:
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=_FakeClient(['```json\n{"domains":[{"domain":"Mechanics","relevant":true,"score":0.9,"reason":"motion"}]}\n```']),
+        )
+
+        result = matcher._chat_json(system_prompt="system", user_prompt="user")
+
+        self.assertEqual(result["domains"][0]["domain"], "Mechanics")
+
     def test_select_tree_semantically_returns_structured_results(self) -> None:
         matcher = UnifiedSemanticMatcher(
             model="fake-model",

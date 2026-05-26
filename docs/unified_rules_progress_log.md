@@ -88,6 +88,12 @@
    - `scripts/unified_rules_pipeline.py` 新增 `runtime-eval-command`，统一生成服务器运行命令。
    - 该步骤会调用语义匹配 API，应在服务器 conda 环境运行。
 
+15. 修复 runtime 评估暴露的 semantic matcher JSON 解析问题。
+   - 首次 30 条 runtime 评估中，`semantic_tree_selection_count=0`，30/30 都报 `Semantic matcher must return a JSON object`。
+   - 原因是 `core/unified_semantic_matcher.py` 只直接 `json.loads(content)`，无法处理模型返回 Markdown fenced JSON 或截断预览。
+   - 已新增 JSON object 提取兜底，支持 ` ```json ... ``` ` 和 loose JSON object。
+   - 需要服务器重新跑 runtime 评估，验证 topic/cluster/rule 真实选择率。
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。

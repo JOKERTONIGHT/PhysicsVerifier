@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from core.unified_retrieval import norm_text, ordered_unique
@@ -57,6 +58,42 @@ class UnifiedSemanticMatcher:
         self._client = OpenAI(**client_kwargs)
         return self._client
 
+    @staticmethod
+    def _extract_json_object(text: str) -> Dict[str, Any]:
+        raw = norm_text(text)
+        if not raw:
+            raise RuntimeError("Semantic matcher returned empty content.")
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I).strip()
+            raw = re.sub(r"\s*```$", "", raw).strip()
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.S | re.I)
+        if fenced:
+            try:
+                parsed = json.loads(fenced.group(1))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        loose = re.search(r"\{.*\}", raw, flags=re.S)
+        if loose:
+            try:
+                parsed = json.loads(loose.group(0))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        preview = raw[:300]
+        hint = ""
+        if raw.startswith("{") and not raw.endswith("}"):
+            hint = " The response looks truncated."
+        raise RuntimeError(f"Semantic matcher must return a JSON object.{hint} Preview: {preview}")
+
     def _chat_json(self, *, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         client = self._get_client()
         response = client.chat.completions.create(
@@ -69,12 +106,7 @@ class UnifiedSemanticMatcher:
             ],
         )
         content = norm_text(response.choices[0].message.content if response.choices else "")
-        if not content:
-            raise RuntimeError("Semantic matcher returned empty content.")
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise RuntimeError("Semantic matcher must return a JSON object.")
-        return parsed
+        return self._extract_json_object(content)
 
     @staticmethod
     def _sample_text(sample: Dict[str, Any]) -> str:
