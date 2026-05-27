@@ -164,8 +164,11 @@ def build_runtime_eval_command(
     dataset: str = DEFAULT_DATASET,
     samples: str = "data/evaluation_sample_debug_30.json",
     limit: int = 30,
+    sample_ids: str = "",
+    output: str = "",
 ) -> str:
     paths = dataset_paths(dataset)
+    output_path = output or str(paths["runtime_eval"]).replace("\\", "/")
     parts = [
         "python",
         "scripts/evaluate_top_down_runtime.py",
@@ -174,10 +177,12 @@ def build_runtime_eval_command(
         "--catalog",
         str(paths["catalog"]).replace("\\", "/"),
         "--output",
-        str(paths["runtime_eval"]).replace("\\", "/"),
+        output_path.replace("\\", "/"),
         "--limit",
         str(limit),
     ]
+    if sample_ids:
+        parts.extend(["--sample-ids", sample_ids])
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -313,6 +318,7 @@ def run_runtime_eval(
     dataset: str = DEFAULT_DATASET,
     samples_path: Path = Path("data/evaluation_sample_debug_30.json"),
     limit: int = 30,
+    sample_ids: str = "",
 ) -> Dict[str, Any]:
     paths = dataset_paths(dataset)
     return evaluate_top_down_runtime(
@@ -320,6 +326,7 @@ def run_runtime_eval(
         catalog_path=paths["catalog"],
         output_path=paths["runtime_eval"],
         limit=limit,
+        sample_ids=[item.strip() for item in sample_ids.split(",") if item.strip()],
     )
 
 
@@ -388,6 +395,8 @@ def main() -> None:
     runtime_command_parser.add_argument("--dataset", default=DEFAULT_DATASET)
     runtime_command_parser.add_argument("--samples", default="data/evaluation_sample_debug_30.json")
     runtime_command_parser.add_argument("--limit", type=int, default=30)
+    runtime_command_parser.add_argument("--sample-ids", default="")
+    runtime_command_parser.add_argument("--output", default="", help="Override output path; useful for targeted smoke runs.")
 
     args = parser.parse_args()
 
@@ -482,6 +491,8 @@ def main() -> None:
                 dataset=args.dataset,
                 samples=args.samples,
                 limit=int(args.limit),
+                sample_ids=args.sample_ids,
+                output=args.output,
             )
         )
 

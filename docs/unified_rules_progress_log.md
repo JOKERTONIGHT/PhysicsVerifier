@@ -151,6 +151,13 @@
      - 任意 topic 下不得出现重复 `scenario_cluster.id`。
    - 这可以防止后续重建 catalog 时再次丢掉旧 300 的高价值规则，或再次生成重复 `general_reasoning` cluster。
 
+22. 增加低 token runtime 精准回归入口。
+   - `scripts/evaluate_top_down_runtime.py` 新增 `--sample-ids` 参数。
+   - `scripts/unified_rules_pipeline.py runtime-eval-command` 同步支持 `--sample-ids`。
+   - 之后可只跑 `170364` 或 `170364,157816,142965,147128`，不必每次重跑 30 条。
+   - 推荐先用单样本验证 seed merge 是否解决空规则，再用 4 条问题样本检查过宽检索。
+   - `runtime-eval-command` 也支持 `--output`，单条/少量 smoke 应写到独立文件，避免覆盖正式 30 条 `top_down_runtime_eval.json`。
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。

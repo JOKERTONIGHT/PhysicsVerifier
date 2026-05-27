@@ -81,6 +81,47 @@ class EvaluateTopDownRuntimeTests(unittest.TestCase):
         self.assertEqual(report["summary"]["broad_cluster_selection_sample_ids"], [])
         self.assertTrue(output_path.exists())
 
+    def test_evaluate_top_down_runtime_filters_by_sample_ids_before_limit(self) -> None:
+        root = _case_dir()
+        samples_path = root / "samples.json"
+        catalog_path = root / "catalog.json"
+        output_path = root / "runtime_report.json"
+        samples_path.write_text(
+            json.dumps(
+                [
+                    {"id": "s1", "question": "first", "prediction": "", "answer": ""},
+                    {"id": "s2", "question": "second", "prediction": "", "answer": ""},
+                    {"id": "s3", "question": "third", "prediction": "", "answer": ""},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        catalog_path.write_text(json.dumps({"metadata": {"catalog_type": "unified_rules_v2"}, "domains": []}), encoding="utf-8")
+
+        class _FakeVerifier:
+            def verify(self, sample):
+                return {
+                    "selection_strategy": "semantic_tree_selection",
+                    "semantic_selection_error": "",
+                    "retrieved_topics": [{"topic": sample["id"]}],
+                    "retrieved_clusters": [],
+                    "retrieved_rules": [{"rule_id": f"r_{sample['id']}"}],
+                    "diagnostics": [],
+                }
+
+        report = evaluate_top_down_runtime(
+            samples_path=samples_path,
+            catalog_path=catalog_path,
+            output_path=output_path,
+            limit=1,
+            sample_ids=["s2", "s3"],
+            verifier_factory=lambda: _FakeVerifier(),
+        )
+
+        self.assertEqual(report["summary"]["sample_count"], 1)
+        self.assertEqual(report["rows"][0]["sample_id"], "s2")
+        self.assertEqual(report["rows"][0]["retrieved_rules"][0]["rule_id"], "r_s2")
+
 
 if __name__ == "__main__":
     unittest.main()

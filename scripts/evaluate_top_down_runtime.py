@@ -27,6 +27,12 @@ def _sample_id(sample: Dict[str, Any], index: int) -> str:
     return str(sample.get("id") or sample.get("sample_id") or index)
 
 
+def _parse_sample_ids(value: str | None) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _compact_result(sample: Dict[str, Any], result: Dict[str, Any], index: int) -> Dict[str, Any]:
     return {
         "sample_id": _sample_id(sample, index),
@@ -83,12 +89,20 @@ def evaluate_top_down_runtime(
     catalog_path: Path,
     output_path: Path | None = None,
     limit: int = 0,
+    sample_ids: List[str] | None = None,
     verifier_factory: Callable[[], Any] | None = None,
 ) -> Dict[str, Any]:
     samples_payload = _load_json(samples_path)
     if not isinstance(samples_payload, list):
         raise ValueError(f"Expected list JSON samples: {samples_path}")
     samples = [item for item in samples_payload if isinstance(item, dict)]
+    selected_sample_ids = {str(item) for item in (sample_ids or []) if str(item)}
+    if selected_sample_ids:
+        samples = [
+            sample
+            for index, sample in enumerate(samples, start=1)
+            if _sample_id(sample, index) in selected_sample_ids
+        ]
     if limit > 0:
         samples = samples[:limit]
 
@@ -140,6 +154,7 @@ def main() -> None:
     parser.add_argument("--catalog", default="catalogs/rules_unified_3000.json")
     parser.add_argument("--output", default="results/unified_rules_3000/top_down_runtime_eval.json")
     parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--sample-ids", default="", help="Comma-separated sample ids to evaluate before applying --limit.")
     args = parser.parse_args()
 
     report = evaluate_top_down_runtime(
@@ -147,6 +162,7 @@ def main() -> None:
         catalog_path=Path(args.catalog),
         output_path=Path(args.output),
         limit=int(args.limit),
+        sample_ids=_parse_sample_ids(args.sample_ids),
     )
     print(json.dumps({"summary": report["summary"]}, ensure_ascii=True, indent=2))
 

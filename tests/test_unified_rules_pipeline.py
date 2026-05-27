@@ -88,13 +88,20 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("catalogs/scenario_cluster_blueprints_generated_3000.json", rebuild)
 
     def test_runtime_eval_command_uses_canonical_catalog_and_output(self) -> None:
-        command = build_runtime_eval_command(dataset="3000", samples="data/evaluation_sample_debug_30.json", limit=30)
+        command = build_runtime_eval_command(
+            dataset="3000",
+            samples="data/evaluation_sample_debug_30.json",
+            limit=0,
+            sample_ids="170364,157816",
+            output="results/unified_rules_3000/top_down_runtime_eval_problem4.json",
+        )
 
         self.assertIn("scripts/evaluate_top_down_runtime.py", command)
         self.assertIn("--samples data/evaluation_sample_debug_30.json", command)
         self.assertIn("--catalog catalogs/rules_unified_3000.json", command)
-        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval.json", command)
-        self.assertIn("--limit 30", command)
+        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_problem4.json", command)
+        self.assertIn("--limit 0", command)
+        self.assertIn("--sample-ids 170364,157816", command)
 
     def test_build_blueprints_subcommand_uses_canonical_proposal_output(self) -> None:
         root = _case_dir()
