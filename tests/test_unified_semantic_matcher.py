@@ -250,6 +250,82 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
         self.assertEqual(result["selected_clusters"], [])
         self.assertEqual([item["rule_id"] for item in result["selected_rules"]], ["exp_dc_0", "exp_dc_1"])
 
+    def test_selected_rules_are_globally_capped_across_multiple_clusters(self) -> None:
+        topic_names = ["Topic A", "Topic B", "Topic C"]
+        catalog = {
+            "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2", "schema_profile": "semantic_navigation_tree_minimal"},
+            "domains": [
+                {
+                    "id": "mechanics",
+                    "name": "Mechanics",
+                    "summary": "Mechanics domain.",
+                    "topics": [
+                        {
+                            "id": f"mechanics.topic_{topic_index}",
+                            "name": topic_name,
+                            "summary": f"{topic_name} summary.",
+                            "rules": [
+                                {
+                                    "rule_id": f"r{topic_index}_{rule_index}",
+                                    "title": f"Rule {topic_index}-{rule_index}",
+                                    "summary": f"Rule {topic_index}-{rule_index} summary.",
+                                    "trigger": "shared trigger",
+                                    "check_logic": "shared check",
+                                    "error_type": "logic",
+                                    "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+                                }
+                                for rule_index in range(3)
+                            ],
+                            "scenario_clusters": [
+                                {
+                                    "id": f"cluster_{topic_index}",
+                                    "name": f"Cluster {topic_index}",
+                                    "summary": f"Cluster {topic_index} summary.",
+                                    "rule_groups": [
+                                        {
+                                            "id": f"group_{topic_index}",
+                                            "name": f"Group {topic_index}",
+                                            "summary": f"Group {topic_index} summary.",
+                                            "activation_condition": "Use for shared trigger.",
+                                            "rule_ids": [f"r{topic_index}_{rule_index}" for rule_index in range(3)],
+                                        }
+                                    ],
+                                    "rule_ids": [f"r{topic_index}_{rule_index}" for rule_index in range(3)],
+                                }
+                            ],
+                        }
+                        for topic_index, topic_name in enumerate(topic_names)
+                    ],
+                }
+            ],
+        }
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=_FakeClient(
+                [
+                    '{"domains":[{"domain":"Mechanics","relevant":true,"score":1.0,"reason":"mechanics"}]}',
+                    '{"topics":[{"domain":"Mechanics","topic":"Topic A","relevant":true,"score":1.0,"reason":"a"},{"domain":"Mechanics","topic":"Topic B","relevant":true,"score":1.0,"reason":"b"},{"domain":"Mechanics","topic":"Topic C","relevant":true,"score":0.9,"reason":"c"}]}',
+                    '{"clusters":[{"cluster_id":"cluster_0","relevant":true,"score":1.0,"reason":"a"}]}',
+                    '{"clusters":[{"cluster_id":"cluster_1","relevant":true,"score":1.0,"reason":"b"}]}',
+                    '{"clusters":[{"cluster_id":"cluster_2","relevant":true,"score":0.9,"reason":"c"}]}',
+                    '{"rules":[{"rule_id":"r0_0","applicable":true,"score":1.0,"reason":"best"},{"rule_id":"r0_1","applicable":true,"score":0.95,"reason":"also"},{"rule_id":"r0_2","applicable":true,"score":0.9,"reason":"weaker"}]}',
+                    '{"rules":[{"rule_id":"r1_0","applicable":true,"score":0.98,"reason":"best"},{"rule_id":"r1_1","applicable":true,"score":0.94,"reason":"also"},{"rule_id":"r1_2","applicable":true,"score":0.89,"reason":"weaker"}]}',
+                    '{"rules":[{"rule_id":"r2_0","applicable":true,"score":0.97,"reason":"best"},{"rule_id":"r2_1","applicable":true,"score":0.93,"reason":"also"},{"rule_id":"r2_2","applicable":true,"score":0.88,"reason":"weaker"}]}',
+                ]
+            ),
+        )
+
+        result = matcher.select_tree_semantically(
+            {"id": "wide", "question": "A multi-mechanism mechanics problem.", "prediction": "Solution.", "answer": ""},
+            catalog,
+        )
+
+        self.assertEqual(len(result["selected_rules"]), 5)
+        self.assertEqual(
+            [item["rule_id"] for item in result["selected_rules"]],
+            ["r0_0", "r1_0", "r2_0", "r0_1", "r1_1"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

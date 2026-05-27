@@ -132,8 +132,12 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
         self.assertFalse(report["runtime_eval"]["stale"])
         self.assertEqual(report["runtime_eval"]["empty_rule_sample_ids"], ["s1"])
         self.assertEqual(report["runtime_eval"]["high_rule_selection_sample_ids"], ["s2"])
+        self.assertEqual(report["runtime_eval"]["rule_cap"], 5)
+        self.assertEqual(report["runtime_eval"]["rule_cap_violation_sample_ids"], ["s2"])
         self.assertEqual(report["runtime_eval"]["broad_topic_selection_sample_ids"], ["s2"])
         self.assertEqual(report["runtime_eval"]["broad_cluster_selection_sample_ids"], ["s2"])
+        self.assertFalse(report["overall"]["readiness_gates"]["runtime_rule_cap_respected"])
+        self.assertGreater(report["overall"]["blocking_gate_count"], 0)
         self.assertTrue(output_path.exists())
 
 

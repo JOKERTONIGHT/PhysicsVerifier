@@ -169,6 +169,7 @@ def build_runtime_eval_command(
 ) -> str:
     paths = dataset_paths(dataset)
     output_path = output or str(paths["runtime_eval"]).replace("\\", "/")
+    effective_limit = 0 if sample_ids and limit == 30 else limit
     parts = [
         "python",
         "scripts/evaluate_top_down_runtime.py",
@@ -179,7 +180,7 @@ def build_runtime_eval_command(
         "--output",
         output_path.replace("\\", "/"),
         "--limit",
-        str(limit),
+        str(effective_limit),
     ]
     if sample_ids:
         parts.extend(["--sample-ids", sample_ids])
@@ -303,14 +304,27 @@ def run_build_blueprints(*, dataset: str = DEFAULT_DATASET, root: Path | None = 
     }
 
 
-def run_quality_report(*, dataset: str = DEFAULT_DATASET, root: Path | None = None) -> Dict[str, Any]:
+def run_quality_report(
+    *,
+    dataset: str = DEFAULT_DATASET,
+    root: Path | None = None,
+    runtime_eval_path: Path | None = None,
+    output_path: Path | None = None,
+) -> Dict[str, Any]:
     paths = dataset_paths(dataset, root=root)
     return evaluate_catalog_quality(
         catalog_path=paths["catalog"],
         cluster_proposals_path=paths["cluster_proposals"],
-        runtime_eval_path=paths["runtime_eval"],
-        output_path=paths["quality_report"],
+        runtime_eval_path=runtime_eval_path or paths["runtime_eval"],
+        output_path=output_path or paths["quality_report"],
     )
+
+
+def quality_report_exit_code(report: Dict[str, Any], *, fail_on_blocking_gates: bool = False) -> int:
+    if not fail_on_blocking_gates:
+        return 0
+    blocking_count = int((report.get("overall") or {}).get("blocking_gate_count") or 0)
+    return 1 if blocking_count else 0
 
 
 def run_runtime_eval(
@@ -390,6 +404,9 @@ def main() -> None:
 
     quality_parser = subparsers.add_parser("quality-report", help="Evaluate unified rules catalog quality.")
     quality_parser.add_argument("--dataset", default=DEFAULT_DATASET)
+    quality_parser.add_argument("--runtime-eval", default="", help="Override runtime eval path, e.g. targeted capped eval.")
+    quality_parser.add_argument("--output", default="", help="Override quality report output path.")
+    quality_parser.add_argument("--fail-on-blocking-gates", action="store_true", help="Exit non-zero when readiness gates fail.")
 
     runtime_command_parser = subparsers.add_parser("runtime-eval-command", help="Print top-down runtime evaluation command; this step calls API.")
     runtime_command_parser.add_argument("--dataset", default=DEFAULT_DATASET)
@@ -474,7 +491,11 @@ def main() -> None:
     elif args.command == "rebuild-command":
         print(build_rebuild_catalog_command(dataset=args.dataset))
     elif args.command == "quality-report":
-        report = run_quality_report(dataset=args.dataset)
+        report = run_quality_report(
+            dataset=args.dataset,
+            runtime_eval_path=Path(args.runtime_eval) if args.runtime_eval else None,
+            output_path=Path(args.output) if args.output else None,
+        )
         print(_console_json({
             "overall": report["overall"],
             "schema": report["schema"],
@@ -485,6 +506,7 @@ def main() -> None:
             },
             "runtime_eval": report["runtime_eval"],
         }))
+        raise SystemExit(quality_report_exit_code(report, fail_on_blocking_gates=bool(args.fail_on_blocking_gates)))
     elif args.command == "runtime-eval-command":
         print(
             build_runtime_eval_command(

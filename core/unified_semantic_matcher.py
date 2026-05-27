@@ -19,6 +19,8 @@ except ImportError:  # pragma: no cover - environment-dependent
 
 
 class UnifiedSemanticMatcher:
+    MAX_SELECTED_RULES = 5
+
     def __init__(
         self,
         *,
@@ -625,7 +627,8 @@ class UnifiedSemanticMatcher:
                 continue
             clusterless_kept[topic_key] = kept + 1
             capped.append(judgment)
-        return {"rule_judgments": capped, "selected_rules": capped}
+        globally_capped = capped[: self.MAX_SELECTED_RULES]
+        return {"rule_judgments": globally_capped, "selected_rules": globally_capped}
 
     def select_tree_semantically(self, sample: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
         domain_result = self.select_domains_semantically(sample, catalog)

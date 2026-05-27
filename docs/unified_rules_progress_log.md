@@ -158,6 +158,101 @@
    - 推荐先用单样本验证 seed merge 是否解决空规则，再用 4 条问题样本检查过宽检索。
    - `runtime-eval-command` 也支持 `--output`，单条/少量 smoke 应写到独立文件，避免覆盖正式 30 条 `top_down_runtime_eval.json`。
 
+23. 完成 4 条 targeted runtime 复测。
+   - 文件：`results/unified_rules_3000/top_down_runtime_eval_problem4.json`。
+   - 4/4 均进入 `semantic_tree_selection`，`semantic_error_count=0`，`empty_rule_selection_count=0`。
+   - `170364` 已稳定命中 heat-transfer 冷却积分规则：
+     - `变功率冷却时间积分规则`
+     - `冷却时间积分建模律`
+   - 当前剩余问题从“覆盖缺口”转为“过宽检索控制”：
+     - `142965`：rule_count=6，涉及圆周运动与力矩平衡，规则数偏多。
+     - `157816`：topic_count=3，rule_count=7，跨电磁感应/磁场/轨道力学，规则数偏多。
+     - `147128`：topic_count=3，但最终只选 2 条 rule，噪声主要在 topic/cluster 阶段。
+   - 下一步不应继续补规则，而应优化 runtime selection cap/排序策略，优先控制每题最终 rule 数。
+
+24. 增加最终规则数全局上限。
+   - `core/unified_semantic_matcher.py` 新增 `MAX_SELECTED_RULES = 5`。
+   - 规则选择仍按 score/domain/topic/rule_id 排序，但最终 `selected_rules` 和 `rule_judgments` 最多保留 5 条。
+   - 目标是压制 `142965`、`157816` 这类跨 topic/cluster 场景中的规则噪声，同时保留最高分规则。
+   - 已补充单测，覆盖多个 cluster 合计返回 9 条时最终裁剪为 5 条。
+   - 本地回归通过后，还需要服务器重新跑 4 条 targeted runtime，输出到：
+     - `results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json`
+   - 预期该文件中 `high_rule_selection_sample_ids=[]`，且每条样本 `rule_count<=5`。
+   - 服务器复测命令：
+
+```bash
+/home/visitor/.conda/envs/physics/bin/python scripts/evaluate_top_down_runtime.py \
+  --samples data/evaluation_sample_debug_30.json \
+  --catalog catalogs/rules_unified_3000.json \
+  --output results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json \
+  --limit 0 \
+  --sample-ids 170364,157816,142965,147128
+```
+   - `scripts/unified_rules_pipeline.py runtime-eval-command` 已同步修正：传入 `--sample-ids` 且未显式指定 limit 时，自动生成 `--limit 0`，避免 targeted 复测命令口径混乱。
+
+25. 增加 runtime rule cap 质量门禁。
+   - `scripts/evaluate_unified_rules_quality.py` 新增 runtime readiness gates。
+   - 关键门禁包括：
+     - `runtime_eval_available`
+     - `runtime_eval_current`
+     - `runtime_no_semantic_errors`
+     - `runtime_no_empty_rules`
+     - `runtime_rule_cap_respected`
+   - `runtime_rule_cap_respected` 直接检查 `rule_count<=5`，并输出 `rule_cap_violation_sample_ids`。
+   - 这样服务器复测文件拉回后，可以直接用 quality report 判断是否通过，不需要人工逐条读 JSON。
+   - 已用旧 `top_down_runtime_eval_problem4.json` 验证该门禁能正确失败：
+     - `runtime_rule_cap_respected=false`
+     - `rule_cap_violation_sample_ids=["142965","157816"]`
+
+26. 增加 targeted runtime 结果的一键 quality-report 验收入口。
+   - `scripts/unified_rules_pipeline.py quality-report` 新增：
+     - `--runtime-eval`
+     - `--output`
+   - 服务器拉回 `top_down_runtime_eval_problem4_capped.json` 后，可直接运行：
+
+```powershell
+D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py quality-report `
+  --dataset 3000 `
+  --runtime-eval results\unified_rules_3000\top_down_runtime_eval_problem4_capped.json `
+  --output results\unified_rules_3000\rules_unified_quality_report_problem4_capped.json
+```
+
+   - 验收只看两个字段：
+     - `runtime_rule_cap_respected=true`
+     - `rule_cap_violation_sample_ids=[]`
+   - 已用旧 `top_down_runtime_eval_problem4.json` 通过同一入口验证失败路径，确认门禁可用。
+
+27. 增加 quality-report 自动失败退出。
+   - `scripts/unified_rules_pipeline.py quality-report` 新增：
+     - `--fail-on-blocking-gates`
+   - 当 `overall.blocking_gate_count > 0` 时，该命令以非零状态退出，可用于本地/服务器/CI 自动中断流程。
+   - 已用旧 `top_down_runtime_eval_problem4.json` 验证：
+
+```powershell
+D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py quality-report `
+  --dataset 3000 `
+  --runtime-eval results\unified_rules_3000\top_down_runtime_eval_problem4.json `
+  --output results\unified_rules_3000\rules_unified_quality_report_problem4_pipeline.json `
+  --fail-on-blocking-gates
+```
+
+   - 结果：命令按预期返回 exit code 1，因为 `runtime_rule_cap_respected=false`。
+   - 已补充单测确认两条路径：
+     - blocking gate 存在时返回 1。
+     - blocking gate 全部通过时返回 0。
+
+28. 整理当前服务器执行命令。
+   - 更新 `docs/order.md` 为当前最小执行单。
+   - 明确当前只跑 4 条 capped targeted runtime，不跑全量。
+   - 服务器命令固定输出：
+     - `results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json`
+   - 本地验收固定输出：
+     - `results/unified_rules_3000/rules_unified_quality_report_problem4_capped.json`
+   - 通过标准为：
+     - `exit code = 0`
+     - `runtime_rule_cap_respected = true`
+     - `rule_cap_violation_sample_ids = []`
+
 ### 当前结论
 
 3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。
@@ -180,16 +275,14 @@
 D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embedding-command --dataset 3000
 ```
 
-下一步建议：先在服务器跑 30 条 `top_down_verifier` 端到端检索质量评估；根据空规则选择率和错误 topic 分布，再决定优先补哪些无 cluster topic。
+下一步建议：先在服务器跑 4 条 capped targeted runtime，确认最终规则数上限确实生效；再跑 30 条 `top_down_verifier` 端到端检索质量评估。只有当 30 条评估仍显示 topic/cluster 选择噪声较高时，再继续推进 embedding/cluster 补全。
 
 后续固定顺序为：
 
-1. `embedding-command`：生成 `rule_embedding_clusters.json`
-2. `analyze-embedding`：验收 embedding 聚类覆盖
-3. `cluster-command`：强模型给 embedding clusters 打标签和 summary
-4. `build-blueprints`：生成 `catalogs/scenario_cluster_blueprints_generated_3000.json`
-5. `validate-blueprints-command`：校验 generated blueprints
-6. `rebuild-command`：重建 `catalogs/rules_unified_3000.json`
+1. 服务器运行 `top_down_runtime_eval_problem4_capped.json` 复测。
+2. 若 capped 复测通过，服务器运行 30 条 runtime eval。
+3. 本地生成 quality report，检查空规则、过宽 topic/cluster、诊断数量。
+4. 若主要问题仍是 topic/cluster 过宽，再运行 `embedding-command` 和后续 cluster 流程。
 
 ### 验证情况
 
@@ -197,5 +290,21 @@ D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embed
 
 ```text
 Ran 37 tests in 0.938s
+OK
+```
+
+本轮 rule cap 修改后已追加运行：
+
+```text
+D:\conda_envs\physicsverifier\python.exe -m unittest tests.test_unified_semantic_matcher tests.test_evaluate_top_down_runtime tests.test_unified_top_down_integration tests.test_unified_rules_pipeline
+Ran 21 tests in 0.062s
+OK
+```
+
+随后运行更完整的 unified_rules 相关回归：
+
+```text
+D:\conda_envs\physicsverifier\python.exe -m unittest tests.test_analyze_rule_embedding_clusters tests.test_analyze_semantic_experience_run tests.test_compare_unified_catalogs tests.test_evaluate_top_down_runtime tests.test_evaluate_unified_rules_quality tests.test_generate_cluster_proposals tests.test_prepare_rules_for_cluster tests.test_refine_cluster_blueprints tests.test_rule_embedding_clustering tests.test_semantic_experience_auxiliary tests.test_server_run_inputs tests.test_unified_3000_catalog_regression tests.test_unified_catalog_builder tests.test_unified_rules_pipeline tests.test_unified_semantic_matcher tests.test_unified_top_down_integration tests.test_validate_cluster_blueprints
+Ran 74 tests in 0.941s
 OK
 ```

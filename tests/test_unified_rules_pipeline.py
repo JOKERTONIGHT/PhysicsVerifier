@@ -13,6 +13,7 @@ from scripts.unified_rules_pipeline import (
     build_rule_embedding_cluster_command,
     build_server_command,
     dataset_paths,
+    quality_report_exit_code,
     run_analyze_embedding_clusters,
     run_build_blueprints,
     run_prepare_cluster,
@@ -102,6 +103,18 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_problem4.json", command)
         self.assertIn("--limit 0", command)
         self.assertIn("--sample-ids 170364,157816", command)
+
+    def test_runtime_eval_command_defaults_to_no_limit_for_targeted_samples(self) -> None:
+        command = build_runtime_eval_command(
+            dataset="3000",
+            samples="data/evaluation_sample_debug_30.json",
+            sample_ids="170364,157816,142965,147128",
+            output="results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json",
+        )
+
+        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json", command)
+        self.assertIn("--limit 0", command)
+        self.assertIn("--sample-ids 170364,157816,142965,147128", command)
 
     def test_build_blueprints_subcommand_uses_canonical_proposal_output(self) -> None:
         root = _case_dir()
@@ -214,6 +227,71 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertTrue(report["runtime_eval"]["available"])
         self.assertFalse(report["runtime_eval"]["stale"])
         self.assertTrue(paths["quality_report"].exists())
+
+    def test_quality_report_can_use_targeted_runtime_eval_override(self) -> None:
+        root = _case_dir()
+        paths = dataset_paths("mini", root=root)
+        paths["result_dir"].mkdir(parents=True, exist_ok=True)
+        paths["catalog"].parent.mkdir(parents=True, exist_ok=True)
+        paths["catalog"].write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "catalog_type": "unified_rules_v2",
+                        "schema_profile": "semantic_navigation_tree_minimal",
+                    },
+                    "domains": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        paths["cluster_proposals"].write_text(
+            json.dumps({"proposals": [], "failures": []}),
+            encoding="utf-8",
+        )
+        targeted_runtime = paths["result_dir"] / "top_down_runtime_eval_problem4_capped.json"
+        targeted_output = paths["result_dir"] / "rules_unified_quality_report_problem4_capped.json"
+        targeted_runtime.write_text(
+            json.dumps(
+                {
+                    "summary": {"sample_count": 1, "semantic_error_count": 0, "rule_selection_rate": 1.0, "average_selected_rules": 5.0},
+                    "rows": [{"sample_id": "s1", "topic_count": 1, "cluster_count": 1, "rule_count": 5, "semantic_selection_error": ""}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = run_quality_report(
+            dataset="mini",
+            root=root,
+            runtime_eval_path=targeted_runtime,
+            output_path=targeted_output,
+        )
+
+        self.assertTrue(report["overall"]["readiness_gates"]["runtime_rule_cap_respected"])
+        self.assertEqual(report["runtime_eval"]["sample_count"], 1)
+        self.assertTrue(targeted_output.exists())
+
+    def test_quality_report_fail_on_blocking_gates_returns_nonzero_exit_code(self) -> None:
+        report = {
+            "overall": {
+                "blocking_gate_count": 1,
+                "readiness_gates": {"runtime_rule_cap_respected": False},
+            }
+        }
+
+        self.assertEqual(quality_report_exit_code(report, fail_on_blocking_gates=True), 1)
+        self.assertEqual(quality_report_exit_code(report, fail_on_blocking_gates=False), 0)
+
+    def test_quality_report_fail_on_blocking_gates_returns_zero_when_gates_pass(self) -> None:
+        report = {
+            "overall": {
+                "blocking_gate_count": 0,
+                "readiness_gates": {"runtime_rule_cap_respected": True},
+            }
+        }
+
+        self.assertEqual(quality_report_exit_code(report, fail_on_blocking_gates=True), 0)
 
     def test_prepare_cluster_subcommand_builds_canonical_outputs(self) -> None:
         root = _case_dir()

@@ -17,6 +17,8 @@ REMOVED_RUNTIME_FIELDS = {
     "negative_cues",
 }
 
+RUNTIME_RULE_CAP = 5
+
 
 def _load_json(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -309,7 +311,7 @@ def _runtime_eval_stats(path: Path | None, *, catalog_path: Path) -> Dict[str, A
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     rows = [item for item in (payload.get("rows") or []) if isinstance(item, dict)]
     empty_rows = [row for row in rows if int(row.get("rule_count") or 0) == 0]
-    high_rule_rows = [row for row in rows if int(row.get("rule_count") or 0) > 5]
+    high_rule_rows = [row for row in rows if int(row.get("rule_count") or 0) > RUNTIME_RULE_CAP]
     broad_topic_rows = [row for row in rows if int(row.get("topic_count") or 0) > 2]
     broad_cluster_rows = [row for row in rows if int(row.get("cluster_count") or 0) > 3]
     semantic_error_rows = [row for row in rows if _text(row.get("semantic_selection_error"))]
@@ -323,11 +325,28 @@ def _runtime_eval_stats(path: Path | None, *, catalog_path: Path) -> Dict[str, A
         "semantic_error_count": int(summary.get("semantic_error_count") or len(semantic_error_rows)),
         "rule_selection_rate": float(summary.get("rule_selection_rate") or 0.0),
         "average_selected_rules": float(summary.get("average_selected_rules") or 0.0),
+        "rule_cap": RUNTIME_RULE_CAP,
         "empty_rule_sample_ids": _ordered_unique(row.get("sample_id") for row in empty_rows),
         "high_rule_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in high_rule_rows),
+        "rule_cap_violation_sample_ids": _ordered_unique(row.get("sample_id") for row in high_rule_rows),
         "broad_topic_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in broad_topic_rows),
         "broad_cluster_selection_sample_ids": _ordered_unique(row.get("sample_id") for row in broad_cluster_rows),
     }
+
+
+def _readiness_gates(report: Dict[str, Any]) -> Dict[str, bool]:
+    schema = report["schema"]
+    runtime = report["runtime_eval"]
+    gates = {
+        "schema_minimal": schema["schema_profile"] == "semantic_navigation_tree_minimal",
+        "no_removed_runtime_fields": schema["removed_runtime_field_hit_count"] == 0,
+        "runtime_eval_available": bool(runtime.get("available")),
+        "runtime_eval_current": bool(runtime.get("available")) and not bool(runtime.get("stale")),
+        "runtime_no_semantic_errors": bool(runtime.get("available")) and int(runtime.get("semantic_error_count") or 0) == 0,
+        "runtime_no_empty_rules": bool(runtime.get("available")) and not bool(runtime.get("empty_rule_sample_ids") or []),
+        "runtime_rule_cap_respected": bool(runtime.get("available")) and not bool(runtime.get("rule_cap_violation_sample_ids") or []),
+    }
+    return gates
 
 
 def _score(report: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
@@ -428,9 +447,12 @@ def evaluate_catalog_quality(
         "runtime_eval": _runtime_eval_stats(runtime_eval_path, catalog_path=catalog_path),
     }
     score, issues = _score(report)
+    gates = _readiness_gates(report)
     report["overall"] = {
         "quality_score": score,
         "status": "usable_with_known_gaps" if score >= 70 else "needs_rework",
+        "readiness_gates": gates,
+        "blocking_gate_count": sum(1 for passed in gates.values() if not passed),
         "issues": issues,
         "recommended_next_steps": [
             "补齐 cluster_proposals 中失败 topic，减少 missing generated clusters。",
