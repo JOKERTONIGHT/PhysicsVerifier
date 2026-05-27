@@ -44,6 +44,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertEqual(paths["quality_report"], Path("results/unified_rules_3000/rules_unified_quality_report.json"))
         self.assertEqual(paths["runtime_eval"], Path("results/unified_rules_3000/top_down_runtime_eval.json"))
         self.assertEqual(paths["cluster_proposals"], Path("results/unified_rules_3000/cluster_proposals.json"))
+        self.assertEqual(paths["generated_blueprints"], Path("results/unified_rules_3000/cluster_blueprints_generated.json"))
         self.assertEqual(paths["precluster_report"], Path("results/unified_rules_3000/precluster_report.json"))
         self.assertEqual(paths["catalog"], Path("catalogs/rules_unified_3000.json"))
 
@@ -82,11 +83,11 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         validation = build_blueprint_validation_command(dataset="3000")
         rebuild = build_rebuild_catalog_command(dataset="3000")
 
-        self.assertIn("catalogs/scenario_cluster_blueprints_generated_3000.json", validation)
+        self.assertIn("results/unified_rules_3000/cluster_blueprints_generated.json", validation)
         self.assertIn("--mode subset", validation)
         self.assertIn("scripts/build_unified_catalog.py", rebuild)
         self.assertIn("results/unified_rules_3000/semantic_experience_distilled_for_cluster.json", rebuild)
-        self.assertIn("catalogs/scenario_cluster_blueprints_generated_3000.json", rebuild)
+        self.assertIn("results/unified_rules_3000/cluster_blueprints_generated.json", rebuild)
 
     def test_runtime_eval_command_uses_canonical_catalog_and_output(self) -> None:
         command = build_runtime_eval_command(
@@ -94,13 +95,13 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
             samples="data/evaluation_sample_debug_30.json",
             limit=0,
             sample_ids="170364,157816",
-            output="results/unified_rules_3000/top_down_runtime_eval_problem4.json",
+            output="results/unified_rules_3000/top_down_runtime_eval_targeted.json",
         )
 
         self.assertIn("scripts/evaluate_top_down_runtime.py", command)
         self.assertIn("--samples data/evaluation_sample_debug_30.json", command)
         self.assertIn("--catalog catalogs/rules_unified_3000.json", command)
-        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_problem4.json", command)
+        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_targeted.json", command)
         self.assertIn("--limit 0", command)
         self.assertIn("--sample-ids 170364,157816", command)
 
@@ -109,10 +110,10 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
             dataset="3000",
             samples="data/evaluation_sample_debug_30.json",
             sample_ids="170364,157816,142965,147128",
-            output="results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json",
+            output="results/unified_rules_3000/top_down_runtime_eval_targeted.json",
         )
 
-        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json", command)
+        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_targeted.json", command)
         self.assertIn("--limit 0", command)
         self.assertIn("--sample-ids 170364,157816,142965,147128", command)
 
@@ -249,8 +250,8 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
             json.dumps({"proposals": [], "failures": []}),
             encoding="utf-8",
         )
-        targeted_runtime = paths["result_dir"] / "top_down_runtime_eval_problem4_capped.json"
-        targeted_output = paths["result_dir"] / "rules_unified_quality_report_problem4_capped.json"
+        targeted_runtime = paths["result_dir"] / "top_down_runtime_eval_targeted.json"
+        targeted_output = paths["result_dir"] / "rules_unified_quality_report_targeted.json"
         targeted_runtime.write_text(
             json.dumps(
                 {

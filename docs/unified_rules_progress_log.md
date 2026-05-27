@@ -253,36 +253,61 @@ D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py quali
      - `runtime_rule_cap_respected = true`
      - `rule_cap_violation_sample_ids = []`
 
+29. capped targeted runtime 已通过。
+   - 服务器结果已拉回：
+     - `results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json`
+   - 本地验收报告已生成：
+     - `results/unified_rules_3000/rules_unified_quality_report_problem4_capped.json`
+   - 自动门禁结果：
+     - `blocking_gate_count=0`
+     - `runtime_no_semantic_errors=true`
+     - `runtime_no_empty_rules=true`
+     - `runtime_rule_cap_respected=true`
+     - `rule_cap_violation_sample_ids=[]`
+     - `broad_topic_selection_sample_ids=[]`
+     - `broad_cluster_selection_sample_ids=[]`
+   - 4 条问题样本的规则数过宽问题已经被当前全局 cap 控制住。
+
 ### 当前结论
 
-3000 条数据已经显著扩大了规则覆盖，但当前规则仍偏“逐题经验点”，还不是完全聚合后的稳定规则库。由于没有 exact duplicate，单纯本地确定性规则很难继续压缩；如果后续要进一步提高规则质量，需要做语义聚合，这一步会调用模型 API。
+3000 条数据已经显著扩大了规则覆盖。当前规则库已经进入“可用雏形 + 已知缺口”阶段，不再是查询链路未跑通阶段。
+
+当前主要问题不是继续验证全流程，而是规则库本身还没有收敛：
+
+- 正式产物和中间验证产物需要进一步区分，避免继续堆叠 `fixed`、`capped`、`problem4` 等临时后缀文件。
+- 仍有 `904` 条规则未聚类，`50` 个 topic 有未聚类内容。
+- `general_reasoning` 规则占比约 `31.6%`，说明部分规则仍偏泛化，不够像可直接调用的物理经验规则。
+- 仍有 `3` 个 cluster proposal 失败记录，需要补齐或人工处理。
+- 当前 capped targeted runtime 已证明查询链路可用、rule cap 生效，但不应把它扩展成持续的大样本 token 消耗。
 
 ### 下一步
 
-当前 1-6 步主流程已跑通，且第一轮质量评估达到“可用但有已知缺口”状态。
+当前不建议继续运行 30/100 条 runtime eval。后续固定顺序改为：
 
-当前 embedding 输入为：
+1. 整理规则库正式产物和中间产物，明确 canonical 文件。
+2. 基于质量报告补全空缺内容，优先处理未聚类规则、失败 cluster proposal 和过泛化规则。
+3. 只做本地静态分析和人工抽查；除非结构或规则内容发生关键变更，否则不消耗 API token。
+4. 需要验证时只跑 6-10 条代表性样本，且必须先确认。
 
-- `results/unified_rules_3000/rule_embedding_input.json`
+当前阶段目标应表述为：
 
-推荐重聚类阈值：
-
-- `similarity_threshold=0.74`
-
-执行前先运行：
-
-```powershell
-D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embedding-command --dataset 3000
+```text
+整理当前规则库正式产物，收敛中间文件；基于质量报告补全未聚类、失败聚类和泛化规则问题；完成后仅做小样本低成本验证。
 ```
 
-下一步建议：先在服务器跑 4 条 capped targeted runtime，确认最终规则数上限确实生效；再跑 30 条 `top_down_verifier` 端到端检索质量评估。只有当 30 条评估仍显示 topic/cluster 选择噪声较高时，再继续推进 embedding/cluster 补全。
+### 2026-05-27 阶段性复盘
 
-后续固定顺序为：
+当前 capped targeted runtime 复测已经足够证明链路可用：
 
-1. 服务器运行 `top_down_runtime_eval_problem4_capped.json` 复测。
-2. 若 capped 复测通过，服务器运行 30 条 runtime eval。
-3. 本地生成 quality report，检查空规则、过宽 topic/cluster、诊断数量。
-4. 若主要问题仍是 topic/cluster 过宽，再运行 `embedding-command` 和后续 cluster 流程。
+- `quality_score=86`
+- `status=usable_with_known_gaps`
+- `blocking_gate_count=0`
+- `runtime_no_semantic_errors=true`
+- `runtime_no_empty_rules=true`
+- `runtime_rule_cap_respected=true`
+- `rule_cap_violation_sample_ids=[]`
+
+因此，后续不应把“全流程测试”作为主线。主线应切换为规则库产物收敛和内容补全。
 
 ### 验证情况
 

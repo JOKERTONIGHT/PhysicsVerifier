@@ -217,6 +217,3 @@ logs/
 
 # docs
 docs/*
-!docs/unified_rules_progress_log.md
-!docs/unified_rules_workflow.md
-!docs/unified_rules_file_inventory.md

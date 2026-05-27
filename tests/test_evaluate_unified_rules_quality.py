@@ -140,6 +140,56 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
         self.assertGreater(report["overall"]["blocking_gate_count"], 0)
         self.assertTrue(output_path.exists())
 
+    def test_evaluate_catalog_quality_omits_unclustered_recommendation_when_fully_clustered(self) -> None:
+        root = _case_dir()
+        catalog_path = root / "catalog.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "catalog_type": "unified_rules_v2",
+                        "schema_profile": "semantic_navigation_tree_minimal",
+                        "total_domains": 1,
+                        "total_topics": 1,
+                        "topics_with_rules": 1,
+                        "total_executable_rules": 1,
+                        "total_scenario_clusters": 1,
+                    },
+                    "domains": [
+                        {
+                            "name": "Mechanics",
+                            "topics": [
+                                {
+                                    "name": "Kinematics",
+                                    "summary": "Motion relations.",
+                                    "scenario_clusters": [
+                                        {"id": "timing", "name": "Timing", "summary": "Timing checks.", "rule_ids": ["r1"]}
+                                    ],
+                                    "rules": [
+                                        {
+                                            "rule_id": "r1",
+                                            "title": "Timing",
+                                            "summary": "Timing checks.",
+                                            "trigger": "time",
+                                            "check_logic": "Check timing.",
+                                            "error_type": "logic",
+                                            "symbolic_hint": {},
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = evaluate_catalog_quality(catalog_path=catalog_path, cluster_proposals_path=None, runtime_eval_path=None)
+
+        self.assertEqual(report["cluster_quality"]["unclustered_rule_count"], 0)
+        self.assertNotIn("继续补齐尚未进入 scenario clusters 的 topic。", report["overall"]["recommended_next_steps"])
+
 
 if __name__ == "__main__":
     unittest.main()

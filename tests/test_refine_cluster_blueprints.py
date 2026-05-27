@@ -36,7 +36,28 @@ class RefineClusterBlueprintsTests(unittest.TestCase):
             blueprints["mechanics::kinematics"][0]["rule_groups"][0]["rule_ids"],
             ["exp_k1", "exp_k2"],
         )
-        self.assertEqual(blueprints["mechanics::kinematics"][1]["cluster_id"], "general_reasoning")
+        self.assertEqual(blueprints["mechanics::kinematics"][1]["cluster_id"], "residual_rules_01")
+        self.assertEqual(blueprints["mechanics::kinematics"][1]["rule_groups"][0]["rule_ids"], ["exp_k3"])
+
+    def test_build_generated_blueprints_splits_residual_rules_into_non_general_clusters(self) -> None:
+        proposals = {
+            "proposals": [
+                {
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "topic_key": "mechanics::kinematics",
+                    "clusters": [],
+                    "residual_rule_ids": [f"exp_k{i}" for i in range(1, 15)],
+                }
+            ]
+        }
+
+        blueprints = build_generated_blueprints_from_refined_proposals(proposals)
+        residual_clusters = blueprints["mechanics::kinematics"]
+
+        self.assertEqual([item["cluster_id"] for item in residual_clusters], ["residual_rules_01", "residual_rules_02"])
+        self.assertEqual(len(residual_clusters[0]["rule_groups"][0]["rule_ids"]), 12)
+        self.assertEqual(len(residual_clusters[1]["rule_groups"][0]["rule_ids"]), 2)
 
     def test_build_generated_blueprints_maps_navigation_cues_to_builder_compat_fields(self) -> None:
         proposals = {

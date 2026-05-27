@@ -234,6 +234,7 @@ def refine_cluster_proposals(
 
 def build_generated_blueprints_from_refined_proposals(refined_payload: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     out: Dict[str, List[Dict[str, Any]]] = {}
+    residual_chunk_size = 12
     for proposal in refined_payload.get("proposals", []) or []:
         if not isinstance(proposal, dict):
             continue
@@ -276,23 +277,25 @@ def build_generated_blueprints_from_refined_proposals(refined_payload: Dict[str,
                 }
             )
         residual_rule_ids = _ordered_unique(proposal.get("residual_rule_ids") or [])
-        if residual_rule_ids:
+        for chunk_index, start in enumerate(range(0, len(residual_rule_ids), residual_chunk_size), start=1):
+            chunk_rule_ids = residual_rule_ids[start : start + residual_chunk_size]
+            cluster_id = f"residual_rules_{chunk_index:02d}"
             topic_clusters.append(
                 {
-                    "cluster_id": "general_reasoning",
-                    "name": "General Topic Reasoning",
-                    "description": "Fallback cluster for residual topic rules kept outside the specific scenario buckets.",
-                    "includes": ["topic-specific residual checks"],
+                    "cluster_id": cluster_id,
+                    "name": f"Residual Topic Rules {chunk_index:02d}",
+                    "description": "Residual topic rules grouped explicitly so runtime navigation does not depend on one broad general reasoning bucket.",
+                    "includes": ["residual topic-specific checks"],
                     "excludes": [],
                     "entry_cues": [],
                     "related_clusters": [],
                     "rule_groups": [
                         {
-                            "group_id": "general_reasoning_checks",
-                            "name": "General Topic Reasoning Checks",
+                            "group_id": f"{cluster_id}_checks",
+                            "name": f"Residual Topic Rule Checks {chunk_index:02d}",
                             "summary": "Residual topic-specific checks outside the stronger scenario buckets.",
-                            "activation_condition": "Use only if the problem belongs to the topic but not to a more specific cluster.",
-                            "rule_ids": residual_rule_ids,
+                            "activation_condition": "Use when the problem belongs to the topic but does not match a stronger named scenario cluster.",
+                            "rule_ids": chunk_rule_ids,
                         }
                     ],
                 }

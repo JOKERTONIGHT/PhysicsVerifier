@@ -119,12 +119,22 @@ D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py rebui
 
 ## Current Handoff
 
-当前下一步补 cluster 的输入固定为：
+当前流程已经跑到 capped targeted runtime 验收通过，不再把下一步默认设为服务器/API 运行。
+
+当前需要整理和补全的输入固定为：
 
 ```text
 catalogs/rules_unified_3000.json
 results/unified_rules_3000/semantic_experience_distilled_for_cluster.json
 results/unified_rules_3000/rule_embedding_input.json
+results/unified_rules_3000/rule_embedding_clusters.json
+results/unified_rules_3000/cluster_proposals.json
+results/unified_rules_3000/rules_unified_quality_report_problem4_capped.json
 ```
 
-当前第 3 步 embedding 聚类会调用 API。需要执行时先用 `embedding-command` 打印命令，再去服务器运行。生成 `rule_embedding_clusters.json` 后，才进入第 4 步 cluster 标签和 summary。
+当前主线：
+
+1. 收敛正式产物和中间验证产物。
+2. 补全未聚类规则、失败 cluster proposal 和过泛化规则。
+3. 暂停 30/100 条 runtime eval。
+4. 如确实需要服务器/API 验证，先确认范围；默认只跑 `6-10` 条 targeted runtime。

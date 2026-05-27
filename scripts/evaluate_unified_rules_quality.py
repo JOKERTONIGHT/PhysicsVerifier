@@ -448,19 +448,26 @@ def evaluate_catalog_quality(
     }
     score, issues = _score(report)
     gates = _readiness_gates(report)
+    recommended_next_steps: List[str] = []
+    if int(report["cluster_quality"].get("unclustered_rule_count") or 0) > 0:
+        recommended_next_steps.extend(
+            [
+                "继续补齐尚未进入 scenario clusters 的 topic。",
+                "优先处理低 cluster 覆盖且规则数高的 topic。",
+            ]
+        )
+    if int(report["duplication"].get("duplicate_summary_group_count") or 0) > 0:
+        recommended_next_steps.append("抽样审查 duplicate summary/title 组，判断是否需要语义合并。")
+    recommended_next_steps.append("规则结构变化后先用 top_down_verifier 做 6-10 条代表性样本验证。")
+    if report["runtime_eval"].get("available"):
+        recommended_next_steps.append("优先复盘 runtime empty_rule_sample_ids 和 overbroad selection 样本。")
     report["overall"] = {
         "quality_score": score,
         "status": "usable_with_known_gaps" if score >= 70 else "needs_rework",
         "readiness_gates": gates,
         "blocking_gate_count": sum(1 for passed in gates.values() if not passed),
         "issues": issues,
-        "recommended_next_steps": [
-            "补齐 cluster_proposals 中失败 topic，减少 missing generated clusters。",
-            "优先处理低 cluster 覆盖且规则数高的 topic。",
-            "抽样审查 duplicate summary/title 组，判断是否需要语义合并。",
-            "用 top_down_verifier 做 30-100 条端到端检索命中率评估。",
-            "优先复盘 runtime empty_rule_sample_ids 和 overbroad selection 样本。",
-        ],
+        "recommended_next_steps": recommended_next_steps,
     }
     if output_path:
         _write_json(output_path, report)
@@ -471,7 +478,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate unified rules catalog quality for full pipeline readiness.")
     parser.add_argument("--catalog", default="catalogs/rules_unified_3000.json")
     parser.add_argument("--cluster-proposals", default="results/unified_rules_3000/cluster_proposals.json")
-    parser.add_argument("--runtime-eval", default="results/unified_rules_3000/top_down_runtime_eval_30_fixed.json")
+    parser.add_argument("--runtime-eval", default="results/unified_rules_3000/top_down_runtime_eval.json")
     parser.add_argument("--output", default="results/unified_rules_3000/rules_unified_quality_report.json")
     args = parser.parse_args()
     report = evaluate_catalog_quality(

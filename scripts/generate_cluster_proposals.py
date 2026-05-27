@@ -418,17 +418,21 @@ def _normalize_embedding_cluster_labels(raw: Dict[str, Any], topic_item: Dict[st
             labels_by_source[source_id] = item
 
     clusters: List[Dict[str, Any]] = []
+    topic_label = re.sub(r"[^A-Za-z0-9 ]+", " ", _norm_text(topic_item.get("topic") or "")).strip()
+    topic_label = re.sub(r"\s+", " ", topic_label)
+    topic_label = " ".join(topic_label.split()[:5]).title()
     for index, source in enumerate(source_clusters, start=1):
         source_id = _norm_text(source.get("cluster_id") or f"embedding_cluster_{index:02d}")
         label = labels_by_source.get(source_id, {})
-        fallback_name = source_id.replace("_", " ").title()
+        fallback_name = f"{topic_label} Cluster {index:02d}" if topic_label else source_id.replace("_", " ").title()
+        fallback_summary = f"Embedding-derived cluster for {topic_label or 'this topic'} rules."
         cluster_id = _norm_text(label.get("cluster_id") or source_id)
         clusters.append(
             {
                 "cluster_id": re.sub(r"[^a-z0-9_]+", "_", cluster_id.lower()).strip("_") or source_id,
                 "name": _norm_text(label.get("name") or fallback_name),
-                "summary": _norm_text(label.get("summary") or fallback_name),
-                "description": _norm_text(label.get("description") or label.get("summary") or fallback_name),
+                "summary": _norm_text(label.get("summary") or fallback_summary),
+                "description": _norm_text(label.get("description") or label.get("summary") or fallback_summary),
                 "scene_cues": _ordered_unique(label.get("scene_cues") or []),
                 "boundary_cues": _ordered_unique(label.get("boundary_cues") or []),
                 "explore_cues": _ordered_unique(label.get("explore_cues") or []),
@@ -442,6 +446,65 @@ def _normalize_embedding_cluster_labels(raw: Dict[str, Any], topic_item: Dict[st
         "clusters": clusters,
         "residual_rule_ids": _ordered_unique(topic_item.get("residual_rule_ids") or []),
     }
+
+
+def add_catalog_fallback_proposals(payload: Dict[str, Any], catalog: Dict[str, Any]) -> Dict[str, Any]:
+    proposals = [item for item in (payload.get("proposals") or []) if isinstance(item, dict)]
+    completed_topic_keys = {
+        _norm_text(item.get("topic_key") or "").casefold()
+        for item in proposals
+    }
+    added = 0
+    for domain in catalog.get("domains", []) or []:
+        if not isinstance(domain, dict):
+            continue
+        domain_name = _norm_text(domain.get("name") or "Unknown")
+        for topic in domain.get("topics", []) or []:
+            if not isinstance(topic, dict):
+                continue
+            topic_name = _norm_text(topic.get("name") or "Unknown")
+            topic_key = _topic_key(domain_name, topic_name)
+            if topic_key in completed_topic_keys:
+                continue
+            rule_ids = _ordered_unique(
+                rule.get("rule_id")
+                for rule in (topic.get("rules") or [])
+                if isinstance(rule, dict)
+            )
+            if not rule_ids:
+                continue
+            proposals.append(
+                {
+                    "domain": domain_name,
+                    "topic": topic_name,
+                    "topic_key": topic_key,
+                    "rule_count": len(rule_ids),
+                    "existing_cluster_count": len(topic.get("scenario_clusters") or []),
+                    "topic_summary": f"Catalog fallback proposal for {topic_name}.",
+                    "should_add_clusters": True,
+                    "rationale": "Generated locally from catalog rule membership because no labeled embedding proposal exists for this topic.",
+                    "clusters": [],
+                    "residual_rule_ids": rule_ids,
+                    "label_source": "catalog_fallback",
+                }
+            )
+            completed_topic_keys.add(topic_key)
+            added += 1
+
+    out = dict(payload)
+    metadata = dict(out.get("metadata") or {})
+    metadata["topic_count"] = len(proposals)
+    metadata["target_topic_count"] = max(int(metadata.get("target_topic_count") or 0), len(proposals))
+    metadata["failure_count"] = 0
+    metadata["catalog_fallback_topic_count"] = int(metadata.get("catalog_fallback_topic_count") or 0) + added
+    out["metadata"] = metadata
+    out["proposals"] = proposals
+    out["failures"] = [
+        item for item in (payload.get("failures") or [])
+        if isinstance(item, dict)
+        and _norm_text(item.get("topic_key") or "").casefold() not in completed_topic_keys
+    ]
+    return out
 
 
 def generate_cluster_proposals(
@@ -572,6 +635,11 @@ def generate_cluster_proposals_from_embedding_clusters(
         for item in proposals
         if isinstance(item, dict)
     }
+    original_failure_count = len(failures)
+    failures = [
+        item for item in failures
+        if _norm_text(item.get("topic_key") or "").casefold() not in completed_topic_keys
+    ]
 
     def _current_payload() -> Dict[str, Any]:
         return {
@@ -581,6 +649,9 @@ def generate_cluster_proposals_from_embedding_clusters(
                 "topic_count": len(proposals),
                 "target_topic_count": total_topics,
                 "failure_count": len(failures),
+                "fallback_label_count": sum(
+                    1 for item in proposals if item.get("label_source") == "embedding_fallback"
+                ),
                 "cjk_warning_count": sum(
                     1 for item in proposals if item.get("contains_cjk_generated_text")
                 ),
@@ -592,6 +663,8 @@ def generate_cluster_proposals_from_embedding_clusters(
         }
 
     total_topics = len(topics)
+    if resume and output_path and output_path.exists() and len(failures) != original_failure_count:
+        _dump_json(output_path, _current_payload())
     for index, topic_item in enumerate(topics, start=1):
         topic_key = _norm_text(topic_item.get("topic_key") or "").casefold()
         if topic_key in completed_topic_keys:
@@ -618,6 +691,37 @@ def generate_cluster_proposals_from_embedding_clusters(
                 max_output_tokens=max_output_tokens,
             )
         except Exception as exc:
+            if continue_on_error:
+                normalized = _normalize_embedding_cluster_labels(
+                    {
+                        "topic_summary": "Fallback labels generated from fixed embedding cluster membership.",
+                        "rationale": f"Model labeling failed, so deterministic fallback labels were used: {exc}",
+                    },
+                    topic_item,
+                )
+                proposals.append(
+                    {
+                        "domain": _norm_text(topic_item.get("domain") or ""),
+                        "topic": _norm_text(topic_item.get("topic") or ""),
+                        "topic_key": topic_key,
+                        "rule_count": int(topic_item.get("rule_count") or 0),
+                        "existing_cluster_count": 0,
+                        "contains_cjk_generated_text": False,
+                        "cjk_generated_text_preview": "",
+                        "label_source": "embedding_fallback",
+                        **normalized,
+                    }
+                )
+                failures = [
+                    item for item in failures
+                    if _norm_text(item.get("topic_key") or "").casefold() != topic_key
+                ]
+                completed_topic_keys.add(topic_key)
+                if output_path:
+                    _dump_json(output_path, _current_payload())
+                    print(f"[cluster-label] fallback output saved to {output_path}", flush=True)
+                print(f"[cluster-label] fallback {index}/{total_topics} {topic_key}: {exc}", flush=True)
+                continue
             failures.append(
                 {
                     "topic_key": topic_key,
@@ -629,9 +733,6 @@ def generate_cluster_proposals_from_embedding_clusters(
             if output_path:
                 _dump_json(output_path, _current_payload())
                 print(f"[cluster-label] partial output saved to {output_path}", flush=True)
-            if continue_on_error:
-                print(f"[cluster-label] failed {index}/{total_topics} {topic_key}: {exc}", flush=True)
-                continue
             raise
         normalized = _normalize_embedding_cluster_labels(raw, topic_item)
         cjk_offenders = _find_cjk_proposal_fields(raw)

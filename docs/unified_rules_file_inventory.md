@@ -114,22 +114,17 @@ results/unified_rules_3000/
 ## 当前状态
 
 - 3000 semantic 输出已回传并迁移到 `results/unified_rules_3000/`。
-- `prepare-cluster` 已完成。
-- `catalogs/rules_unified_3000.json` 已是 cluster 前置候选 catalog。
-- 当前下一步是第 3 步 rule embedding 聚类，需要调用 embedding API，应先运行：
+- 3000 catalog 已重建：`catalogs/rules_unified_3000.json`。
+- 4 条 capped targeted runtime 已通过，说明查询链路可用、rule cap 生效。
+- 当前不继续运行 30/100 条 runtime eval，也不继续新增 cap 补丁脚本。
+- 当前主线改为整理正式产物、收敛中间文件、补全未聚类和失败聚类内容。
 
-```powershell
-D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py embedding-command --dataset 3000
-```
+当前需要优先收敛的结果文件：
 
-生成 `rule_embedding_clusters.json` 后，再运行强模型标签与 summary：
+- `results/unified_rules_3000/rules_unified_quality_report_problem4_capped.json`
+- `results/unified_rules_3000/top_down_runtime_eval_problem4_capped.json`
+- `results/unified_rules_3000/precluster_report.json`
+- `results/unified_rules_3000/rule_embedding_cluster_report.json`
+- `results/unified_rules_3000/cluster_proposals.json`
 
-```powershell
-D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py analyze-embedding --dataset 3000
-```
-
-确认聚类结果可用后运行：
-
-```powershell
-D:\conda_envs\physicsverifier\python.exe scripts\unified_rules_pipeline.py cluster-command --dataset 3000
-```
+后续如果确实需要服务器/API 验证，应先确认范围。默认只做 `6-10` 条 targeted runtime，不直接跑 30/100 条。

@@ -53,7 +53,7 @@ def dataset_paths(dataset: str = DEFAULT_DATASET, *, root: Path | None = None) -
         "quality_report": result_dir / "rules_unified_quality_report.json",
         "runtime_eval": result_dir / "top_down_runtime_eval.json",
         "catalog": base / f"catalogs/rules_unified_{dataset}.json",
-        "generated_blueprints": base / f"catalogs/scenario_cluster_blueprints_generated_{dataset}.json",
+        "generated_blueprints": result_dir / "cluster_blueprints_generated.json",
     }
 
 

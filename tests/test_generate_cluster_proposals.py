@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 import uuid
 from pathlib import Path
@@ -13,6 +14,7 @@ from scripts.generate_cluster_proposals import (
     _collect_topic_candidates,
     _chat_json,
     _extract_json_object,
+    add_catalog_fallback_proposals,
     generate_cluster_proposals_from_embedding_clusters,
 )
 
@@ -426,6 +428,145 @@ class GenerateClusterProposalTests(unittest.TestCase):
 
         self.assertEqual(completions.calls, 1)
         self.assertTrue(output_path.exists())
+
+    def test_generate_from_embedding_clusters_uses_fallback_labels_on_error_when_continuing(self) -> None:
+        class _Completions:
+            def create(self, **kwargs):
+                raise RuntimeError("bad model json")
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+        result = generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters={
+                "topics": [
+                    {
+                        "domain": "Mechanics",
+                        "topic": "Center of Mass",
+                        "topic_key": "Mechanics::Center of Mass",
+                        "rule_count": 4,
+                        "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
+                        "residual_rule_ids": ["r3"],
+                    }
+                ]
+            },
+            rule_input={"rules": [{"rule_id": "r1", "summary": "s1"}, {"rule_id": "r2", "summary": "s2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+            continue_on_error=True,
+        )
+
+        self.assertEqual(result["metadata"]["failure_count"], 0)
+        self.assertEqual(result["metadata"]["fallback_label_count"], 1)
+        proposal = result["proposals"][0]
+        self.assertEqual(proposal["topic_key"], "mechanics::center of mass")
+        self.assertEqual(proposal["clusters"][0]["name"], "Center Of Mass Cluster 01")
+        self.assertEqual(proposal["clusters"][0]["summary"], "Embedding-derived cluster for Center Of Mass rules.")
+        self.assertEqual(proposal["clusters"][0]["candidate_rule_ids"], ["r1", "r2"])
+        self.assertEqual(proposal["residual_rule_ids"], ["r3"])
+
+    def test_generate_from_embedding_clusters_drops_stale_failures_when_resuming(self) -> None:
+        root = _case_dir()
+        output_path = root / "cluster_proposals.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {},
+                    "proposals": [
+                        {
+                            "domain": "Mechanics",
+                            "topic": "Kinematics",
+                            "topic_key": "mechanics::kinematics",
+                            "rule_count": 2,
+                            "clusters": [],
+                            "residual_rule_ids": [],
+                        }
+                    ],
+                    "failures": [
+                        {
+                            "topic_key": "mechanics::kinematics",
+                            "domain": "Mechanics",
+                            "topic": "Kinematics",
+                            "error": "old failure",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class _Completions:
+            def create(self, **kwargs):
+                raise AssertionError("completed topic should be skipped")
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
+        result = generate_cluster_proposals_from_embedding_clusters(
+            embedding_clusters={
+                "topics": [
+                    {
+                        "domain": "Mechanics",
+                        "topic": "Kinematics",
+                        "topic_key": "Mechanics::Kinematics",
+                        "rule_count": 2,
+                        "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
+                        "residual_rule_ids": [],
+                    }
+                ]
+            },
+            rule_input={"rules": [{"rule_id": "r1"}, {"rule_id": "r2"}]},
+            client=client,
+            model="test-model",
+            temperature=0.0,
+            max_topics=1,
+            min_rule_count=1,
+            max_rules_per_cluster=2,
+            output_path=output_path,
+            resume=True,
+            continue_on_error=True,
+        )
+
+        self.assertEqual(result["metadata"]["failure_count"], 0)
+        self.assertEqual(result["failures"], [])
+
+    def test_add_catalog_fallback_proposals_adds_missing_rule_topics(self) -> None:
+        payload = {
+            "metadata": {"topic_count": 1},
+            "proposals": [
+                {
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "topic_key": "mechanics::kinematics",
+                    "rule_count": 1,
+                    "clusters": [],
+                    "residual_rule_ids": ["r1"],
+                }
+            ],
+            "failures": [],
+        }
+        catalog = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [
+                        {"name": "Kinematics", "rules": [{"rule_id": "r1"}]},
+                        {"name": "Relative Motion", "rules": [{"rule_id": "r2"}, {"rule_id": "r3"}]},
+                    ],
+                }
+            ]
+        }
+
+        result = add_catalog_fallback_proposals(payload, catalog)
+
+        self.assertEqual(result["metadata"]["topic_count"], 2)
+        self.assertEqual(result["metadata"]["target_topic_count"], 2)
+        self.assertEqual(result["metadata"]["failure_count"], 0)
+        self.assertEqual(result["metadata"]["catalog_fallback_topic_count"], 1)
+        fallback = result["proposals"][1]
+        self.assertEqual(fallback["topic_key"], "mechanics::relative motion")
+        self.assertEqual(fallback["label_source"], "catalog_fallback")
+        self.assertEqual(fallback["residual_rule_ids"], ["r2", "r3"])
 
 
 if __name__ == "__main__":
