@@ -216,4 +216,4 @@ results/
 logs/
 
 # docs
-docs/
+docs/*

@@ -35,6 +35,72 @@ def _safe_id(value: Any) -> str:
     return str(value) if value is not None else "unknown"
 
 
+def _empty_auxiliary() -> Dict[str, Any]:
+    return {
+        "node_summary": "",
+        "scene_cues": [],
+        "boundary_cues": [],
+        "explore_cues": [],
+        "evidence_sample_ids": [],
+    }
+
+
+def _clean_text_list(value: Any, limit: int) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    out: List[str] = []
+    for item in value:
+        text = _normalize_text(item)
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _normalize_auxiliary(rule: Dict[str, Any]) -> Dict[str, Any]:
+    raw = rule.get("auxiliary") if isinstance(rule.get("auxiliary"), dict) else {}
+    return {
+        "node_summary": _normalize_text(raw.get("node_summary", ""))[:160],
+        "scene_cues": _clean_text_list(raw.get("scene_cues"), 4),
+        "boundary_cues": _clean_text_list(raw.get("boundary_cues"), 4),
+        "explore_cues": _clean_text_list(raw.get("explore_cues"), 3),
+        "evidence_sample_ids": [],
+    }
+
+
+def _has_auxiliary_content(auxiliary: Dict[str, Any]) -> bool:
+    return bool(
+        _normalize_text(auxiliary.get("node_summary", ""))
+        or auxiliary.get("scene_cues")
+        or auxiliary.get("boundary_cues")
+        or auxiliary.get("explore_cues")
+    )
+
+
+def _extend_unique(target: List[str], values: List[str], limit: int) -> None:
+    for value in values:
+        text = _normalize_text(value)
+        if text and text not in target:
+            target.append(text)
+        if len(target) >= limit:
+            break
+
+
+def _merge_auxiliary(entry_aux: Dict[str, Any], rule_aux: Dict[str, Any], sample_id: str) -> None:
+    summary = _normalize_text(rule_aux.get("node_summary", ""))
+    current_summary = _normalize_text(entry_aux.get("node_summary", ""))
+    if summary and (not current_summary or len(summary) < len(current_summary)):
+        entry_aux["node_summary"] = summary
+
+    _extend_unique(entry_aux["scene_cues"], rule_aux.get("scene_cues") or [], 8)
+    _extend_unique(entry_aux["boundary_cues"], rule_aux.get("boundary_cues") or [], 8)
+    _extend_unique(entry_aux["explore_cues"], rule_aux.get("explore_cues") or [], 8)
+
+    if _has_auxiliary_content(rule_aux) and sample_id not in entry_aux["evidence_sample_ids"]:
+        entry_aux["evidence_sample_ids"].append(sample_id)
+
+
 def _load_topics(rules_catalog_path: Path) -> List[TopicItem]:
     data = json.loads(rules_catalog_path.read_text(encoding="utf-8"))
     out: List[TopicItem] = []
@@ -64,6 +130,28 @@ def _load_existing(path: Path) -> Dict[str, Any]:
     except Exception:
         pass
     return {"samples": []}
+
+
+def _is_failure_placeholder(item: Dict[str, Any]) -> bool:
+    audit = item.get("semantic_audit") if isinstance(item.get("semantic_audit"), dict) else {}
+    text_parts = [str(audit.get("summary") or "")]
+    for err in audit.get("key_errors") or []:
+        if isinstance(err, dict):
+            text_parts.append(str(err.get("message") or ""))
+            text_parts.append(str(err.get("evidence") or ""))
+    joined = "\n".join(text_parts)
+    return "LLM调用失败" in joined or "LLM call failed" in joined
+
+
+def _resume_done_map(existing_payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    samples = existing_payload.get("samples", []) if isinstance(existing_payload, dict) else []
+    return {
+        str(item.get("sample_id")): item
+        for item in samples
+        if isinstance(item, dict)
+        and str(item.get("sample_id") or "")
+        and not _is_failure_placeholder(item)
+    }
 
 
 def _build_client() -> Any:
@@ -122,6 +210,12 @@ def _semantic_prompt(sample: Dict[str, Any], topics_block: str, max_rules_per_sa
         "primitive": "equation_equivalence|inequality_consistency|formula_pattern|power_law|none",
         "canonical": "若可符号化填写公式/关系，否则空字符串",
         "required_symbols": ["符号1", "符号2"]
+      }},
+      "auxiliary": {{
+        "node_summary": "真实题目场景下的节点摘要，不超过60字",
+        "scene_cues": ["来自题干或解答的真实场景触发线索，最多4条"],
+        "boundary_cues": ["具体误匹配边界线索，最多4条"],
+        "explore_cues": ["当前规则相关但需要继续下钻区分的线索，最多3条"]
       }}
     }}
   ]
@@ -132,6 +226,7 @@ def _semantic_prompt(sample: Dict[str, Any], topics_block: str, max_rules_per_sa
 2) 如果样本基本正确，可返回空数组。
 3) symbolic_hint.primitive 仅在确有可执行关系时设置为非 none。
 4) topic_guess 必须来自候选列表的 domain/topic。
+5) auxiliary 必须贴近当前真实题目，不要写泛泛学科边界；无法从样本支持时填空字符串或空数组。
 """
     return system_prompt, user_prompt
 
@@ -183,6 +278,7 @@ def _build_distilled_library(samples_payload: List[Dict[str, Any]], min_count: i
                     "check_logic": str(rule.get("check_logic") or ""),
                     "error_type": str(rule.get("error_type") or "logic"),
                     "symbolic_hint": dict(rule.get("symbolic_hint") or {}),
+                    "auxiliary": _empty_auxiliary(),
                     "count": 0,
                     "sample_ids": [],
                 },
@@ -190,6 +286,7 @@ def _build_distilled_library(samples_payload: List[Dict[str, Any]], min_count: i
             entry["count"] += 1
             if sample_id not in entry["sample_ids"]:
                 entry["sample_ids"].append(sample_id)
+            _merge_auxiliary(entry["auxiliary"], _normalize_auxiliary(rule), sample_id)
 
     rules = [v for v in bucket.values() if int(v.get("count", 0)) >= min_count]
     rules.sort(key=lambda x: (-int(x.get("count", 0)), x.get("domain", ""), x.get("topic", ""), x.get("rule_id", "")))
@@ -244,7 +341,7 @@ def main() -> None:
     client = _build_client()
 
     existing_payload = _load_existing(output_path) if args.resume else {"samples": []}
-    done_map = {str(item.get("sample_id")): item for item in existing_payload.get("samples", []) if isinstance(item, dict)}
+    done_map = _resume_done_map(existing_payload)
 
     all_outputs: List[Dict[str, Any]] = []
     processed = 0

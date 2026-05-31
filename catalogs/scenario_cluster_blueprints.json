@@ -1,0 +1,2238 @@
+{
+  "mechanics::kinematics in 1d/2d/3d": [
+    {
+      "cluster_id": "timing_and_displacement_relations",
+      "name": "Timing and Displacement Relations",
+      "description": "Kinematics tasks centered on time intervals, displacement symmetry, average speed, and one-dimensional motion relations.",
+      "includes": [
+        "time-difference rules",
+        "average speed",
+        "displacement symmetry",
+        "unknown-equation bookkeeping"
+      ],
+      "excludes": [
+        "reflection-unfolding geometry",
+        "constraint-driven lateral acceleration modeling"
+      ],
+      "entry_cues": [
+        "time interval",
+        "average speed",
+        "displacement",
+        "height difference"
+      ],
+      "related_clusters": [
+        "trajectory_geometry_and_projection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "timing_displacement_checks",
+          "name": "Timing and Displacement Checks",
+          "summary": "Checks time-interval, displacement, and average-speed reasoning in elementary kinematics.",
+          "activation_condition": "Use when the core step is relating time, displacement, symmetry, or average speed.",
+          "match_any": [
+            "时间差",
+            "平均速度",
+            "高度差",
+            "方程数",
+            "位移"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "trajectory_geometry_and_projection",
+      "name": "Trajectory Geometry and Projection",
+      "description": "Kinematic reasoning that uses geometric unfolding, collision sequences, or projected velocity/angle relations.",
+      "includes": [
+        "mirror unfolding",
+        "collision sequence",
+        "velocity-angle projection",
+        "clock-free localization geometry"
+      ],
+      "excludes": [
+        "plain 1D timing identities"
+      ],
+      "entry_cues": [
+        "mirror",
+        "collision sequence",
+        "projection",
+        "angular-to-linear velocity"
+      ],
+      "related_clusters": [
+        "timing_and_displacement_relations"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "trajectory_projection_checks",
+          "name": "Trajectory and Projection Checks",
+          "summary": "Checks geometry-heavy kinematics where trajectories are unfolded, projected, or constrained by impact order.",
+          "activation_condition": "Use when trajectory geometry, reflections, or projection relations dominate the setup.",
+          "match_any": [
+            "镜像",
+            "碰撞",
+            "角速度",
+            "定位模型",
+            "反射"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "constraint_kinematics",
+      "name": "Constraint-Based Kinematics",
+      "description": "Kinematics under geometric or mechanical constraints, including lateral acceleration and coupled-motion consistency.",
+      "includes": [
+        "constraint systems",
+        "lateral acceleration",
+        "coupled motion constraints"
+      ],
+      "excludes": [
+        "free-particle timing relations"
+      ],
+      "entry_cues": [
+        "constraint",
+        "lateral acceleration",
+        "coupled motion"
+      ],
+      "related_clusters": [
+        "trajectory_geometry_and_projection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "constraint_motion_checks",
+          "name": "Constraint Motion Checks",
+          "summary": "Checks whether constrained-motion kinematics are built with the correct relation between geometry and acceleration.",
+          "activation_condition": "Use when the motion is constrained by geometry or linkage rather than free evolution.",
+          "match_any": [
+            "约束系统",
+            "侧向加速度"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::newton's laws and free body diagrams": [
+    {
+      "cluster_id": "drag_and_equation_setup",
+      "name": "Drag and Equation Setup",
+      "description": "Free-body modeling where drag form, parameter normalization, and equation setup are the main source of mistakes.",
+      "includes": [
+        "quadratic drag",
+        "equation standardization",
+        "parameter simplification"
+      ],
+      "excludes": [
+        "contact-state friction detail",
+        "pure energy bookkeeping"
+      ],
+      "entry_cues": [
+        "drag force",
+        "equation setup",
+        "near-Earth simplification"
+      ],
+      "related_clusters": [],
+      "rule_groups": [
+        {
+          "group_id": "drag_setup_checks",
+          "name": "Drag and Setup Checks",
+          "summary": "Checks whether Newtonian equations are set up with the correct force form and simplification regime.",
+          "activation_condition": "Use when the challenge is choosing or simplifying the force equation itself.",
+          "match_any": [
+            "阻力运动方程",
+            "参数简化",
+            "近地近似"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::friction and contact forces": [
+    {
+      "cluster_id": "friction_state_and_projection",
+      "name": "Friction State and Projection",
+      "description": "State judgment for rolling/slipping or friction projection along composite motion directions.",
+      "includes": [
+        "rolling state",
+        "slip condition",
+        "friction projection"
+      ],
+      "excludes": [
+        "global work-energy audit without state judgment"
+      ],
+      "entry_cues": [
+        "rolling",
+        "slipping",
+        "projection"
+      ],
+      "related_clusters": [
+        "contact_work_and_constraint_consistency"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "friction_state_checks",
+          "name": "Friction State Checks",
+          "summary": "Checks friction-state identification and force projection under contact constraints.",
+          "activation_condition": "Use when the key issue is whether friction is static/kinetic or how it projects onto motion.",
+          "match_any": [
+            "摩擦力投影",
+            "滚动摩擦",
+            "状态判定"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "contact_work_and_constraint_consistency",
+      "name": "Contact Work and Constraint Consistency",
+      "description": "Contact problems where work, differential energy consistency, or anisotropic friction modeling are central.",
+      "includes": [
+        "work consistency",
+        "constraint-energy differential checks",
+        "anisotropic friction work"
+      ],
+      "excludes": [
+        "simple static-vs-kinetic state judgment"
+      ],
+      "entry_cues": [
+        "work",
+        "constraint consistency",
+        "anisotropic friction"
+      ],
+      "related_clusters": [
+        "friction_state_and_projection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "contact_work_checks",
+          "name": "Contact Work Checks",
+          "summary": "Checks work and energy consistency in contact-force settings with nontrivial constraints or anisotropy.",
+          "activation_condition": "Use when friction enters mainly through work or differential energy consistency.",
+          "match_any": [
+            "微分一致性",
+            "各向异性摩擦力",
+            "做功",
+            "局部极大值"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::work-energy theorem and conservation of energy": [
+    {
+      "cluster_id": "energy_baseline_and_sign",
+      "name": "Energy Baseline and Sign Consistency",
+      "description": "Energy problems where baseline choice, sign convention, or redundant state variables determine correctness.",
+      "includes": [
+        "work sign",
+        "baseline choice",
+        "redundant state audit"
+      ],
+      "excludes": [
+        "piecewise field stitching with geometry-specific transitions",
+        "orbital decay or celestial-orbit bookkeeping already covered by a dedicated gravitation cluster"
+      ],
+      "entry_cues": [
+        "sign convention",
+        "baseline",
+        "redundant state"
+      ],
+      "related_clusters": [
+        "constrained_path_and_piecewise_transfer"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "energy_sign_checks",
+          "name": "Energy Baseline Checks",
+          "summary": "Checks sign conventions, baseline alignment, and redundant-energy-state assumptions.",
+          "activation_condition": "Use when the derivation can fail due to energy zero point, sign, or duplicated state information.",
+          "match_any": [
+            "符号一致性",
+            "能量基准",
+            "冗余",
+            "恒等式"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "constrained_path_and_piecewise_transfer",
+      "name": "Constrained Path and Piecewise Energy Transfer",
+      "description": "Energy transfer along constrained surfaces or piecewise force fields where kinetic stitching is required.",
+      "includes": [
+        "constrained surface motion",
+        "highest-point kinetic check",
+        "piecewise field matching"
+      ],
+      "excludes": [
+        "pure sign-only bookkeeping",
+        "orbital decay or central-force orbit evolution already covered by a dedicated gravitation cluster"
+      ],
+      "entry_cues": [
+        "constrained surface",
+        "piecewise field",
+        "highest point"
+      ],
+      "related_clusters": [
+        "energy_baseline_and_sign"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "path_transfer_checks",
+          "name": "Path and Transfer Checks",
+          "summary": "Checks kinetic-energy continuity and conservation along constrained paths or across segmented force regions.",
+          "activation_condition": "Use when the energy flow is tied to path geometry or piecewise force regions.",
+          "match_any": [
+            "曲面约束",
+            "最高点动能",
+            "分段力场",
+            "能量守恒审计",
+            "变摆长"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::oscillations and simple harmonic motion": [
+    {
+      "cluster_id": "shm_parameterization_and_phase",
+      "name": "SHM Parameterization and Phase",
+      "description": "Single-oscillator SHM where phase, equilibrium position, or equation form is the central issue.",
+      "includes": [
+        "phase determination",
+        "equilibrium shift",
+        "equation form of SHM"
+      ],
+      "excludes": [
+        "coupled-mode frequency structure",
+        "damping-stop criteria"
+      ],
+      "entry_cues": [
+        "phase",
+        "equilibrium position",
+        "SHM equation"
+      ],
+      "related_clusters": [
+        "damping_forcing_and_effective_modeling"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "shm_phase_checks",
+          "name": "SHM Phase Checks",
+          "summary": "Checks phase, equilibrium shift, and single-oscillator SHM parameter consistency.",
+          "activation_condition": "Use when the task is about writing or interpreting the SHM equation itself.",
+          "match_any": [
+            "初相",
+            "平衡位置",
+            "简谐运动方程"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "damping_forcing_and_effective_modeling",
+      "name": "Damping, Forcing, and Effective Modeling",
+      "description": "Oscillation problems involving damping, forced-vs-free distinction, or equivalent stiffness/mass reduction.",
+      "includes": [
+        "forced vs free vibration",
+        "damping stop criterion",
+        "effective stiffness",
+        "equivalent mass"
+      ],
+      "excludes": [
+        "normal-mode-only coupled-system structure"
+      ],
+      "entry_cues": [
+        "damping",
+        "forced vibration",
+        "effective stiffness",
+        "equivalent mass"
+      ],
+      "related_clusters": [
+        "mode_structure_and_boundary_conditions"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "damping_effective_checks",
+          "name": "Damping and Effective-Model Checks",
+          "summary": "Checks damping law, forcing category, and equivalent reduction in oscillatory systems.",
+          "activation_condition": "Use when the motion is not a clean undamped single oscillator and needs an effective model.",
+          "match_any": [
+            "受迫",
+            "自由振动",
+            "停止判据",
+            "阻尼",
+            "等效刚度",
+            "等效质量",
+            "滑轮系"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "mode_structure_and_boundary_conditions",
+      "name": "Mode Structure and Boundary Conditions",
+      "description": "Oscillatory systems where mode identity, fixed-end phase behavior, or coupled frequency structure matters most.",
+      "includes": [
+        "mode identification",
+        "fixed-end phase",
+        "coupled frequencies",
+        "standing-wave distinction"
+      ],
+      "excludes": [
+        "single-oscillator damping only"
+      ],
+      "entry_cues": [
+        "mode",
+        "boundary condition",
+        "fixed end"
+      ],
+      "related_clusters": [
+        "damping_forcing_and_effective_modeling"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "mode_boundary_checks",
+          "name": "Mode and Boundary Checks",
+          "summary": "Checks whether oscillatory mode structure and end-condition reasoning are correctly identified.",
+          "activation_condition": "Use when the problem turns on identifying a mode, standing pattern, or boundary-induced phase relation.",
+          "match_any": [
+            "本征模",
+            "固定端点",
+            "耦合振子",
+            "特征频率"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::normal modes and coupled oscillations": [
+    {
+      "cluster_id": "mode_frequency_and_period_structure",
+      "name": "Mode Frequency and Period Structure",
+      "description": "Coupled systems where the main check is mode period, frequency hierarchy, or collective oscillation structure.",
+      "includes": [
+        "mode period",
+        "frequency structure",
+        "collective oscillation behavior"
+      ],
+      "excludes": [
+        "derivation details of reduced coordinates only"
+      ],
+      "entry_cues": [
+        "mode frequency",
+        "period",
+        "coupled system"
+      ],
+      "related_clusters": [
+        "boundary_and_reduction_modeling"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "mode_period_checks",
+          "name": "Mode Period Checks",
+          "summary": "Checks period and frequency structure in coupled oscillation systems.",
+          "activation_condition": "Use when the key risk is misidentifying the collective period or mode frequency relation.",
+          "match_any": [
+            "周期检查",
+            "耦合振动系统",
+            "质心守恒"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "boundary_and_reduction_modeling",
+      "name": "Boundary and Reduction Modeling",
+      "description": "Coupled-mode setups that depend on boundary force treatment or reduced-coordinate derivation choices.",
+      "includes": [
+        "boundary force consistency",
+        "small-angle reduction",
+        "multi-body chain boundary treatment"
+      ],
+      "excludes": [
+        "simple period relation only"
+      ],
+      "entry_cues": [
+        "boundary force",
+        "small-angle reduction",
+        "multi-body chain"
+      ],
+      "related_clusters": [
+        "mode_frequency_and_period_structure"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "boundary_reduction_checks",
+          "name": "Boundary and Reduction Checks",
+          "summary": "Checks whether coupled-mode derivations use the correct boundary force model and reduced-coordinate approximation.",
+          "activation_condition": "Use when coupled-mode reasoning depends on derivation structure rather than direct frequency readout.",
+          "match_any": [
+            "小角化简",
+            "边界受力",
+            "链式多体"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::current, resistance, and ohm's law": [
+    {
+      "cluster_id": "distributed_resistance_geometry",
+      "name": "Distributed Resistance and Geometry",
+      "description": "Resistance obtained from continuous geometry, spacing, or boundary-conditioned current paths.",
+      "includes": [
+        "resistance integration",
+        "geometric spacing vs length",
+        "boundary convergence"
+      ],
+      "excludes": [
+        "microscopic carrier-parameter relations"
+      ],
+      "entry_cues": [
+        "resistance integral",
+        "spacing",
+        "boundary convergence"
+      ],
+      "related_clusters": [
+        "microscopic_transport_and_decay"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "resistance_geometry_checks",
+          "name": "Resistance Geometry Checks",
+          "summary": "Checks whether geometric resistance construction uses the correct path length, spacing, and boundary assumptions.",
+          "activation_condition": "Use when the main issue is building effective resistance from distributed geometry.",
+          "match_any": [
+            "电阻积分法",
+            "间距",
+            "元件长度",
+            "无穷远边界",
+            "电阻收敛性",
+            "电阻率",
+            "圆环",
+            "导线长度"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "microscopic_transport_and_decay",
+      "name": "Microscopic Transport and Decay Modeling",
+      "description": "Current problems governed by carrier-level parameters, microscopic transport, or nonstandard current decay models.",
+      "includes": [
+        "microscopic parameter relations",
+        "superconducting decay",
+        "transport parameter consistency"
+      ],
+      "excludes": [
+        "pure geometry-only resistance integration"
+      ],
+      "entry_cues": [
+        "microscopic parameter",
+        "superconducting current",
+        "decay model"
+      ],
+      "related_clusters": [
+        "distributed_resistance_geometry"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "transport_decay_checks",
+          "name": "Transport and Decay Checks",
+          "summary": "Checks microscopic transport relations and non-Ohmic decay-style current modeling.",
+          "activation_condition": "Use when current behavior depends on carrier parameters or decay assumptions rather than static geometry.",
+          "match_any": [
+            "微观参数",
+            "超导电流衰减",
+            "电流衰减",
+            "时间常数",
+            "载流子",
+            "L/R"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "ohmic_parameter_and_circuit_identification",
+      "name": "Ohmic Parameter and Circuit Identification",
+      "description": "Ohmic-law problems where the central task is identifying resistance, resistivity, or effective parameters from current-voltage relations in a DC-like setup.",
+      "includes": [
+        "Ohm's law parameter recovery",
+        "effective resistance identification",
+        "voltage-current relation"
+      ],
+      "excludes": [
+        "inductive coupling as the dominant mechanism",
+        "reactive AC impedance"
+      ],
+      "entry_cues": [
+        "Ohm law",
+        "resistance",
+        "resistivity",
+        "current-voltage relation"
+      ],
+      "related_clusters": [
+        "distributed_resistance_geometry"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "ohmic_identification_checks",
+          "name": "Ohmic Identification Checks",
+          "summary": "Checks whether static circuit parameters are inferred from the correct resistance and current-voltage relations.",
+          "activation_condition": "Use when the main task is identifying a resistance-like parameter in a DC or quasi-static setup.",
+          "match_any": [
+            "欧姆定律",
+            "电压电流",
+            "电阻",
+            "电阻率",
+            "回路电流",
+            "基尔霍夫"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::self-inductance and mutual inductance": [
+    {
+      "cluster_id": "coupled_inductors_and_open_circuit_states",
+      "name": "Coupled Inductors and Open-Circuit States",
+      "description": "Problems where inductive coupling, branch connection state, or open-circuit behavior determines the correct voltage/current relation.",
+      "includes": [
+        "mutual inductance",
+        "open-circuit induced voltage",
+        "branch state",
+        "coupled-coil equations"
+      ],
+      "excludes": [
+        "pure Faraday flux construction",
+        "resistance-only decay fitting"
+      ],
+      "entry_cues": [
+        "mutual inductance",
+        "open circuit",
+        "coupled coils",
+        "branch state"
+      ],
+      "related_clusters": [
+        "inductive_energy_and_transient_response"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "coupled_inductor_checks",
+          "name": "Coupled Inductor Checks",
+          "summary": "Checks whether coupled-coil equations respect connection state and whether open branches are treated correctly.",
+          "activation_condition": "Use when current or voltage depends on inductive coupling between multiple branches or coils.",
+          "match_any": [
+            "互感",
+            "自感",
+            "断路",
+            "开路",
+            "耦合",
+            "C1",
+            "C2",
+            "支路状态",
+            "稳态"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "inductive_energy_and_transient_response",
+      "name": "Inductive Energy and Transient Response",
+      "description": "Inductor-energy and transient problems where time evolution, L/R scales, or stored magnetic energy are the central audit path.",
+      "includes": [
+        "transient response",
+        "L/R decay",
+        "magnetic energy",
+        "inductive time scale"
+      ],
+      "excludes": [
+        "geometry-only flux integrals",
+        "static resistance identification"
+      ],
+      "entry_cues": [
+        "transient",
+        "L/R",
+        "stored energy",
+        "current decay"
+      ],
+      "related_clusters": [
+        "coupled_inductors_and_open_circuit_states"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "inductive_transient_checks",
+          "name": "Inductive Transient Checks",
+          "summary": "Checks whether inductive time response and stored-energy reasoning use the correct governing relation.",
+          "activation_condition": "Use when the derivation depends on inductive transients, current decay, or magnetic-energy accounting.",
+          "match_any": [
+            "暂态",
+            "时间常数",
+            "L/R",
+            "储能",
+            "电流衰减",
+            "di/dt"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::electric potential and potential energy": [
+    {
+      "cluster_id": "potential_superposition_and_reference",
+      "name": "Potential Superposition and Reference Choice",
+      "description": "Electrostatic-potential problems where zero reference, superposition, or path-independent potential differences are central.",
+      "includes": [
+        "potential superposition",
+        "zero-reference choice",
+        "potential difference",
+        "path independence"
+      ],
+      "excludes": [
+        "dipole far-field approximation as the main object"
+      ],
+      "entry_cues": [
+        "electric potential",
+        "zero reference",
+        "superposition",
+        "path independent"
+      ],
+      "related_clusters": [
+        "field_potential_relation_and_derivative"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "potential_reference_checks",
+          "name": "Potential Reference Checks",
+          "summary": "Checks whether electrostatic potential is built with the correct reference, superposition, and path-independence assumptions.",
+          "activation_condition": "Use when the derivation explicitly manipulates potential, potential difference, or electrostatic energy reference.",
+          "match_any": [
+            "电势",
+            "电势差",
+            "参考零点",
+            "叠加",
+            "势能",
+            "路径无关"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "field_potential_relation_and_derivative",
+      "name": "Field-Potential Relation and Derivative Checks",
+      "description": "Problems where the electric field must be obtained from potential structure, gradients, or local derivative relations.",
+      "includes": [
+        "E from V",
+        "potential gradient",
+        "derivative relation",
+        "local field from scalar potential"
+      ],
+      "excludes": [
+        "global zero-reference bookkeeping only"
+      ],
+      "entry_cues": [
+        "gradient",
+        "derivative",
+        "E from V",
+        "field-potential relation"
+      ],
+      "related_clusters": [
+        "potential_superposition_and_reference"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "field_potential_checks",
+          "name": "Field-Potential Checks",
+          "summary": "Checks whether field quantities are derived from the correct potential relation and derivative structure.",
+          "activation_condition": "Use when the solution differentiates or locally relates potential and field rather than only summing scalar potentials.",
+          "match_any": [
+            "梯度",
+            "导数",
+            "场强",
+            "E=-",
+            "电势函数"
+          ]
+        }
+      ]
+    }
+  ],
+  "modern physics::relativistic energy and momentum": [
+    {
+      "cluster_id": "invariant_and_threshold_kinematics",
+      "name": "Invariant and Threshold Kinematics",
+      "description": "Relativistic collision or decay problems where invariant mass, four-momentum, or threshold conditions provide the main audit path.",
+      "includes": [
+        "four-momentum invariant",
+        "threshold energy",
+        "rest-mass consistency",
+        "collision kinematics"
+      ],
+      "excludes": [
+        "pure visual SR observation geometry"
+      ],
+      "entry_cues": [
+        "invariant mass",
+        "threshold",
+        "four-momentum",
+        "rest mass"
+      ],
+      "related_clusters": [
+        "regime_and_limit_checks"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "invariant_threshold_checks",
+          "name": "Invariant and Threshold Checks",
+          "summary": "Checks relativistic collision and decay reasoning that depends on invariant mass or threshold conditions.",
+          "activation_condition": "Use when the derivation centers on collision thresholds, invariant quantities, or four-momentum structure.",
+          "match_any": [
+            "不变量",
+            "四动量",
+            "阈值",
+            "静质量",
+            "碰撞",
+            "衰变"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "regime_and_limit_checks",
+      "name": "Regime and Limit Checks",
+      "description": "Relativistic energy problems where the main audit path is distinguishing classical and relativistic regimes or using the correct limiting form.",
+      "includes": [
+        "low-speed limit",
+        "ultra-relativistic limit",
+        "gamma-factor consistency",
+        "classical comparison"
+      ],
+      "excludes": [
+        "threshold/invariant collision algebra as the main object"
+      ],
+      "entry_cues": [
+        "low-speed",
+        "ultra-relativistic",
+        "gamma",
+        "classical limit"
+      ],
+      "related_clusters": [
+        "invariant_and_threshold_kinematics"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "relativistic_regime_checks",
+          "name": "Relativistic Regime Checks",
+          "summary": "Checks whether the solution uses the correct energy-momentum expression in the intended relativistic regime.",
+          "activation_condition": "Use when the main risk is mixing classical and relativistic formulas or using the wrong limiting approximation.",
+          "match_any": [
+            "低速极限",
+            "经典近似",
+            "相对论动能",
+            "超相对论",
+            "gamma",
+            "beta"
+          ]
+        }
+      ]
+    }
+  ],
+  "thermodynamics & statistical physics::heat transfer (conduction, convection, radiation)": [
+    {
+      "cluster_id": "mode_identification_and_flux_balance",
+      "name": "Mode Identification and Flux Balance",
+      "description": "Heat-transfer problems where the main task is identifying the dominant transport mode and writing the correct steady flux balance.",
+      "includes": [
+        "conduction vs convection vs radiation",
+        "steady flux balance",
+        "thermal resistance chain"
+      ],
+      "excludes": [
+        "state-equation-only gas modeling"
+      ],
+      "entry_cues": [
+        "conduction",
+        "convection",
+        "radiation",
+        "heat flux",
+        "thermal resistance"
+      ],
+      "related_clusters": [
+        "heating_cooling_and_capacity_model"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "heat_flux_mode_checks",
+          "name": "Heat Flux Mode Checks",
+          "summary": "Checks whether the dominant heat-transfer mechanism and steady flux relations are chosen correctly.",
+          "activation_condition": "Use when the derivation centers on transport mode identification or steady thermal flux balance.",
+          "match_any": [
+            "导热",
+            "对流",
+            "辐射",
+            "热流",
+            "稳态",
+            "热阻"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "heating_cooling_and_capacity_model",
+      "name": "Heating, Cooling, and Capacity Models",
+      "description": "Thermal-evolution problems where heating/cooling, lumped heat capacity, or equilibrium approach is the main audit path.",
+      "includes": [
+        "heating or cooling curve",
+        "heat capacity model",
+        "equilibrium temperature",
+        "thermal time constant"
+      ],
+      "excludes": [
+        "steady transport balance only"
+      ],
+      "entry_cues": [
+        "heating",
+        "cooling",
+        "heat capacity",
+        "equilibrium temperature",
+        "time constant"
+      ],
+      "related_clusters": [
+        "mode_identification_and_flux_balance"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "thermal_capacity_checks",
+          "name": "Thermal Capacity Checks",
+          "summary": "Checks whether transient heating/cooling and capacity-based thermal models are built correctly.",
+          "activation_condition": "Use when the main risk is mis-modeling heat capacity, equilibrium, or heating/cooling time evolution.",
+          "match_any": [
+            "升温",
+            "降温",
+            "热容",
+            "平衡温度",
+            "冷却",
+            "时间常数"
+          ]
+        }
+      ]
+    }
+  ],
+  "thermodynamics & statistical physics::ideal gas law and real gas behavior": [
+    {
+      "cluster_id": "state_equation_and_process_relations",
+      "name": "State Equation and Process Relations",
+      "description": "Gas problems where the main task is identifying the thermodynamic process and using the correct state relation.",
+      "includes": [
+        "ideal gas law",
+        "process classification",
+        "state-variable substitution"
+      ],
+      "excludes": [
+        "heat-transfer transport mode as the main object"
+      ],
+      "entry_cues": [
+        "ideal gas",
+        "process",
+        "isothermal",
+        "adiabatic",
+        "pV relation"
+      ],
+      "related_clusters": [
+        "gas_parameter_and_model_boundary"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "gas_process_checks",
+          "name": "Gas Process Checks",
+          "summary": "Checks whether gas-process classification and state relations are applied with the correct variables and constraints.",
+          "activation_condition": "Use when the derivation depends on identifying or substituting the correct gas process relation.",
+          "match_any": [
+            "理想气体",
+            "状态方程",
+            "等温",
+            "等压",
+            "绝热",
+            "过程",
+            "pV"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "gas_parameter_and_model_boundary",
+      "name": "Gas Parameter and Model Boundary",
+      "description": "Problems where the key audit path is mapping gas parameters correctly and keeping ideal-gas assumptions separate from neighboring thermal models.",
+      "includes": [
+        "mole or particle-number mapping",
+        "degrees of freedom",
+        "real-gas caveat",
+        "model-boundary checks"
+      ],
+      "excludes": [
+        "transport-mode-only heat loss"
+      ],
+      "entry_cues": [
+        "moles",
+        "particle number",
+        "degrees of freedom",
+        "real gas"
+      ],
+      "related_clusters": [
+        "state_equation_and_process_relations"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "gas_parameter_checks",
+          "name": "Gas Parameter Checks",
+          "summary": "Checks parameter mapping and ideal-vs-neighbor-model boundaries in gas-state reasoning.",
+          "activation_condition": "Use when the main risk is misidentifying gas parameters, degrees of freedom, or idealization boundaries.",
+          "match_any": [
+            "摩尔数",
+            "分子数",
+            "自由度",
+            "真实气体",
+            "压强体积温度"
+          ]
+        }
+      ]
+    }
+  ],
+  "thermodynamics & statistical physics::first law of thermodynamics": [
+    {
+      "cluster_id": "energy_bookkeeping_and_sign_conventions",
+      "name": "Energy Bookkeeping and Sign Conventions",
+      "description": "Thermodynamic problems where the main risk is misassigning heat/work signs or miswriting the first-law bookkeeping relation.",
+      "includes": [
+        "delta U bookkeeping",
+        "heat/work sign convention",
+        "work done by/on system"
+      ],
+      "excludes": [
+        "transport-mode-driven heat transfer as the main object"
+      ],
+      "entry_cues": [
+        "first law",
+        "delta U",
+        "heat",
+        "work",
+        "sign convention"
+      ],
+      "related_clusters": [
+        "closed_system_boundary_and_process_scope"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "first_law_sign_checks",
+          "name": "First-Law Sign Checks",
+          "summary": "Checks whether the first law is written with the correct heat/work sign convention and energy bookkeeping.",
+          "activation_condition": "Use when the derivation directly manipulates heat, work, and internal energy changes.",
+          "match_any": [
+            "第一定律",
+            "ΔU",
+            "热量",
+            "功",
+            "符号约定",
+            "Q-W"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "closed_system_boundary_and_process_scope",
+      "name": "Closed-System Boundary and Process Scope",
+      "description": "Thermodynamic bookkeeping problems where the main audit path is whether the chosen system boundary and process scope justify applying the first law in that form.",
+      "includes": [
+        "closed system",
+        "control mass boundary",
+        "process scope",
+        "applicability of bookkeeping"
+      ],
+      "excludes": [
+        "simple sign-only algebra with no boundary issue"
+      ],
+      "entry_cues": [
+        "closed system",
+        "boundary",
+        "control mass",
+        "applicability"
+      ],
+      "related_clusters": [
+        "energy_bookkeeping_and_sign_conventions"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "first_law_boundary_checks",
+          "name": "First-Law Boundary Checks",
+          "summary": "Checks whether the system boundary and process scope justify applying a closed-system first-law relation.",
+          "activation_condition": "Use when the main risk is applying closed-system bookkeeping to an inappropriate process or boundary choice.",
+          "match_any": [
+            "封闭系统",
+            "边界",
+            "系统定义",
+            "适用条件",
+            "过程范围"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::circular motion and centripetal force": [
+    {
+      "cluster_id": "centripetal_force_and_speed_thresholds",
+      "name": "Centripetal Force and Speed Thresholds",
+      "description": "Circular-motion problems where normal-force balance, centripetal acceleration, or critical speed is the main audit path.",
+      "includes": [
+        "centripetal-force balance",
+        "normal-force condition",
+        "critical speed",
+        "highest or lowest point conditions"
+      ],
+      "excludes": [
+        "Lorentz-force curvature when magnetic dynamics are primary"
+      ],
+      "entry_cues": [
+        "centripetal force",
+        "critical speed",
+        "normal force",
+        "highest point",
+        "lowest point"
+      ],
+      "related_clusters": [
+        "banked_contact_and_constraint_geometry"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "centripetal_threshold_checks",
+          "name": "Centripetal Threshold Checks",
+          "summary": "Checks whether circular-motion balance and threshold-speed conditions are set up with the correct force decomposition.",
+          "activation_condition": "Use when the main risk is mis-writing the radial force balance or threshold speed condition.",
+          "match_any": [
+            "向心力",
+            "临界速度",
+            "法向力",
+            "最高点",
+            "最低点",
+            "圆周运动",
+            "圆锥摆"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "banked_contact_and_constraint_geometry",
+      "name": "Banked Contact and Constraint Geometry",
+      "description": "Circular-motion setups where friction, banking, or geometric constraint decides whether contact forces can provide the needed centripetal effect.",
+      "includes": [
+        "banked motion",
+        "friction-provided centripetal force",
+        "constraint geometry"
+      ],
+      "excludes": [
+        "pure free circular motion threshold only"
+      ],
+      "entry_cues": [
+        "banked",
+        "inclined",
+        "friction",
+        "constraint",
+        "contact geometry"
+      ],
+      "related_clusters": [
+        "centripetal_force_and_speed_thresholds"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "banked_constraint_checks",
+          "name": "Banked and Constraint Checks",
+          "summary": "Checks whether banked or frictional circular-motion geometry is converted into the correct force balance.",
+          "activation_condition": "Use when the centripetal effect comes from contact geometry or friction rather than a single explicit central force.",
+          "match_any": [
+            "斜面",
+            "摩擦",
+            "接触约束",
+            "banked",
+            "倾角",
+            "绳张力"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::rotational kinematics and dynamics": [
+    {
+      "cluster_id": "torque_balance_and_angular_acceleration",
+      "name": "Torque Balance and Angular Acceleration",
+      "description": "Rotational problems where torque balance and angular-acceleration equations are the primary route to the solution.",
+      "includes": [
+        "torque balance",
+        "angular acceleration",
+        "net torque",
+        "rotational equation of motion"
+      ],
+      "excludes": [
+        "conservation-only angular-momentum checks"
+      ],
+      "entry_cues": [
+        "torque",
+        "angular acceleration",
+        "net torque",
+        "rotational equation"
+      ],
+      "related_clusters": [
+        "rolling_and_rotation_constraints"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "torque_balance_checks",
+          "name": "Torque Balance Checks",
+          "summary": "Checks whether torque equations and angular-acceleration relations are written with the correct lever arm and sign.",
+          "activation_condition": "Use when the solution depends on continuous torque balance rather than a one-shot conservation argument.",
+          "match_any": [
+            "力矩",
+            "转动方程",
+            "角加速度",
+            "转动定律",
+            "tau",
+            "Ialpha"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "rolling_and_rotation_constraints",
+      "name": "Rolling and Rotation Constraints",
+      "description": "Rotational setups where rolling constraints, angular-linear coupling, or effective inertia relations are central.",
+      "includes": [
+        "rolling without slipping",
+        "angular-linear coupling",
+        "effective inertia"
+      ],
+      "excludes": [
+        "pure torque-balance derivation with no kinematic constraint"
+      ],
+      "entry_cues": [
+        "rolling",
+        "without slipping",
+        "omega",
+        "v=r omega",
+        "moment of inertia"
+      ],
+      "related_clusters": [
+        "torque_balance_and_angular_acceleration"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "rolling_constraint_checks",
+          "name": "Rolling Constraint Checks",
+          "summary": "Checks whether rotational and translational variables are coupled with the correct rolling or inertia relation.",
+          "activation_condition": "Use when the setup depends on no-slip constraints or mixed translational-rotational motion.",
+          "match_any": [
+            "纯滚动",
+            "无滑动",
+            "角速度",
+            "线速度",
+            "转动惯量",
+            "v=rω"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::angular momentum conservation": [
+    {
+      "cluster_id": "external_torque_validity",
+      "name": "External Torque Validity",
+      "description": "Angular-momentum conservation problems where the main check is whether external torque truly vanishes.",
+      "includes": [
+        "zero external torque",
+        "isolation condition",
+        "torque validity before conservation"
+      ],
+      "excludes": [
+        "post-collision transfer details once validity is already clear"
+      ],
+      "entry_cues": [
+        "external torque",
+        "isolated system",
+        "conservation validity"
+      ],
+      "related_clusters": [
+        "collision_and_reconfiguration_transfer"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "angular_validity_checks",
+          "name": "Angular Validity Checks",
+          "summary": "Checks whether angular momentum conservation is invoked only after verifying that external torque is absent.",
+          "activation_condition": "Use when the main risk is applying conservation in a system with hidden torque sources.",
+          "match_any": [
+            "角动量守恒",
+            "外力矩",
+            "孤立系统",
+            "守恒条件"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "collision_and_reconfiguration_transfer",
+      "name": "Collision and Reconfiguration Transfer",
+      "description": "Problems where angular momentum is redistributed through collisions, shape change, or internal reconfiguration.",
+      "includes": [
+        "rotational collision",
+        "moment of inertia change",
+        "reconfiguration transfer"
+      ],
+      "excludes": [
+        "pure validity checking with no transfer step"
+      ],
+      "entry_cues": [
+        "collision",
+        "moment of inertia change",
+        "spin-up",
+        "reconfiguration"
+      ],
+      "related_clusters": [
+        "external_torque_validity"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "angular_transfer_checks",
+          "name": "Angular Transfer Checks",
+          "summary": "Checks whether angular momentum is transferred and re-expressed correctly across collisions or changing inertia.",
+          "activation_condition": "Use when the solution hinges on matching angular momentum before and after a collision or reconfiguration.",
+          "match_any": [
+            "碰撞",
+            "转动惯量变化",
+            "角速度变化",
+            "spin",
+            "碰后"
+          ]
+        }
+      ]
+    }
+  ],
+  "modern physics::cosmology and general relativity (basics)": [
+    {
+      "cluster_id": "time_coordinate_and_observer_effects",
+      "name": "Time Coordinates and Observer Effects",
+      "description": "GR or cosmology problems where proper time, coordinate time, or observer-dependent timing is the key distinction.",
+      "includes": [
+        "proper vs coordinate time",
+        "GPS relativistic correction",
+        "observer timing convention"
+      ],
+      "excludes": [
+        "background expansion power-law only"
+      ],
+      "entry_cues": [
+        "proper time",
+        "coordinate time",
+        "GPS correction"
+      ],
+      "related_clusters": [
+        "horizon_and_cosmic_evolution"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "time_coordinate_checks",
+          "name": "Time Coordinate Checks",
+          "summary": "Checks whether relativistic timing uses the correct observer-dependent time variable and correction sign.",
+          "activation_condition": "Use when the main risk is mixing proper time, coordinate time, or applied relativistic time corrections.",
+          "match_any": [
+            "固有时间",
+            "坐标时间",
+            "GPS相对论修正",
+            "定位误差"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "horizon_and_cosmic_evolution",
+      "name": "Horizon and Cosmic Evolution",
+      "description": "Cosmology problems centered on horizons, FRW evolution, curvature terms, or dynamical-vs-boundary distinctions.",
+      "includes": [
+        "horizon behavior",
+        "Friedmann curvature terms",
+        "density evolution power law",
+        "dynamics vs boundary condition"
+      ],
+      "excludes": [
+        "observer-time conversion only"
+      ],
+      "entry_cues": [
+        "horizon",
+        "Friedmann",
+        "radiation density evolution",
+        "boundary condition"
+      ],
+      "related_clusters": [
+        "time_coordinate_and_observer_effects"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "cosmic_evolution_checks",
+          "name": "Cosmic Evolution Checks",
+          "summary": "Checks horizon, expansion, and curvature-term reasoning in basic cosmology and GR settings.",
+          "activation_condition": "Use when the statement is about large-scale evolution, horizon structure, or FRW-style dynamics.",
+          "match_any": [
+            "视界",
+            "弗里德曼",
+            "能量密度演化",
+            "边界条件",
+            "动力学演化"
+          ]
+        }
+      ]
+    }
+  ],
+  "mechanics::gravitation and kepler's laws": [
+    {
+      "cluster_id": "orbital_decay_and_orbit_accounting",
+      "name": "Orbital Decay and Orbit Accounting",
+      "description": "Satellite orbit change, orbital radius consistency, dissipative losses, and orbital-energy bookkeeping.",
+      "includes": [
+        "orbital decay",
+        "circular-orbit energy change",
+        "radius or speed perturbation",
+        "power-balance style reasoning"
+      ],
+      "excludes": [
+        "binary reduction",
+        "scattering-by-flyby geometry"
+      ],
+      "entry_cues": [
+        "satellite altitude change",
+        "orbital decay",
+        "re-boost",
+        "radius consistency",
+        "dissipation"
+      ],
+      "related_clusters": [
+        "escape_and_visibility_geometry"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "orbit_decay_core_checks",
+          "name": "Orbit Decay Core Checks",
+          "summary": "Checks whether orbital decay, radius, speed, and energy relations are modeled consistently.",
+          "activation_condition": "Use when the problem centers on changing orbital radius, decay, circular orbit energy, or dissipative altitude loss.",
+          "match_any": [
+            "轨道衰减",
+            "圆轨道",
+            "轨道半径",
+            "扰动",
+            "功率平衡",
+            "耗散"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "binary_and_multi_body_reduction",
+      "name": "Binary and Multi-Body Reduction",
+      "description": "Two-body or multi-body systems that require reduced-mass or equivalent-single-body reasoning.",
+      "includes": [
+        "binary systems",
+        "effective single-body reduction",
+        "multiple gravitational sources"
+      ],
+      "excludes": [
+        "single-satellite decay",
+        "single-body escape or visible-angle geometry"
+      ],
+      "entry_cues": [
+        "binary system",
+        "two stars",
+        "two gravitating bodies",
+        "equivalent single body"
+      ],
+      "related_clusters": [
+        "scattering_and_relativistic_deflection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "binary_reduction_checks",
+          "name": "Binary Reduction Checks",
+          "summary": "Checks whether binary or multi-body gravitational systems are reduced consistently before computation.",
+          "activation_condition": "Use when the statement explicitly mentions two astronomical bodies orbiting or interacting as a system.",
+          "match_any": [
+            "双星",
+            "等效单体",
+            "势能叠加",
+            "密度分布"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "scattering_and_relativistic_deflection",
+      "name": "Scattering and Deflection",
+      "description": "Flyby, deflection, and bending-angle reasoning, including distinctions between Newtonian and GR deflection treatments.",
+      "includes": [
+        "gravitational scattering",
+        "deflection angle",
+        "impact-parameter-like geometry",
+        "GR-vs-Newton bending distinction"
+      ],
+      "excludes": [
+        "ordinary orbital decay and radius bookkeeping"
+      ],
+      "entry_cues": [
+        "deflection angle",
+        "scattering",
+        "bending",
+        "relativistic deflection"
+      ],
+      "related_clusters": [
+        "binary_and_multi_body_reduction"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "deflection_checks",
+          "name": "Deflection Checks",
+          "summary": "Checks whether scattering or bending-angle approximations are applied in the correct physical regime.",
+          "activation_condition": "Use when the task is about a passing trajectory, bending angle, or relativistic correction to deflection.",
+          "match_any": [
+            "偏转",
+            "散射",
+            "广义相对论",
+            "引力半径"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "escape_and_visibility_geometry",
+      "name": "Escape and Visibility Geometry",
+      "description": "Escape conditions, elongation geometry, visibility time, and other orbital-geometry relations not tied to decay or scattering.",
+      "includes": [
+        "escape speed",
+        "maximum elongation",
+        "visibility time",
+        "apsis geometry",
+        "orbital power-law relations"
+      ],
+      "excludes": [
+        "binary reduction",
+        "decay-specific bookkeeping",
+        "deflection-angle problems"
+      ],
+      "entry_cues": [
+        "escape",
+        "maximum elongation",
+        "visibility time",
+        "aphelion or perihelion",
+        "orbital geometry"
+      ],
+      "related_clusters": [
+        "orbital_decay_and_orbit_accounting"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "geometry_and_escape_checks",
+          "name": "Geometry and Escape Checks",
+          "summary": "Checks escape thresholds and celestial-geometry constraints in non-decay gravitational problems.",
+          "activation_condition": "Use when the problem is about escape, visibility, elongation, or apsis geometry rather than dissipative orbit change.",
+          "match_any": [
+            "逃逸",
+            "距角",
+            "可见时间",
+            "远日点",
+            "几何",
+            "幂律"
+          ]
+        }
+      ]
+    }
+  ],
+  "modern physics::special relativity (time dilation, length contraction)": [
+    {
+      "cluster_id": "observation_and_projection",
+      "name": "Observation and Projection Geometry",
+      "description": "Relativistic observation tasks where camera timing, geometric projection, or visible shape is central.",
+      "includes": [
+        "pinhole camera observation",
+        "observed length",
+        "projection vs measured length",
+        "visual shape"
+      ],
+      "excludes": [
+        "frequency-shift-only problems",
+        "accelerated proper-time chains without observation geometry"
+      ],
+      "entry_cues": [
+        "pinhole camera",
+        "apparent length",
+        "projection",
+        "visible shape"
+      ],
+      "related_clusters": [
+        "accelerated_and_noninertial_frames"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "projection_checks",
+          "name": "Projection and Observation Checks",
+          "summary": "Checks whether relativistic observation is treated as projection, simultaneous measurement, or another distinct observable.",
+          "activation_condition": "Use when the problem asks what is seen, photographed, projected, or observed in a moving-frame geometry.",
+          "match_any": [
+            "针孔",
+            "观测长度",
+            "几何投影",
+            "视形状"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "accelerated_and_noninertial_frames",
+      "name": "Accelerated and Non-Inertial Frames",
+      "description": "Proper time, accelerated observers, rotating frames, and frame-coupling effects beyond simple inertial SR.",
+      "includes": [
+        "proper time",
+        "accelerated frame",
+        "rotating frame",
+        "Sagnac-like relativistic frame effects"
+      ],
+      "excludes": [
+        "pure inertial direct length-contraction questions"
+      ],
+      "entry_cues": [
+        "proper time",
+        "accelerated frame",
+        "rotating frame",
+        "Sagnac"
+      ],
+      "related_clusters": [
+        "observation_and_projection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "noninertial_checks",
+          "name": "Non-Inertial Relativity Checks",
+          "summary": "Checks proper-time relations and non-inertial frame corrections in accelerated or rotating relativistic settings.",
+          "activation_condition": "Use when the statement includes acceleration, rotation, proper time, or equivalent frame-shift reasoning.",
+          "match_any": [
+            "加速系",
+            "固有时间",
+            "旋转系",
+            "萨尼亚克",
+            "频率偏移"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "wave_frequency_and_reflection",
+      "name": "Wave, Frequency, and Reflection Effects",
+      "description": "Relativistic Doppler, mirror reflection, threshold, or wave-frequency relations inside SR settings.",
+      "includes": [
+        "Doppler shift",
+        "mirror reflection frequency",
+        "threshold-style wave effects",
+        "Cherenkov edge checks"
+      ],
+      "excludes": [
+        "direct observation geometry without frequency transfer"
+      ],
+      "entry_cues": [
+        "Doppler",
+        "frequency",
+        "mirror",
+        "Cherenkov"
+      ],
+      "related_clusters": [
+        "approximation_and_metric_checks"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "wave_effect_checks",
+          "name": "Wave and Reflection Checks",
+          "summary": "Checks whether relativistic wave relations are applied with the correct observable and frame conventions.",
+          "activation_condition": "Use when the task centers on frequency, wavelength, mirror reflection, or threshold wave behavior.",
+          "match_any": [
+            "多普勒",
+            "反射频率",
+            "切伦科夫",
+            "光压"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "approximation_and_metric_checks",
+      "name": "Approximation and Metric Consistency",
+      "description": "Metric relations, low-speed or high-order expansions, and consistency checks on relativistic approximations.",
+      "includes": [
+        "metric differential relation",
+        "low-speed expansion",
+        "high-order correction",
+        "ultra-relativistic limit"
+      ],
+      "excludes": [
+        "observation/photo geometry as the main object"
+      ],
+      "entry_cues": [
+        "metric",
+        "low-speed",
+        "higher-order",
+        "ultra-relativistic"
+      ],
+      "related_clusters": [
+        "wave_frequency_and_reflection"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "metric_and_limit_checks",
+          "name": "Metric and Limit Checks",
+          "summary": "Checks consistency of expansions, metric use, and limiting-form simplifications in SR derivations.",
+          "activation_condition": "Use when the derivation explicitly relies on expansion, metric form, or approximation regime.",
+          "match_any": [
+            "高阶效应",
+            "低速相对论",
+            "闵氏度规",
+            "极限近似",
+            "量纲一致性",
+            "双曲函数"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::electromagnetic induction and faraday's law": [
+    {
+      "cluster_id": "motional_emf_and_rotation",
+      "name": "Motional EMF and Rotating Conductors",
+      "description": "Moving or rotating conductors cutting field lines, including motional emf and phase conventions tied to rotation.",
+      "includes": [
+        "motional emf",
+        "cutting-field emf",
+        "rotating loop",
+        "phase in rotating induction"
+      ],
+      "excludes": [
+        "pure RL circuit transients without moving geometry"
+      ],
+      "entry_cues": [
+        "rotating loop",
+        "motional emf",
+        "cutting",
+        "angular motion"
+      ],
+      "related_clusters": [
+        "flux_integrals_and_field_geometry"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "motional_rotation_checks",
+          "name": "Motional and Rotation Checks",
+          "summary": "Checks whether moving-conductor induction and rotating geometry are modeled with the correct emf source and sign convention.",
+          "activation_condition": "Use when the source of emf comes from motion or rotation through a magnetic field.",
+          "match_any": [
+            "旋转",
+            "动生",
+            "切割",
+            "相位"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "flux_integrals_and_field_geometry",
+      "name": "Flux Integrals and Field Geometry",
+      "description": "Problems dominated by magnetic flux construction, integration variables, and field geometry or average-field approximations.",
+      "includes": [
+        "flux integration",
+        "field averaging",
+        "turn-density checks",
+        "geometry of linked field"
+      ],
+      "excludes": [
+        "explicit circuit transient focus without flux construction"
+      ],
+      "entry_cues": [
+        "magnetic flux",
+        "integral",
+        "turn density",
+        "average field"
+      ],
+      "related_clusters": [
+        "motional_emf_and_rotation"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "flux_geometry_checks",
+          "name": "Flux and Geometry Checks",
+          "summary": "Checks whether induced emf is built from the correct flux variable, field geometry, and averaging assumptions.",
+          "activation_condition": "Use when the main challenge is constructing or integrating magnetic flux through a geometry.",
+          "match_any": [
+            "磁通",
+            "积分",
+            "平均场",
+            "匝数密度"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "induction_circuit_dynamics",
+      "name": "Induction Circuit Dynamics",
+      "description": "Induction inside RL-like circuits, open/closed circuit states, induced-current interpretation, and current coupling logic.",
+      "includes": [
+        "RL induction",
+        "open-circuit state",
+        "current completeness",
+        "induced current vs collected charge"
+      ],
+      "excludes": [
+        "pure geometric flux-building problems"
+      ],
+      "entry_cues": [
+        "RL circuit",
+        "open circuit",
+        "induced current",
+        "circuit completeness"
+      ],
+      "related_clusters": [
+        "eddy_current_and_force_balance"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "circuit_dynamics_checks",
+          "name": "Circuit Dynamics Checks",
+          "summary": "Checks how induced emf, induced current, and circuit state are coupled in time-dependent induction problems.",
+          "activation_condition": "Use when the statement focuses on circuit state, induced current evolution, or open/closed branch behavior.",
+          "match_any": [
+            "回路",
+            "稳态电流",
+            "断路",
+            "电流完整性",
+            "解耦",
+            "电荷收集"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "eddy_current_and_force_balance",
+      "name": "Eddy Current and Force Balance",
+      "description": "Eddy-current, induced-force, or power-balance problems where induction modifies motion or mechanical balance.",
+      "includes": [
+        "eddy current",
+        "magnetic braking",
+        "force balance from induction",
+        "power balance with induction"
+      ],
+      "excludes": [
+        "simple flux-only derivations with no mechanical consequence"
+      ],
+      "entry_cues": [
+        "eddy current",
+        "magnetic braking",
+        "Ampere force",
+        "power balance"
+      ],
+      "related_clusters": [
+        "induction_circuit_dynamics"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "eddy_force_checks",
+          "name": "Eddy Current and Force Checks",
+          "summary": "Checks whether induction-driven forces, dissipation, and power balance are coupled consistently to motion.",
+          "activation_condition": "Use when induced currents feed back into force balance, braking, or power exchange.",
+          "match_any": [
+            "涡流",
+            "镜像",
+            "安培力",
+            "功率平衡",
+            "速度相关力"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::dc circuits and kirchhoff's laws": [
+    {
+      "cluster_id": "loop_node_equation_setup",
+      "name": "Loop and Node Equation Setup",
+      "description": "Static circuit problems where the core issue is writing correct loop and node equations for branch currents and voltages.",
+      "includes": [
+        "Kirchhoff loop law",
+        "Kirchhoff current law",
+        "branch-current solving"
+      ],
+      "excludes": [
+        "reactive time-response modeling"
+      ],
+      "entry_cues": [
+        "Kirchhoff",
+        "loop equation",
+        "node equation",
+        "branch current"
+      ],
+      "related_clusters": [
+        "equivalent_reduction_and_loading"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "kirchhoff_setup_checks",
+          "name": "Kirchhoff Setup Checks",
+          "summary": "Checks whether loop and node equations are written with the correct sign, branch orientation, and unknown set.",
+          "activation_condition": "Use when the solution depends on solving a static multi-branch circuit explicitly.",
+          "match_any": [
+            "基尔霍夫",
+            "回路方程",
+            "节点方程",
+            "支路电流",
+            "回路电流"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "equivalent_reduction_and_loading",
+      "name": "Equivalent Reduction and Loading",
+      "description": "Circuit problems where equivalent resistance, source loading, or effective branch replacement is the main audit path.",
+      "includes": [
+        "equivalent resistance",
+        "source loading",
+        "bridge reduction",
+        "Thevenin-like replacement"
+      ],
+      "excludes": [
+        "explicit transient or reactive dynamics"
+      ],
+      "entry_cues": [
+        "equivalent resistance",
+        "load",
+        "bridge",
+        "source replacement"
+      ],
+      "related_clusters": [
+        "loop_node_equation_setup"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "equivalent_reduction_checks",
+          "name": "Equivalent Reduction Checks",
+          "summary": "Checks whether a static circuit is reduced or replaced using the correct effective-network logic.",
+          "activation_condition": "Use when the derivation depends on reducing part of the network before solving currents or voltages.",
+          "match_any": [
+            "等效电阻",
+            "等效电路",
+            "负载",
+            "桥路",
+            "替代电源",
+            "Thevenin",
+            "Norton"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::biot-savart law and ampere's law": [
+    {
+      "cluster_id": "symmetry_loop_and_field_direction",
+      "name": "Symmetry Loop and Field Direction",
+      "description": "Magnetic-field construction problems where symmetry choice, Ampere loop, or right-hand-rule direction is the dominant step.",
+      "includes": [
+        "Ampere loop symmetry",
+        "right-hand rule",
+        "field direction",
+        "steady-current symmetry"
+      ],
+      "excludes": [
+        "direct Biot-Savart element integration without symmetry reduction"
+      ],
+      "entry_cues": [
+        "Ampere",
+        "symmetry",
+        "right hand rule",
+        "field direction"
+      ],
+      "related_clusters": [
+        "biot_savart_element_integration"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "ampere_symmetry_checks",
+          "name": "Ampere and Symmetry Checks",
+          "summary": "Checks whether symmetry and field-direction arguments justify the chosen Ampere loop or field expression.",
+          "activation_condition": "Use when the main reasoning step is selecting the correct symmetric path or field direction.",
+          "match_any": [
+            "安培环路",
+            "对称性",
+            "右手定则",
+            "磁场方向",
+            "steady current"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "biot_savart_element_integration",
+      "name": "Biot-Savart Element Integration",
+      "description": "Magnetic-field problems where the field must be built directly from current elements and geometry.",
+      "includes": [
+        "Biot-Savart integration",
+        "current element geometry",
+        "line/current-segment contribution"
+      ],
+      "excludes": [
+        "pure symmetry-only Ampere reasoning"
+      ],
+      "entry_cues": [
+        "Biot-Savart",
+        "current element",
+        "integration",
+        "segment contribution"
+      ],
+      "related_clusters": [
+        "symmetry_loop_and_field_direction"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "biot_savart_checks",
+          "name": "Biot-Savart Checks",
+          "summary": "Checks whether magnetic-field contributions from current elements are integrated with the correct geometry and direction.",
+          "activation_condition": "Use when the derivation explicitly sums or integrates magnetic-field contributions from current segments.",
+          "match_any": [
+            "毕奥-萨伐尔",
+            "电流元",
+            "积分",
+            "线元",
+            "磁场叠加"
+          ]
+        }
+      ]
+    }
+  ],
+  "electromagnetism::rl, rc, and rlc circuits": [
+    {
+      "cluster_id": "transient_response_and_time_constants",
+      "name": "Transient Response and Time Constants",
+      "description": "Reactive-circuit problems where charging, discharging, or time-constant reasoning determines the main audit path.",
+      "includes": [
+        "charging/discharging",
+        "time constant",
+        "initial/final state",
+        "transient waveform"
+      ],
+      "excludes": [
+        "pure resonance-frequency identification without transient behavior"
+      ],
+      "entry_cues": [
+        "time constant",
+        "charging",
+        "discharging",
+        "transient",
+        "initial state"
+      ],
+      "related_clusters": [
+        "resonance_impedance_and_frequency_response"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "transient_circuit_checks",
+          "name": "Transient Circuit Checks",
+          "summary": "Checks whether reactive-circuit transients use the correct governing time constant and state transition logic.",
+          "activation_condition": "Use when the solution depends on time evolution after switching or on exponential response behavior.",
+          "match_any": [
+            "时间常数",
+            "充电",
+            "放电",
+            "暂态",
+            "switch",
+            "初始状态",
+            "终态"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "resonance_impedance_and_frequency_response",
+      "name": "Resonance, Impedance, and Frequency Response",
+      "description": "AC or oscillatory circuit problems where impedance composition, resonance, or frequency selection is the main route.",
+      "includes": [
+        "impedance",
+        "resonance",
+        "frequency response",
+        "phasor-like magnitude relations"
+      ],
+      "excludes": [
+        "simple switch-on transient without frequency dependence"
+      ],
+      "entry_cues": [
+        "impedance",
+        "resonance",
+        "frequency",
+        "phasor",
+        "AC"
+      ],
+      "related_clusters": [
+        "transient_response_and_time_constants"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "resonance_impedance_checks",
+          "name": "Resonance and Impedance Checks",
+          "summary": "Checks whether reactive impedances and resonance conditions are combined with the correct frequency dependence.",
+          "activation_condition": "Use when the main solution path is through impedance composition, resonance, or frequency-domain reasoning.",
+          "match_any": [
+            "阻抗",
+            "谐振",
+            "频率响应",
+            "交流",
+            "相量",
+            "X_L",
+            "X_C"
+          ]
+        }
+      ]
+    }
+  ],
+  "optics::snell's law and critical angle": [
+    {
+      "cluster_id": "refractive_gradient_and_mirage",
+      "name": "Refractive Gradient and Mirage",
+      "description": "Continuously varying refractive index, mirage-like path bending, and critical-distance reasoning in stratified media.",
+      "includes": [
+        "gradient index",
+        "mirage",
+        "critical distance",
+        "stratified medium path"
+      ],
+      "excludes": [
+        "optical-mechanical analogy used only as a secondary derivation trick"
+      ],
+      "entry_cues": [
+        "gradient index",
+        "mirage",
+        "continuous medium",
+        "critical distance"
+      ],
+      "related_clusters": [
+        "optical_mechanical_analogy"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "gradient_mirage_checks",
+          "name": "Gradient and Mirage Checks",
+          "summary": "Checks whether refraction in a continuous or stratified medium is modeled with the right path variable and turning condition.",
+          "activation_condition": "Use when light or seismic paths bend continuously in a layered or gradient medium.",
+          "match_any": [
+            "折射率梯度",
+            "蜃景",
+            "临界距离"
+          ]
+        }
+      ]
+    },
+    {
+      "cluster_id": "optical_mechanical_analogy",
+      "name": "Optical-Mechanical Analogy",
+      "description": "Problems that recast path bending through effective velocity or potential analogies rather than direct Snell-law form.",
+      "includes": [
+        "optical-mechanical analogy",
+        "effective potential mapping",
+        "speed mapping"
+      ],
+      "excludes": [
+        "direct gradient-index turning-point derivations"
+      ],
+      "entry_cues": [
+        "optical-mechanical analogy",
+        "effective potential",
+        "speed mapping"
+      ],
+      "related_clusters": [
+        "refractive_gradient_and_mirage"
+      ],
+      "rule_groups": [
+        {
+          "group_id": "analogy_checks",
+          "name": "Analogy-Based Checks",
+          "summary": "Checks whether optical path reasoning is recast consistently through a mechanical analogy.",
+          "activation_condition": "Use when the solution maps light-path bending to velocity, potential, or variational analogies.",
+          "match_any": [
+            "光学-力学",
+            "势能定义",
+            "速度映射"
+          ]
+        }
+      ]
+    }
+  ],
+  "optics::laser principles and applications": [
+    {
+      "cluster_id": "ring_resonator_and_sagnac",
+      "name": "Ring Resonator and Sagnac Devices",
+      "description": "Ring-laser, fiber-loop, and Sagnac-type devices where path length, enclosed area, and opposite-direction propagation are central.",
+      "includes": [
+        "ring resonator",
+        "Sagnac device",
+        "clockwise/counterclockwise light paths"
+      ],
+      "excludes": [
+        "generic standing-wave interference with no cavity device"
+      ],
+      "entry_cues": [
+        "ring laser",
+        "Sagnac",
+        "opposite directions",
+        "enclosed area"
+      ],
+      "related_clusters": [
+        "mode_selection_and_etalon"
+      ],
+      "rule_groups": []
+    },
+    {
+      "cluster_id": "mode_selection_and_etalon",
+      "name": "Mode Selection and Etalon Constraints",
+      "description": "Laser cavity mode constraints, etalon filtering, and resonance-selection conditions.",
+      "includes": [
+        "etalon",
+        "mode suppression",
+        "integer-wavelength cavity condition"
+      ],
+      "excludes": [
+        "path-area-only Sagnac timing derivation"
+      ],
+      "entry_cues": [
+        "etalon",
+        "mode selection",
+        "resonance condition"
+      ],
+      "related_clusters": [
+        "ring_resonator_and_sagnac"
+      ],
+      "rule_groups": []
+    },
+    {
+      "cluster_id": "coherence_and_source_behavior",
+      "name": "Coherence and Source Behavior",
+      "description": "Coherent amplification, source stability, and laser-specific propagation properties beyond static cavity geometry.",
+      "includes": [
+        "coherent source",
+        "laser amplification",
+        "source behavior"
+      ],
+      "excludes": [
+        "passive interference only"
+      ],
+      "entry_cues": [
+        "coherent",
+        "laser source",
+        "amplification"
+      ],
+      "related_clusters": [
+        "mode_selection_and_etalon"
+      ],
+      "rule_groups": []
+    }
+  ]
+}
