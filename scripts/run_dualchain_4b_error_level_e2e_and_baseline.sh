@@ -25,7 +25,7 @@ fi
 
 CHECK_MODEL="${CHECK_MODEL:-qwen3-4b-instruct-2507}"
 STRONG_MODEL="${STRONG_MODEL:-qwen3-30b-a3b-instruct-2507}"
-UNIFIED_CATALOG="${UNIFIED_CATALOG:-catalogs/unified_rule_library_v2_llm_enhanced_20260504.json}"
+UNIFIED_CATALOG="${UNIFIED_CATALOG:-catalogs/unified_rule_library_v2_distilled300_20260503.json}"
 MANIFEST="${EXPERIENCE_CODE_MANIFEST:-results/experience_symbolic_program_manifest_v2_unified.json}"
 MODULE="${EXPERIENCE_CODE_MODULE:-symbolic.generated_experience_checks_v2_unified}"
 SYMBOLIC_TOPIC_CHECK_LIMIT="${SYMBOLIC_TOPIC_CHECK_LIMIT:-32}"

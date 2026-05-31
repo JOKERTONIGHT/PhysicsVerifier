@@ -37,6 +37,13 @@ def extract_json(text: str) -> dict:
     return {"diagnostics": []}
 
 
+def _openai_disable_thinking_kwargs() -> Dict[str, Any]:
+    flag = str(os.getenv("OPENAI_DISABLE_THINKING", "")).strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    return {}
+
+
 def normalize_baseline_diagnostics(parsed: Any) -> List[Dict[str, Any]]:
     """Semantic baseline outputs message + evidence.quote only (no rule labels) for fair evaluation."""
     root: Dict[str, Any] = parsed if isinstance(parsed, dict) else {}
@@ -190,6 +197,7 @@ Return ONLY the JSON object without any markdown formatting or extra text."""
                     temperature=0.1,
                     max_tokens=2048,
                     timeout=float(args.timeout),
+                    **_openai_disable_thinking_kwargs(),
                 )
                 content = resp.choices[0].message.content
                 parsed = extract_json(content)

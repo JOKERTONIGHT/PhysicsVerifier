@@ -121,6 +121,14 @@ _BUILTIN_RULES_MAP = {
 }
 
 
+def _openai_disable_thinking_kwargs() -> Dict[str, Any]:
+    """Qwen3 local vLLM: disable chain-of-thought template so JSON outputs parse."""
+    flag = str(os.getenv("OPENAI_DISABLE_THINKING", "")).strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    return {}
+
+
 def _load_env_file_fallback() -> None:
     """Load simple KEY=VALUE pairs from .env when python-dotenv is unavailable."""
     if load_dotenv:
@@ -336,6 +344,7 @@ class SemanticRuleChecker:
             "max_tokens": self.llm_max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+        payload.update(_openai_disable_thinking_kwargs())
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -385,6 +394,7 @@ class SemanticRuleChecker:
                     # Request JSON output from models that support it
                     response_format={"type": "json_object"},
                     timeout=self.llm_timeout_sec,
+                    **_openai_disable_thinking_kwargs(),
                 )
                 resp = response.choices[0].message.content
             else:

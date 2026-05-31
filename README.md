@@ -202,7 +202,7 @@ bash scripts/run_e2e_with_experience_symbolic.sh
 `scripts/generate_symbolic_checks.py` 翻译为 Python 函数，写入
 `symbolic/generated_experience_checks_v2_unified.py`，并在
 `results/experience_symbolic_program_manifest_v2_unified.json`
-中按 `rule_id → function_name` 注册（v2 版基于 `unified_rule_library_v2_llm_enhanced_20260504.json`
+中按 `rule_id → function_name` 注册（v2 版基于 `unified_rule_library_v2_distilled300_20260503.json`（默认主流程，无 LLM 元数据增强）；历史增强版见 `unified_rule_library_v2_llm_enhanced_20260504.json`
 的 514 条 `exp_*` 规则直接生成，覆盖率 482 / 514 ≈ 94%）。运行时 `ExperienceCodeEngine`
 （`symbolic/experience_code_engine.py`）按 `rule_id` 查找并执行对应函数。
 
