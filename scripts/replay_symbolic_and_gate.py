@@ -57,6 +57,15 @@ def main() -> None:
         required=True,
         help="Unified rules catalog used by the prior run.",
     )
+    parser.add_argument(
+        "--unified-retrieval-mode",
+        choices=["lexical", "semantic"],
+        default="lexical",
+        help=(
+            "Rule retrieval mode used during replay. Defaults to lexical so this offline "
+            "symbolic/gate replay does not call the semantic-model API."
+        ),
+    )
     parser.add_argument("--precision-mode", default="strict")
     parser.add_argument("--max-per-sample", type=int, default=None)
     parser.add_argument("--max-per-paragraph", type=int, default=None)
@@ -68,6 +77,7 @@ def main() -> None:
 
     verifier = PhysicsRuleVerifier(
         unified_rules_path=args.catalog,
+        unified_retrieval_mode=args.unified_retrieval_mode,
         enable_symbolic_check=False,
         precision_mode=args.precision_mode,
         max_diagnostics_per_sample=args.max_per_sample,

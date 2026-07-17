@@ -763,6 +763,11 @@ def main() -> None:
                     "quote": str(x.get("quote") or ""),
                     "paragraph_index": int(x.get("paragraph_index") or -1),
                     "rule_score": float(rule_match.get("score") or release_gate.get("rule_score") or 0.0),
+                    "score_kind": str(
+                        rule_match.get("score_kind")
+                        or release_gate.get("score_kind")
+                        or "lexical"
+                    ),
                     "min_score": float(rule_match.get("min_score") or 0.0),
                     "topic_rank": int(rule_match.get("topic_rank") or -1),
                     "topic_gap": float(rule_match.get("topic_gap") or 0.0),
@@ -803,6 +808,9 @@ def main() -> None:
                         "rule_score": float((x.get("rule_match") or {}).get("score") or 0.0)
                         if isinstance(x.get("rule_match"), dict)
                         else 0.0,
+                        "score_kind": str((x.get("rule_match") or {}).get("score_kind") or "lexical")
+                        if isinstance(x.get("rule_match"), dict)
+                        else "lexical",
                         "topic_rank": int((x.get("rule_match") or {}).get("topic_rank") or -1)
                         if isinstance(x.get("rule_match"), dict)
                         else -1,

@@ -31,7 +31,7 @@ import json
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -650,6 +650,7 @@ def enhance_catalog(
     rule_batch_size: int = 6,
     sleep_between_calls: float = 0.0,
     refresh_existing: bool = False,
+    rule_ids_filter: Optional[Set[str]] = None,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Add LLM-generated retrieval signals in-place and return the catalog.
@@ -682,6 +683,17 @@ def enhance_catalog(
             rules = list(iter_rule_leaves(topic_entry))
             if not rules:
                 continue
+            if rule_ids_filter:
+                topic_rule_ids = {
+                    norm_text(rule.get("rule_id") or rule.get("id") or "")
+                    for rule in rules
+                    if norm_text(rule.get("rule_id") or rule.get("id") or "")
+                }
+                if not topic_rule_ids.intersection(rule_ids_filter):
+                    for rule in rules:
+                        if not rule.get("preconditions") or not rule.get("violation_signatures"):
+                            _attach_precision_metadata(rule, rule)
+                    continue
 
             if verbose:
                 print(f"  [{domain_name}] {topic_name} ({len(rules)} rules)", flush=True)
@@ -714,6 +726,12 @@ def enhance_catalog(
                     rule for rule in (topic_entry.get("rules") or [])
                     if refresh_existing or not isinstance(rule.get("llm_hints"), dict)
                 ]
+                if rule_ids_filter:
+                    rule_list = [
+                        rule
+                        for rule in rule_list
+                        if norm_text(rule.get("rule_id") or rule.get("id") or "") in rule_ids_filter
+                    ]
                 skipped_rule_hints += max(0, len(topic_entry.get("rules") or []) - len(rule_list))
                 batch_size = max(1, int(rule_batch_size))
                 for batch_start in range(0, len(rule_list), batch_size):
