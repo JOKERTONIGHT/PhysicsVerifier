@@ -15,7 +15,6 @@ from scripts.analyze_semantic_experience_run import analyze_run
 from scripts.analyze_rule_embedding_clusters import analyze_embedding_clusters
 from scripts.check_server_run_inputs import check_inputs
 from scripts.evaluate_unified_rules_quality import evaluate_catalog_quality
-from scripts.evaluate_top_down_runtime import evaluate_top_down_runtime
 from scripts.prepare_rules_for_cluster import prepare_rules_for_cluster
 from scripts.refine_cluster_blueprints import build_generated_blueprints_from_refined_proposals
 
@@ -159,34 +158,6 @@ def build_rebuild_catalog_command(*, dataset: str = DEFAULT_DATASET) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def build_runtime_eval_command(
-    *,
-    dataset: str = DEFAULT_DATASET,
-    samples: str = "data/evaluation_sample_debug_30.json",
-    limit: int = 30,
-    sample_ids: str = "",
-    output: str = "",
-) -> str:
-    paths = dataset_paths(dataset)
-    output_path = output or str(paths["runtime_eval"]).replace("\\", "/")
-    effective_limit = 0 if sample_ids and limit == 30 else limit
-    parts = [
-        "python",
-        "scripts/evaluate_top_down_runtime.py",
-        "--samples",
-        samples.replace("\\", "/"),
-        "--catalog",
-        str(paths["catalog"]).replace("\\", "/"),
-        "--output",
-        output_path.replace("\\", "/"),
-        "--limit",
-        str(effective_limit),
-    ]
-    if sample_ids:
-        parts.extend(["--sample-ids", sample_ids])
-    return " ".join(shlex.quote(part) for part in parts)
-
-
 def build_rule_embedding_cluster_command(
     *,
     dataset: str = DEFAULT_DATASET,
@@ -327,23 +298,6 @@ def quality_report_exit_code(report: Dict[str, Any], *, fail_on_blocking_gates: 
     return 1 if blocking_count else 0
 
 
-def run_runtime_eval(
-    *,
-    dataset: str = DEFAULT_DATASET,
-    samples_path: Path = Path("data/evaluation_sample_debug_30.json"),
-    limit: int = 30,
-    sample_ids: str = "",
-) -> Dict[str, Any]:
-    paths = dataset_paths(dataset)
-    return evaluate_top_down_runtime(
-        samples_path=samples_path,
-        catalog_path=paths["catalog"],
-        output_path=paths["runtime_eval"],
-        limit=limit,
-        sample_ids=[item.strip() for item in sample_ids.split(",") if item.strip()],
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Canonical unified_rules workflow entrypoint.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -407,13 +361,6 @@ def main() -> None:
     quality_parser.add_argument("--runtime-eval", default="", help="Override runtime eval path, e.g. targeted capped eval.")
     quality_parser.add_argument("--output", default="", help="Override quality report output path.")
     quality_parser.add_argument("--fail-on-blocking-gates", action="store_true", help="Exit non-zero when readiness gates fail.")
-
-    runtime_command_parser = subparsers.add_parser("runtime-eval-command", help="Print top-down runtime evaluation command; this step calls API.")
-    runtime_command_parser.add_argument("--dataset", default=DEFAULT_DATASET)
-    runtime_command_parser.add_argument("--samples", default="data/evaluation_sample_debug_30.json")
-    runtime_command_parser.add_argument("--limit", type=int, default=30)
-    runtime_command_parser.add_argument("--sample-ids", default="")
-    runtime_command_parser.add_argument("--output", default="", help="Override output path; useful for targeted smoke runs.")
 
     args = parser.parse_args()
 
@@ -507,17 +454,5 @@ def main() -> None:
             "runtime_eval": report["runtime_eval"],
         }))
         raise SystemExit(quality_report_exit_code(report, fail_on_blocking_gates=bool(args.fail_on_blocking_gates)))
-    elif args.command == "runtime-eval-command":
-        print(
-            build_runtime_eval_command(
-                dataset=args.dataset,
-                samples=args.samples,
-                limit=int(args.limit),
-                sample_ids=args.sample_ids,
-                output=args.output,
-            )
-        )
-
-
 if __name__ == "__main__":
     main()

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
-import uuid
 from pathlib import Path
 
 from scripts.unified_rules_pipeline import (
     build_blueprint_validation_command,
     build_cluster_proposal_command,
     build_rebuild_catalog_command,
-    build_runtime_eval_command,
     build_rule_embedding_cluster_command,
     build_server_command,
     dataset_paths,
@@ -20,14 +19,10 @@ from scripts.unified_rules_pipeline import (
     run_quality_report,
 )
 
-TMP_ROOT = Path("results/test_tmp")
-TMP_ROOT.mkdir(parents=True, exist_ok=True)
-
-
-def _case_dir() -> Path:
-    path = TMP_ROOT / f"physicsverifier_pipeline_test_{uuid.uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _case_dir(test_case: unittest.TestCase) -> Path:
+    directory = tempfile.TemporaryDirectory(prefix="physicsverifier_pipeline_test_")
+    test_case.addCleanup(directory.cleanup)
+    return Path(directory.name)
 
 
 class UnifiedRulesPipelineTests(unittest.TestCase):
@@ -89,36 +84,8 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("results/unified_rules_3000/semantic_experience_distilled_for_cluster.json", rebuild)
         self.assertIn("results/unified_rules_3000/cluster_blueprints_generated.json", rebuild)
 
-    def test_runtime_eval_command_uses_canonical_catalog_and_output(self) -> None:
-        command = build_runtime_eval_command(
-            dataset="3000",
-            samples="data/evaluation_sample_debug_30.json",
-            limit=0,
-            sample_ids="170364,157816",
-            output="results/unified_rules_3000/top_down_runtime_eval_targeted.json",
-        )
-
-        self.assertIn("scripts/evaluate_top_down_runtime.py", command)
-        self.assertIn("--samples data/evaluation_sample_debug_30.json", command)
-        self.assertIn("--catalog catalogs/rules_unified_3000.json", command)
-        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_targeted.json", command)
-        self.assertIn("--limit 0", command)
-        self.assertIn("--sample-ids 170364,157816", command)
-
-    def test_runtime_eval_command_defaults_to_no_limit_for_targeted_samples(self) -> None:
-        command = build_runtime_eval_command(
-            dataset="3000",
-            samples="data/evaluation_sample_debug_30.json",
-            sample_ids="170364,157816,142965,147128",
-            output="results/unified_rules_3000/top_down_runtime_eval_targeted.json",
-        )
-
-        self.assertIn("--output results/unified_rules_3000/top_down_runtime_eval_targeted.json", command)
-        self.assertIn("--limit 0", command)
-        self.assertIn("--sample-ids 170364,157816,142965,147128", command)
-
     def test_build_blueprints_subcommand_uses_canonical_proposal_output(self) -> None:
-        root = _case_dir()
+        root = _case_dir(self)
         paths = dataset_paths("mini", root=root)
         paths["result_dir"].mkdir(parents=True, exist_ok=True)
         paths["generated_blueprints"].parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +117,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertTrue(paths["generated_blueprints"].exists())
 
     def test_analyze_embedding_subcommand_uses_canonical_outputs(self) -> None:
-        root = _case_dir()
+        root = _case_dir(self)
         paths = dataset_paths("mini", root=root)
         paths["result_dir"].mkdir(parents=True, exist_ok=True)
         paths["rule_embedding_clusters"].write_text(
@@ -175,7 +142,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertTrue(paths["rule_embedding_cluster_report"].exists())
 
     def test_quality_report_subcommand_uses_canonical_outputs(self) -> None:
-        root = _case_dir()
+        root = _case_dir(self)
         paths = dataset_paths("mini", root=root)
         paths["result_dir"].mkdir(parents=True, exist_ok=True)
         paths["catalog"].parent.mkdir(parents=True, exist_ok=True)
@@ -230,7 +197,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertTrue(paths["quality_report"].exists())
 
     def test_quality_report_can_use_targeted_runtime_eval_override(self) -> None:
-        root = _case_dir()
+        root = _case_dir(self)
         paths = dataset_paths("mini", root=root)
         paths["result_dir"].mkdir(parents=True, exist_ok=True)
         paths["catalog"].parent.mkdir(parents=True, exist_ok=True)
@@ -295,7 +262,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertEqual(quality_report_exit_code(report, fail_on_blocking_gates=True), 0)
 
     def test_prepare_cluster_subcommand_builds_canonical_outputs(self) -> None:
-        root = _case_dir()
+        root = _case_dir(self)
         paths = dataset_paths("mini", root=root)
         knowledge_path = root / "knowledge.json"
         tagged_path = root / "tagged.json"

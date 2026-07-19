@@ -299,11 +299,29 @@ def is_generic_rule_signal(value: str) -> bool:
 def is_short_token_allowed(value: str) -> bool:
     return norm_text(value).upper() in SHORT_TOKEN_ALLOWLIST
 
+def _remove_keywords(values: Iterable[str], blocked: Iterable[str]) -> List[str]:
+    blocked_keys = {norm_text(item).casefold() for item in blocked if norm_text(item)}
+    return [
+        item
+        for item in ordered_unique(values)
+        if norm_text(item).casefold() not in blocked_keys
+    ]
+
 def remove_generic_rule_keywords(values: Iterable[str]) -> List[str]:
     return _remove_keywords(values, GENERIC_RULE_SIGNAL_TERMS)
 
 def _rule_text(*, title: str, trigger: str, check_logic: str) -> str:
     return " ".join([norm_text(title), norm_text(trigger), norm_text(check_logic)]).strip()
+
+def _count_hint_hits(text: str, hints: Iterable[str]) -> int:
+    normalized = norm_text(text).casefold()
+    if not normalized:
+        return 0
+    return sum(
+        1
+        for hint in hints
+        if (candidate := norm_text(hint).casefold()) and candidate in normalized
+    )
 
 def is_generic_math_rule(*, title: str, trigger: str, check_logic: str) -> bool:
     text = _rule_text(title=title, trigger=trigger, check_logic=check_logic)
