@@ -66,6 +66,7 @@ class PhysicsRuleVerifier:
         semantic_min_publish_score: Optional[float] = None,
         semantic_matcher: Optional[Any] = None,
         semantic_json_attempts: Optional[int] = None,
+        semantic_output_adapter: Optional[str] = None,
         # Legacy kwargs (accepted for backward compatibility, ignored).
         enable_agentic_postcheck: Optional[bool] = None,
         agentic_max_checks_per_sample: Optional[int] = None,
@@ -131,6 +132,11 @@ class PhysicsRuleVerifier:
         if not 0.0 <= self.semantic_min_publish_score <= 1.0:
             raise ValueError("semantic_min_publish_score must be between 0.0 and 1.0")
         self.semantic_matcher: Optional[Any] = semantic_matcher
+        self.semantic_output_adapter = (
+            str(semantic_output_adapter).strip().lower()
+            if semantic_output_adapter is not None
+            else None
+        )
         self.semantic_json_attempts: Optional[int] = None
         if semantic_json_attempts is not None:
             self.semantic_json_attempts = int(semantic_json_attempts)
@@ -188,6 +194,8 @@ class PhysicsRuleVerifier:
                 "model": str(self.llm_model or ""),
                 "max_selected_rules": self.unified_rule_top_n,
             }
+            if self.semantic_output_adapter:
+                matcher_kwargs["structured_output_adapter"] = self.semantic_output_adapter
             # CLI exposes total attempts, while the matcher counts retries after
             # the initial request. Signature inspection keeps this verifier
             # compatible with older matcher implementations during migration.
@@ -931,6 +939,7 @@ class PhysicsRuleVerifier:
         ]
         retrieved_domains = [
             {
+                "domain_id": str(item.get("domain_id") or ""),
                 "domain": str(item.get("domain") or "Unknown"),
                 "score": float(item.get("score") or 0.0),
                 "score_kind": "semantic_0_1",
@@ -950,6 +959,7 @@ class PhysicsRuleVerifier:
             topic_matches.append(
                 {
                     "domain": str(item.get("domain") or "Unknown"),
+                    "topic_id": str(item.get("topic_id") or topic_obj.get("id") or ""),
                     "name": str(item.get("topic") or "Unknown"),
                     "score": float(item.get("score") or 0.0),
                     "evidence": {
@@ -962,6 +972,7 @@ class PhysicsRuleVerifier:
         retrieved_topics = [
             {
                 "domain": item["domain"],
+                "topic_id": item["topic_id"],
                 "topic": item["name"],
                 "score": float(item["score"]),
                 "score_kind": "semantic_0_1",
@@ -973,12 +984,15 @@ class PhysicsRuleVerifier:
         retrieved_clusters = [
             {
                 "domain": str(item.get("domain") or "Unknown"),
+                "topic_id": str(item.get("topic_id") or ""),
                 "topic": str(item.get("topic") or "Unknown"),
                 "cluster_id": str(item.get("cluster_id") or ""),
                 "cluster": str(item.get("cluster") or ""),
                 "score": float(item.get("score") or 0.0),
                 "score_kind": "semantic_0_1",
                 "reason": str(item.get("reason") or ""),
+                "navigation_role": str(item.get("navigation_role") or "primary"),
+                "candidate_source": str(item.get("candidate_source") or ""),
             }
             for item in (semantic_result.get("selected_clusters") or [])
             if isinstance(item, dict)
@@ -1024,6 +1038,7 @@ class PhysicsRuleVerifier:
             selected_rule_records.append(
                 {
                     "domain": key[0],
+                    "topic_id": str(item.get("topic_id") or topic_obj.get("id") or ""),
                     "topic_name": key[1],
                     "topic": topic_obj,
                     "topic_rank": rank,
@@ -1052,6 +1067,7 @@ class PhysicsRuleVerifier:
             {
                 "rule_id": str(item["rule"].get("id") or ""),
                 "domain": str(item.get("domain") or "Unknown"),
+                "topic_id": str(item.get("topic_id") or ""),
                 "topic": str(item.get("topic_name") or "Unknown"),
                 "cluster_id": str(item.get("cluster_id") or ""),
                 "cluster": str(item.get("cluster") or ""),

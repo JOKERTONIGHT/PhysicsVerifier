@@ -327,6 +327,20 @@ def main() -> None:
         help="Total JSON-response attempts per semantic selection stage (initial request included; N >= 1).",
     )
     parser.add_argument(
+        "--semantic-output-adapter",
+        choices=[
+            "openai_json_schema",
+            "vllm_structured_outputs",
+            "vllm_guided_json",
+            "forced_tool_call",
+        ],
+        default=None,
+        help=(
+            "Structured-output transport for semantic retrieval. "
+            "Defaults to UNIFIED_SEMANTIC_OUTPUT_ADAPTER or openai_json_schema."
+        ),
+    )
+    parser.add_argument(
         "--topic-skip-prediction",
         action="store_true",
         help="Lexical diagnostics only: exclude prediction text from topic scoring.",
@@ -403,6 +417,7 @@ def main() -> None:
         unified_retrieval_mode=args.unified_retrieval_mode,
         semantic_min_publish_score=args.semantic_min_publish_score,
         semantic_json_attempts=args.semantic_json_attempts,
+        semantic_output_adapter=args.semantic_output_adapter,
     )
 
     if args.retrieval_only:

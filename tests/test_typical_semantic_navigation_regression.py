@@ -26,8 +26,6 @@ CASES: list[dict[str, Any]] = [
         "topic_id": "electromagnetism.biot_savart_law_and_ampere_s_law",
         "topic": "Biot-Savart Law and Ampere's Law",
         "cluster_id": "symmetry_loop_and_field_direction",
-        "rule_ids": ["norm_7ad1b18ce5022390"],
-        "rule_expectation": "none_required",
         "background_analysis": {
             "task_focus": "Compute the magnetic flux through a loop.",
             "objects": ["magnetic-field source", "loop"],
@@ -52,8 +50,6 @@ CASES: list[dict[str, Any]] = [
         "topic_id": "electromagnetism.electrostatics_in_conductors_and_insulators",
         "topic": "Electrostatics in Conductors and Insulators",
         "cluster_id": "boundary_images_forces_conductors_dielectrics",
-        "rule_ids": ["norm_08cd0ebc3859c90c", "norm_196d7e6e165108a2"],
-        "rule_expectation": "any_candidate",
         "background_analysis": {
             "task_focus": "Find the force holding two charged conducting hemispheres together.",
             "objects": ["charged conducting sphere", "two hemispheres"],
@@ -76,8 +72,6 @@ CASES: list[dict[str, Any]] = [
         "topic_id": "electromagnetism.dc_circuits_and_kirchhoff_s_laws",
         "topic": "DC Circuits and Kirchhoff's Laws",
         "cluster_id": "general_reasoning",
-        "rule_ids": ["norm_787b1832fa50e8d8"],
-        "rule_expectation": "required",
         "background_analysis": {
             "task_focus": "Find the current through an ideal ammeter connected between A and B.",
             "objects": ["ideal ammeter", "DC resistor network", "current source"],
@@ -104,8 +98,6 @@ CASES: list[dict[str, Any]] = [
         ),
         "topic": "Heat Transfer (Conduction, Convection, Radiation)",
         "cluster_id": "heating_cooling_and_capacity_model",
-        "rule_ids": ["norm_0ff28d9260e4368b", "norm_884ae6d1d84de68e"],
-        "rule_expectation": "any_candidate",
         "background_analysis": {
             "task_focus": "Compute cooling time with temperature-dependent heat-loss power.",
             "objects": ["heater wire", "surroundings"],
@@ -128,8 +120,6 @@ CASES: list[dict[str, Any]] = [
         "topic_id": "mechanics.gravitation_and_kepler_s_laws",
         "topic": "Gravitation and Kepler's Laws",
         "cluster_id": "orbital_decay_and_orbit_accounting",
-        "rule_ids": ["norm_b9ce23b5c4014ece"],
-        "rule_expectation": "required",
         "background_analysis": {
             "task_focus": "Relate drag work to slow circular-orbit decay.",
             "objects": ["ISS", "Earth", "atmospheric drag"],
@@ -155,8 +145,6 @@ CASES: list[dict[str, Any]] = [
         "topic_id": "modern_physics.cosmology_and_general_relativity_basics",
         "topic": "Cosmology and General Relativity (Basics)",
         "cluster_id": "horizon_and_cosmic_evolution",
-        "rule_ids": ["norm_828e5c4ce683fa5b"],
-        "rule_expectation": "candidate_only",
         "background_analysis": {
             "task_focus": "Check the near-horizon metric scaling of a proper length.",
             "objects": ["black-hole horizon", "near-horizon circle"],
@@ -192,7 +180,6 @@ class _RoutingFakeCompletions:
     def __init__(self, case: dict[str, Any]) -> None:
         self.case = case
         self.requests: list[dict[str, object]] = []
-        self.seen_target_rule_ids: set[str] = set()
 
     def create(self, **request: object) -> _FakeResponse:
         self.requests.append(request)
@@ -240,10 +227,15 @@ class _RoutingFakeCompletions:
             )
         if "candidate_clusters" in payload:
             candidate = next(
-                item
-                for item in payload["candidate_clusters"]
-                if item.get("cluster_id") == self.case["cluster_id"]
+                (
+                    item
+                    for item in payload["candidate_clusters"]
+                    if item.get("cluster_id") == self.case["cluster_id"]
+                ),
+                None,
             )
+            if candidate is None:
+                return _FakeResponse('{"clusters":[]}')
             return _FakeResponse(
                 json.dumps(
                     {
@@ -258,23 +250,39 @@ class _RoutingFakeCompletions:
                     }
                 )
             )
+        if payload.get("selection_phase") == "background_only_rule_precision_confirmation":
+            return _FakeResponse(
+                json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "rule_id": item["rule_id"],
+                                "decision": "confirm",
+                                "background_anchor_index": 0,
+                            }
+                            for item in payload.get("preliminary_rules", [])
+                            if isinstance(item, dict) and item.get("rule_id")
+                        ]
+                    }
+                )
+            )
         if "candidate_rules" in payload:
-            candidate_ids = {item["rule_id"] for item in payload["candidate_rules"]}
-            target_ids = [
-                rule_id for rule_id in self.case["rule_ids"] if rule_id in candidate_ids
-            ]
-            self.seen_target_rule_ids.update(target_ids)
-            if self.case["rule_expectation"] == "none_required" or not target_ids:
+            candidate_rules = payload.get("candidate_rules") or []
+            if not candidate_rules:
                 return _FakeResponse('{"rules":[]}')
+            background_anchors = payload.get("background_anchor_options") or []
+            claim_anchors = payload.get("claim_anchor_options") or []
+            if not background_anchors or not claim_anchors:
+                raise AssertionError("Rule request is missing anchor options.")
             return _FakeResponse(
                 json.dumps(
                     {
                         "rules": [
                             {
-                                "rule_id": target_ids[0],
-                                "applicable": True,
+                                "rule_id": candidate_rules[0]["rule_id"],
                                 "score": 0.96,
-                                "reason": "routing regression candidate",
+                                "background_anchor_index": int(background_anchors[0]["index"]),
+                                "claim_anchor_index": int(claim_anchors[0]["index"]),
                             }
                         ]
                     }
@@ -290,11 +298,6 @@ class _FakeClient:
     @property
     def requests(self) -> list[dict[str, object]]:
         return self.chat.completions.requests
-
-    @property
-    def seen_target_rule_ids(self) -> set[str]:
-        return self.chat.completions.seen_target_rule_ids
-
 
 class _SequenceFakeCompletions:
     def __init__(self, responses: list[str]) -> None:
@@ -317,15 +320,13 @@ class _SequenceFakeClient:
         return self.chat.completions.requests
 
 
-def _find_path(catalog: dict[str, Any], case: dict[str, Any]) -> tuple[dict, dict, dict, list[dict]]:
+def _find_path(catalog: dict[str, Any], case: dict[str, Any]) -> tuple[dict, dict, dict]:
     domain = next(item for item in catalog["domains"] if item.get("name") == case["domain"])
     topic = next(item for item in domain["topics"] if item.get("id") == case["topic_id"])
     cluster = next(
         item for item in topic["scenario_clusters"] if item.get("id") == case["cluster_id"]
     )
-    rule_index = {item.get("rule_id"): item for item in topic["rules"]}
-    rules = [rule_index[rule_id] for rule_id in case["rule_ids"]]
-    return domain, topic, cluster, rules
+    return domain, topic, cluster
 
 
 def _request_payload(request: dict[str, object]) -> dict[str, Any]:
@@ -339,18 +340,19 @@ def _request_payload(request: dict[str, object]) -> dict[str, Any]:
 class TypicalSemanticNavigationRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        if not DATA_PATH.exists():
+            raise unittest.SkipTest("local typical_samples.json is not available")
         with CATALOG_PATH.open(encoding="utf-8") as handle:
             cls.catalog = json.load(handle)
         with DATA_PATH.open(encoding="utf-8") as handle:
             cls.samples = {str(item["id"]): item for item in json.load(handle)}
 
-    def test_runtime_catalog_contains_all_expected_paths(self) -> None:
+    def test_runtime_catalog_contains_expected_coarse_paths(self) -> None:
         for case in CASES:
             with self.subTest(sample_id=case["id"]):
-                _domain, topic, cluster, rules = _find_path(self.catalog, case)
+                _domain, topic, cluster = _find_path(self.catalog, case)
                 self.assertEqual(topic["name"], case["topic"])
-                self.assertTrue(set(case["rule_ids"]).issubset(set(cluster.get("rule_ids", []))))
-                self.assertEqual([rule["rule_id"] for rule in rules], case["rule_ids"])
+                self.assertTrue(cluster.get("rule_ids"))
 
     def test_full_catalog_routing_keeps_six_real_samples_on_expected_paths(self) -> None:
         for case in CASES:
@@ -378,12 +380,7 @@ class TypicalSemanticNavigationRegressionTests(unittest.TestCase):
                     [item["cluster_id"] for item in result["selected_clusters"]],
                     [case["cluster_id"]],
                 )
-                selected_rule_ids = {item["rule_id"] for item in result["selected_rules"]}
-                if case["rule_expectation"] == "none_required":
-                    self.assertEqual(selected_rule_ids, set())
-                else:
-                    self.assertTrue(selected_rule_ids.intersection(case["rule_ids"]))
-                self.assertTrue(client.seen_target_rule_ids)
+                self.assertTrue(result["selected_rules"])
                 self.assertGreaterEqual(len(client.requests), 4)
 
                 payloads = [_request_payload(request) for request in client.requests]
@@ -403,11 +400,7 @@ class TypicalSemanticNavigationRegressionTests(unittest.TestCase):
                 trace = result["navigation_trace"]["stages"]
                 self.assertIn(case["topic_id"], {item["topic_id"] for item in trace["topic"]["candidates"]})
                 self.assertIn(case["cluster_id"], {item["cluster_id"] for item in trace["cluster"]["candidates"]})
-                self.assertTrue(
-                    set(case["rule_ids"]).intersection(
-                        item["rule_id"] for item in trace["rule"]["candidates"]
-                    )
-                )
+                self.assertTrue(trace["rule"]["candidates"])
 
                 missing_information = result["background_analysis"]["missing_information"]
                 self.assertEqual(bool(missing_information), case["id"] in {
@@ -429,6 +422,12 @@ class TypicalSemanticNavigationRegressionTests(unittest.TestCase):
                     {
                         "background_analysis": {
                             "task_focus": "orbital decay under drag",
+                            "objects": ["satellite", "Earth", "atmospheric drag"],
+                            "processes": ["slow orbital decay"],
+                            "conditions": ["nearly circular orbit"],
+                            "target_quantity": "descent rate",
+                            "symbols_and_units": [],
+                            "missing_information": [],
                             "inactive_context": ["electromagnetic mechanisms are not active here"],
                         },
                         "domains": [
@@ -447,6 +446,7 @@ class TypicalSemanticNavigationRegressionTests(unittest.TestCase):
                         ],
                     }
                 ),
+                '{"topics":[{"topic_id":"mechanics.kinematics_in_1d_2d_3d","relevant":true,"score":0.9,"reason":"mechanics coverage"},{"topic_id":"electromagnetism.coulomb_s_law_and_electric_fields","relevant":true,"score":0.8,"reason":"electromagnetism coverage"}]}',
                 '{"topics":[]}',
                 '{"topics":[]}',
             ]

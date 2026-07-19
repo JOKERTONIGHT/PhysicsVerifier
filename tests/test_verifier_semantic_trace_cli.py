@@ -345,6 +345,36 @@ class SemanticTraceAdapterTests(unittest.TestCase):
         self.assertEqual(len(captured_generated_samples), 1)
         self.assertNotIn("answer", captured_generated_samples[0])
 
+    def test_verifier_passes_output_adapter_to_constructed_matcher(self) -> None:
+        captured: dict[str, object] = {}
+
+        class CapturingMatcher:
+            available = True
+
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            catalog_path = root / "catalog.json"
+            catalog_path.write_text(json.dumps(_catalog()), encoding="utf-8")
+            with patch(
+                "core.physics_rule_verifier.UnifiedSemanticMatcher",
+                CapturingMatcher,
+            ):
+                verifier = PhysicsRuleVerifier(
+                    llm_model=None,
+                    unified_rules_path=str(catalog_path),
+                    unified_retrieval_mode="semantic",
+                    semantic_output_adapter="forced_tool_call",
+                    enable_symbolic_check=False,
+                    log_dir=str(root / "logs"),
+                    results_dir=str(root / "results"),
+                )
+
+        self.assertIsInstance(verifier.semantic_matcher, CapturingMatcher)
+        self.assertEqual(captured["structured_output_adapter"], "forced_tool_call")
+
 
 class SemanticCliControlTests(unittest.TestCase):
     def _run_cli(
@@ -450,6 +480,8 @@ class SemanticCliControlTests(unittest.TestCase):
             "semantic",
             "--semantic-json-attempts",
             "4",
+            "--semantic-output-adapter",
+            "forced_tool_call",
             "--progress-interval",
             "0",
         ]
@@ -505,6 +537,7 @@ class SemanticCliControlTests(unittest.TestCase):
         self.assertEqual(state["calls"], ["bad", "empty"])
         self.assertEqual(len(payload), 2)
         self.assertEqual(state["kwargs"]["semantic_json_attempts"], 4)
+        self.assertEqual(state["kwargs"]["semantic_output_adapter"], "forced_tool_call")
         self.assertIn("empty_without_rules=1", output)
         self.assertIn("semantic_tree_empty is not a successful rule hit", output)
 
