@@ -598,24 +598,19 @@ class UnifiedSemanticMatcher:
         items = response.get("rules")
         if not isinstance(items, list):
             raise RuntimeError("'rules' must be a JSON array.")
-        if len(items) > max(0, int(max_items)):
-            raise RuntimeError(f"'rules' must contain at most {max_items} selected items.")
         background_anchor_list = ordered_unique(
             [norm_text(item) for item in allowed_background_anchors if norm_text(item)]
         )
         claim_anchor_list = ordered_unique(
             [norm_text(item) for item in allowed_claim_anchors if norm_text(item)]
         )
-        seen_rule_ids: set[str] = set()
+        best_by_rule_id: Dict[str, tuple[float, Dict[str, Any]]] = {}
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 raise RuntimeError(f"'rules[{index}]' must be a JSON object.")
             resolved_rule_id = norm_text(resolve_id(item))
             if not resolved_rule_id:
                 raise RuntimeError(f"'rules[{index}]' references an unknown candidate.")
-            if resolved_rule_id in seen_rule_ids:
-                raise RuntimeError(f"'rules[{index}]' duplicates a selected rule id.")
-            seen_rule_ids.add(resolved_rule_id)
             score = cls._safe_score(item.get("score"))
             if score is None or score < 0.8:
                 raise RuntimeError(f"'rules[{index}].score' must be a number from 0.8 to 1.")
@@ -649,6 +644,17 @@ class UnifiedSemanticMatcher:
                 max_chars=160,
             ):
                 raise RuntimeError(f"'rules[{index}]' references a non-source anchor.")
+
+            current = best_by_rule_id.get(resolved_rule_id)
+            if current is None or score > current[0]:
+                canonical_item = dict(item)
+                canonical_item["rule_id"] = resolved_rule_id
+                best_by_rule_id[resolved_rule_id] = (score, canonical_item)
+
+        unique_limit = max(0, int(max_items))
+        if len(best_by_rule_id) > unique_limit:
+            raise RuntimeError(f"'rules' must contain at most {max_items} unique selected items.")
+        response["rules"] = [record[1] for record in best_by_rule_id.values()]
 
     @classmethod
     def _validate_rule_confirmation_contract(

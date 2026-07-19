@@ -518,6 +518,103 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
                     )
                 self.assertIn(field, str(raised.exception))
 
+    def test_rule_selection_deduplicates_known_rule_id_after_full_validation(self) -> None:
+        response = {
+            "rules": [
+                {
+                    "rule_id": "r_exact",
+                    "score": 0.9,
+                    "background_anchor_index": 0,
+                    "claim_anchor_index": 0,
+                },
+                {
+                    "rule_id": "r_exact",
+                    "score": 0.96,
+                    "background_anchor_index": 0,
+                    "claim_anchor_index": 0,
+                },
+                {
+                    "rule_id": "r_exact",
+                    "score": 0.96,
+                    "background_anchor_index": 1,
+                    "claim_anchor_index": 1,
+                },
+            ]
+        }
+
+        UnifiedSemanticMatcher._validate_rule_selection_contract(
+            response,
+            resolve_id=lambda item: (
+                "r_exact" if item.get("rule_id") == "r_exact" else ""
+            ),
+            background_source="First background fact. Second background fact.",
+            claim_source="First claim. Second claim.",
+            allowed_background_anchors=[
+                "First background fact.",
+                "Second background fact.",
+            ],
+            allowed_claim_anchors=["First claim.", "Second claim."],
+            max_items=1,
+        )
+
+        self.assertEqual(len(response["rules"]), 1)
+        self.assertEqual(response["rules"][0]["rule_id"], "r_exact")
+        self.assertEqual(response["rules"][0]["score"], 0.96)
+        self.assertEqual(response["rules"][0]["background_anchor_index"], 0)
+
+    def test_rule_selection_validates_duplicate_items_before_deduplication(self) -> None:
+        valid = {
+            "rule_id": "r_exact",
+            "score": 0.95,
+            "background_anchor_index": 0,
+            "claim_anchor_index": 0,
+        }
+        invalid_duplicate = dict(valid)
+        invalid_duplicate["claim_anchor_index"] = 1
+
+        with self.assertRaisesRegex(RuntimeError, "claim_anchor_index"):
+            UnifiedSemanticMatcher._validate_rule_selection_contract(
+                {"rules": [valid, invalid_duplicate]},
+                resolve_id=lambda item: (
+                    "r_exact" if item.get("rule_id") == "r_exact" else ""
+                ),
+                background_source="A valid background fact.",
+                claim_source="A valid claim.",
+                allowed_background_anchors=["A valid background fact."],
+                allowed_claim_anchors=["A valid claim."],
+                max_items=1,
+            )
+
+    def test_rule_selection_still_rejects_unknown_ids_and_unique_overflow(self) -> None:
+        def rule(rule_id: str) -> dict:
+            return {
+                "rule_id": rule_id,
+                "score": 0.95,
+                "background_anchor_index": 0,
+                "claim_anchor_index": 0,
+            }
+
+        kwargs = {
+            "resolve_id": lambda item: (
+                item.get("rule_id") if item.get("rule_id") in {"r_one", "r_two"} else ""
+            ),
+            "background_source": "A valid background fact.",
+            "claim_source": "A valid claim.",
+            "allowed_background_anchors": ["A valid background fact."],
+            "allowed_claim_anchors": ["A valid claim."],
+            "max_items": 1,
+        }
+        with self.assertRaisesRegex(RuntimeError, "unknown candidate"):
+            UnifiedSemanticMatcher._validate_rule_selection_contract(
+                {"rules": [rule("r_unknown")]},
+                **kwargs,
+            )
+        with self.assertRaisesRegex(RuntimeError, "unique selected items"):
+            UnifiedSemanticMatcher._validate_rule_selection_contract(
+                {"rules": [rule("r_one"), rule("r_two")]},
+                **kwargs,
+            )
+
     def test_global_rule_confirmation_prunes_cross_topic_false_positive(self) -> None:
         class ConfirmationCompletions:
             def __init__(self) -> None:
