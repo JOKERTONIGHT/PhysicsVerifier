@@ -15,6 +15,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from core.physics_rule_verifier import PhysicsRuleVerifier
 
 
+def _write_json_checkpoint(path: Path, payload: Any) -> None:
+    """Atomically preserve completed samples during long retrieval runs."""
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(path)
+
+
 def _strip_symbolic_fields_from_diagnostic(d: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(d)
     out.pop("symbolic_cross_checks", None)
@@ -38,9 +45,57 @@ def _build_main_result(sample_result: Dict[str, Any]) -> Dict[str, Any]:
         "retrieval_score_kind": sample_result.get("retrieval_score_kind"),
         "semantic_selection_error": sample_result.get("semantic_selection_error"),
         "semantic_failed_stage": sample_result.get("semantic_failed_stage"),
+        "terminal_stage": sample_result.get("terminal_stage"),
+        "empty_reason": sample_result.get("empty_reason"),
         "diagnostics": diagnostics,
         "score": sample_result.get("score"),
     }
+
+
+def _print_semantic_retrieval_summary(raw_results: List[Dict[str, Any]]) -> None:
+    semantic_results = [
+        item
+        for item in (raw_results or [])
+        if isinstance(item, dict)
+        and str(item.get("selection_strategy") or "").startswith("semantic_")
+    ]
+    if not semantic_results:
+        return
+
+    rule_hit_samples = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") == "semantic_tree_selection"
+            and bool(item.get("retrieved_rules"))
+        ]
+    )
+    empty_without_rules = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") == "semantic_tree_empty"
+        ]
+    )
+    errors = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") in {"semantic_error", "semantic_unavailable"}
+        ]
+    )
+    print(
+        "[PhysicsVerifier] semantic retrieval summary: "
+        f"processed={len(semantic_results)}, rule_hit_samples={rule_hit_samples}, "
+        f"empty_without_rules={empty_without_rules}, errors={errors}",
+        flush=True,
+    )
+    if empty_without_rules:
+        print(
+            "[PhysicsVerifier] semantic_tree_empty is not a successful rule hit; "
+            "inspect terminal_stage and empty_reason in the saved trace.",
+            flush=True,
+        )
 
 
 def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,6 +234,14 @@ def main() -> None:
             "Write the full retrieval trace to --output without invoking the Semantic Checker or symbolic checks."
         ),
     )
+    parser.add_argument(
+        "--continue-on-semantic-error",
+        action="store_true",
+        help=(
+            "Continue processing remaining samples after semantic API/JSON failures. "
+            "All partial traces are saved, but the command still exits non-zero when any failure occurred."
+        ),
+    )
     parser.add_argument("--catalog", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
     parser.add_argument(
@@ -257,6 +320,13 @@ def main() -> None:
         help="Unified v2 retrieval path. Semantic API tree is the production default; lexical is diagnostics only.",
     )
     parser.add_argument(
+        "--semantic-json-attempts",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Total JSON-response attempts per semantic selection stage (initial request included; N >= 1).",
+    )
+    parser.add_argument(
         "--topic-skip-prediction",
         action="store_true",
         help="Lexical diagnostics only: exclude prediction text from topic scoring.",
@@ -294,6 +364,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    if args.semantic_json_attempts is not None and args.semantic_json_attempts < 1:
+        parser.error("--semantic-json-attempts must be at least 1")
+
     if args.topic_skip_prediction:
         os.environ["PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION"] = "1"
         if args.unified_retrieval_mode == "semantic":
@@ -329,6 +402,7 @@ def main() -> None:
         unified_rule_top_n=args.unified_rule_top_n,
         unified_retrieval_mode=args.unified_retrieval_mode,
         semantic_min_publish_score=args.semantic_min_publish_score,
+        semantic_json_attempts=args.semantic_json_attempts,
     )
 
     if args.retrieval_only:
@@ -345,10 +419,12 @@ def main() -> None:
             or not bool(getattr(verifier.semantic_matcher, "available", False))
         )
     ):
-        raise SystemExit(
+        print(
             "Semantic unified retrieval is required but unavailable. Configure OPENAI_API_KEY, "
-            "the model, and optionally OPENAI_BASE_URL/OPENAI_API_BASE."
+            "the model, and optionally OPENAI_BASE_URL/OPENAI_API_BASE.",
+            file=sys.stderr,
         )
+        raise SystemExit(2)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,23 +436,31 @@ def main() -> None:
                 print(f"Retrieving semantic tree for sample {sample.get('id')}...", flush=True)
             result = verifier.retrieve_unified_semantic_tree(sample)
             raw_results.append(result)
+            _write_json_checkpoint(out_path, raw_results)
             if progress_interval > 0 and (index % progress_interval == 0 or index == n_samples):
                 print(
                     f"[PhysicsVerifier] retrieval progress {index}/{n_samples} samples | "
                     f"last_id={sample.get('id')!r}",
                     flush=True,
                 )
-            if str(result.get("selection_strategy") or "") in {"semantic_error", "semantic_unavailable"}:
+            if (
+                not args.continue_on_semantic_error
+                and str(result.get("selection_strategy") or "")
+                in {"semantic_error", "semantic_unavailable"}
+            ):
                 break
 
-        out_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"Done. Semantic retrieval traces saved to {out_path}")
+        _write_json_checkpoint(out_path, raw_results)
+        print(f"Semantic retrieval traces saved to {out_path}")
     else:
         raw_results = verifier.run_batch(
             samples,
             progress_interval=max(0, int(args.progress_interval)),
             verbose_per_sample=bool(args.verbose_per_sample),
-            fail_fast_on_semantic_error=args.unified_retrieval_mode == "semantic",
+            fail_fast_on_semantic_error=(
+                args.unified_retrieval_mode == "semantic"
+                and not args.continue_on_semantic_error
+            ),
         )
 
         # Main output: only final diagnostics (after symbolic suppression), without symbolic metadata.
@@ -411,6 +495,8 @@ def main() -> None:
         if args.full_output:
             print(f"Done. Full raw results saved to {args.full_output}")
 
+    _print_semantic_retrieval_summary(raw_results or [])
+
     semantic_failures = [
         item
         for item in (raw_results or [])
@@ -419,12 +505,24 @@ def main() -> None:
     if semantic_failures:
         failed = semantic_failures[0]
         print(
-            "Semantic retrieval failed; partial results were saved. "
+            "Semantic retrieval failed; available results and traces were saved. "
             f"sample={failed.get('id')!r}, stage={failed.get('semantic_failed_stage')!r}, "
             f"error={failed.get('semantic_selection_error')!r}",
             file=sys.stderr,
         )
         raise SystemExit(2)
+
+    if args.retrieval_only and raw_results and not any(
+        str(item.get("selection_strategy") or "") == "semantic_tree_selection"
+        and bool(item.get("retrieved_rules"))
+        for item in raw_results
+        if isinstance(item, dict)
+    ):
+        print(
+            "Semantic retrieval completed without any rule hit; traces were saved for diagnosis.",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":

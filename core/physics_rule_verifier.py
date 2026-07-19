@@ -5,6 +5,7 @@
 `symbolic/`（符号执行与目录）。"""
 import json
 import datetime
+import inspect
 import os
 import re
 import math
@@ -64,6 +65,7 @@ class PhysicsRuleVerifier:
         unified_retrieval_mode: Optional[str] = None,
         semantic_min_publish_score: Optional[float] = None,
         semantic_matcher: Optional[Any] = None,
+        semantic_json_attempts: Optional[int] = None,
         # Legacy kwargs (accepted for backward compatibility, ignored).
         enable_agentic_postcheck: Optional[bool] = None,
         agentic_max_checks_per_sample: Optional[int] = None,
@@ -129,6 +131,11 @@ class PhysicsRuleVerifier:
         if not 0.0 <= self.semantic_min_publish_score <= 1.0:
             raise ValueError("semantic_min_publish_score must be between 0.0 and 1.0")
         self.semantic_matcher: Optional[Any] = semantic_matcher
+        self.semantic_json_attempts: Optional[int] = None
+        if semantic_json_attempts is not None:
+            self.semantic_json_attempts = int(semantic_json_attempts)
+            if self.semantic_json_attempts < 1:
+                raise ValueError("semantic_json_attempts must be at least 1")
         self.log_dir = Path(log_dir)
         self.results_dir = Path(results_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -177,10 +184,29 @@ class PhysicsRuleVerifier:
             and self.unified_retrieval_mode == "semantic"
             and self.semantic_matcher is None
         ):
-            self.semantic_matcher = UnifiedSemanticMatcher(
-                model=str(self.llm_model or ""),
-                max_selected_rules=self.unified_rule_top_n,
-            )
+            matcher_kwargs: Dict[str, Any] = {
+                "model": str(self.llm_model or ""),
+                "max_selected_rules": self.unified_rule_top_n,
+            }
+            # CLI exposes total attempts, while the matcher counts retries after
+            # the initial request. Signature inspection keeps this verifier
+            # compatible with older matcher implementations during migration.
+            if self.semantic_json_attempts is not None:
+                try:
+                    matcher_parameters = inspect.signature(UnifiedSemanticMatcher).parameters
+                except (TypeError, ValueError):
+                    matcher_parameters = {}
+                if "json_retries" in matcher_parameters:
+                    matcher_kwargs["json_retries"] = self.semantic_json_attempts - 1
+            self.semantic_matcher = UnifiedSemanticMatcher(**matcher_kwargs)
+
+        if self.semantic_matcher is not None and self.semantic_json_attempts is not None:
+            if hasattr(self.semantic_matcher, "json_retries"):
+                retry_count = self.semantic_json_attempts - 1
+                matcher_retry_cap = getattr(self.semantic_matcher, "MAX_JSON_RETRIES", None)
+                if isinstance(matcher_retry_cap, int):
+                    retry_count = min(retry_count, max(0, matcher_retry_cap))
+                setattr(self.semantic_matcher, "json_retries", retry_count)
         
         self.enable_symbolic_check = bool(enable_symbolic_check)
         self.experience_code_manifest_path = str(experience_code_manifest_path)
@@ -766,6 +792,80 @@ class PhysicsRuleVerifier:
             "llm_hint_only": False,
         }
 
+    @staticmethod
+    def _partial_semantic_result_from_trace(trace: Any) -> Dict[str, Any]:
+        """Recover completed tree levels from a matcher's failure trace.
+
+        New matchers expose a navigation trace with one ``accepted`` list per
+        stage. During a rolling upgrade, some versions may instead attach a
+        partial tree result directly. This adapter accepts both shapes so an
+        error at Cluster/Rule does not erase successful Domain/Topic work.
+        """
+        if not isinstance(trace, dict):
+            return {}
+
+        result: Dict[str, Any] = {}
+        for key in ("partial_result", "tree_result", "result"):
+            candidate = trace.get(key)
+            if isinstance(candidate, dict):
+                result.update(candidate)
+                break
+
+        tree_keys = {
+            "domain_judgments",
+            "topic_judgments",
+            "cluster_judgments",
+            "rule_judgments",
+            "selected_domains",
+            "selected_topics",
+            "selected_clusters",
+            "selected_rules",
+        }
+        for key in tree_keys:
+            if key in trace and key not in result:
+                result[key] = trace.get(key)
+
+        stages = trace.get("stages") if isinstance(trace.get("stages"), dict) else {}
+
+        def _accepted(stage_name: str) -> List[Any]:
+            stage = stages.get(stage_name) if isinstance(stages.get(stage_name), dict) else {}
+            accepted = stage.get("accepted")
+            return list(accepted) if isinstance(accepted, list) else []
+
+        domain_items = _accepted("domain")
+        topic_items = _accepted("topic")
+        cluster_items = _accepted("cluster")
+        rule_items = _accepted("rule")
+
+        if "domain_judgments" not in result:
+            result["domain_judgments"] = [item for item in domain_items if isinstance(item, dict)]
+        if "selected_domains" not in result:
+            result["selected_domains"] = [
+                str(item.get("domain") or item.get("name") or "")
+                if isinstance(item, dict)
+                else str(item or "")
+                for item in domain_items
+                if (isinstance(item, dict) and (item.get("domain") or item.get("name")))
+                or (not isinstance(item, dict) and str(item or "").strip())
+            ]
+        result.setdefault("topic_judgments", [item for item in topic_items if isinstance(item, dict)])
+        result.setdefault("selected_topics", [item for item in topic_items if isinstance(item, dict)])
+        result.setdefault("cluster_judgments", [item for item in cluster_items if isinstance(item, dict)])
+        result.setdefault("selected_clusters", [item for item in cluster_items if isinstance(item, dict)])
+        result.setdefault("rule_judgments", [item for item in rule_items if isinstance(item, dict)])
+        result.setdefault("selected_rules", [item for item in rule_items if isinstance(item, dict)])
+
+        navigation_trace = trace.get("navigation_trace")
+        result.setdefault(
+            "navigation_trace",
+            navigation_trace if isinstance(navigation_trace, dict) else dict(trace),
+        )
+        result.setdefault("background_analysis", trace.get("background_analysis") or {})
+        result.setdefault("terminal_stage", str(trace.get("terminal_stage") or ""))
+        result.setdefault("empty_reason", str(trace.get("empty_reason") or ""))
+        result.setdefault("input_policy", str(trace.get("input_policy") or ""))
+        return result
+
     def _retrieve_unified_v2_semantic_tree(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Run the authoritative API tree and adapt its trace to the current verifier."""
         input_policy = UnifiedSemanticMatcher.INPUT_POLICY
@@ -775,6 +875,10 @@ class PhysicsRuleVerifier:
             "semantic_selection_error": "",
             "semantic_failed_stage": "",
             "semantic_input_policy": input_policy,
+            "background_analysis": {},
+            "navigation_trace": {},
+            "terminal_stage": "",
+            "empty_reason": "",
             "retrieved_domains": [],
             "topic_matches": [],
             "retrieved_topics": [],
@@ -786,21 +890,40 @@ class PhysicsRuleVerifier:
         if matcher is None or not bool(getattr(matcher, "available", False)):
             empty["semantic_selection_error"] = "Semantic matcher is not available."
             empty["semantic_failed_stage"] = "initialization"
+            empty["terminal_stage"] = "initialization"
+            empty["empty_reason"] = "semantic_matcher_unavailable"
             return empty
 
+        semantic_selection_error = ""
+        semantic_failed_stage = ""
+        matcher_sample = {
+            key: sample.get(key)
+            for key in ("id", "question", "context", "prediction")
+            if key in sample
+        }
         try:
-            semantic_result = matcher.select_tree_semantically(sample, self.catalog)
+            semantic_result = matcher.select_tree_semantically(matcher_sample, self.catalog)
         except Exception as exc:
-            empty["selection_strategy"] = "semantic_error"
-            empty["semantic_selection_error"] = f"{type(exc).__name__}: {exc}"
-            empty["semantic_failed_stage"] = str(getattr(exc, "stage", "tree") or "tree")
-            return empty
+            semantic_selection_error = f"{type(exc).__name__}: {exc}"
+            semantic_failed_stage = str(getattr(exc, "stage", "tree") or "tree")
+            failure_trace = getattr(exc, "trace", None)
+            if not isinstance(failure_trace, dict) or not failure_trace:
+                failure_trace = getattr(matcher, "last_trace", None)
+            partial_result = getattr(exc, "partial_result", None)
+            if not isinstance(partial_result, dict) or not partial_result:
+                partial_result = getattr(matcher, "last_partial_result", None)
+            semantic_result = self._partial_semantic_result_from_trace(failure_trace)
+            if isinstance(partial_result, dict):
+                # Use the full partial result for adaptation (it still contains
+                # topic_obj/rule_obj), while leaving navigation_trace compact.
+                for key, value in partial_result.items():
+                    if key != "navigation_trace":
+                        semantic_result[key] = value
 
         if not isinstance(semantic_result, dict):
-            empty["selection_strategy"] = "semantic_error"
-            empty["semantic_selection_error"] = "Semantic matcher returned a non-object result."
-            empty["semantic_failed_stage"] = "tree"
-            return empty
+            semantic_selection_error = "Semantic matcher returned a non-object result."
+            semantic_failed_stage = "tree"
+            semantic_result = {}
 
         input_policy = str(semantic_result.get("input_policy") or input_policy)
         domain_judgments = [
@@ -944,14 +1067,43 @@ class PhysicsRuleVerifier:
             }
             for item in selected_rule_records
         ]
+        if semantic_selection_error:
+            # Partial rules are valuable for debugging but have not passed the
+            # complete dedupe/ranking/cap pipeline. Keep them visible only and
+            # never execute them in the downstream verifier.
+            for item in retrieved_rules:
+                item["partial"] = True
+                item["executable"] = False
+            selected_rule_records = []
+        terminal_stage = str(semantic_result.get("terminal_stage") or semantic_failed_stage or "")
+        empty_reason = str(semantic_result.get("empty_reason") or "")
+        if semantic_selection_error and not empty_reason:
+            empty_reason = "semantic_retrieval_error"
+        elif not semantic_selection_error and not selected_rule_records and not empty_reason:
+            if not retrieved_domains:
+                empty_reason = "no_domain_selected"
+            elif not retrieved_topics:
+                empty_reason = "no_topic_selected"
+            else:
+                empty_reason = "no_rule_selected"
+
+        if semantic_selection_error:
+            selection_strategy = "semantic_error"
+        elif selected_rule_records:
+            selection_strategy = "semantic_tree_selection"
+        else:
+            selection_strategy = "semantic_tree_empty"
+
         return {
-            "selection_strategy": (
-                "semantic_tree_selection" if selected_rule_records else "semantic_tree_empty"
-            ),
+            "selection_strategy": selection_strategy,
             "retrieval_score_kind": "semantic_0_1",
-            "semantic_selection_error": "",
-            "semantic_failed_stage": "",
+            "semantic_selection_error": semantic_selection_error,
+            "semantic_failed_stage": semantic_failed_stage,
             "semantic_input_policy": input_policy,
+            "background_analysis": semantic_result.get("background_analysis") or {},
+            "navigation_trace": semantic_result.get("navigation_trace") or {},
+            "terminal_stage": terminal_stage,
+            "empty_reason": empty_reason,
             "retrieved_domains": retrieved_domains,
             "topic_matches": topic_matches,
             "retrieved_topics": retrieved_topics,
@@ -987,6 +1139,10 @@ class PhysicsRuleVerifier:
             "semantic_selection_error": str(trace.get("semantic_selection_error") or ""),
             "semantic_failed_stage": str(trace.get("semantic_failed_stage") or ""),
             "semantic_input_policy": str(trace.get("semantic_input_policy") or ""),
+            "background_analysis": trace.get("background_analysis") or {},
+            "navigation_trace": trace.get("navigation_trace") or {},
+            "terminal_stage": str(trace.get("terminal_stage") or ""),
+            "empty_reason": str(trace.get("empty_reason") or ""),
             "retrieved_domains": list(trace.get("retrieved_domains") or []),
             "retrieved_topics": retrieved_topics,
             "retrieved_clusters": list(trace.get("retrieved_clusters") or []),
@@ -1414,6 +1570,10 @@ JSON Output:
 
     def verify(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         question = sample.get("question", "")
+        verification_sample = dict(sample)
+        # The reference answer is evaluation-only data. Letting it enter either
+        # the LLM checker or generated checks can suppress genuine reasoning errors.
+        verification_sample.pop("answer", None)
 
         topic: Optional[Dict[str, Any]] = None
         diagnostics: List[Dict[str, Any]] = []
@@ -1436,6 +1596,10 @@ JSON Output:
         semantic_selection_error = ""
         semantic_failed_stage = ""
         semantic_input_policy = ""
+        background_analysis: Dict[str, Any] = {}
+        navigation_trace: Dict[str, Any] = {}
+        terminal_stage = ""
+        empty_reason = ""
 
         if self._unified_v2_mode:
             topic_matches: List[Dict[str, Any]] = []
@@ -1446,6 +1610,18 @@ JSON Output:
                 semantic_selection_error = str(semantic_trace.get("semantic_selection_error") or "")
                 semantic_failed_stage = str(semantic_trace.get("semantic_failed_stage") or "")
                 semantic_input_policy = str(semantic_trace.get("semantic_input_policy") or "")
+                background_analysis = (
+                    semantic_trace.get("background_analysis")
+                    if isinstance(semantic_trace.get("background_analysis"), dict)
+                    else {}
+                )
+                navigation_trace = (
+                    semantic_trace.get("navigation_trace")
+                    if isinstance(semantic_trace.get("navigation_trace"), dict)
+                    else {}
+                )
+                terminal_stage = str(semantic_trace.get("terminal_stage") or "")
+                empty_reason = str(semantic_trace.get("empty_reason") or "")
                 retrieved_domains_payload = list(semantic_trace.get("retrieved_domains") or [])
                 topic_matches = list(semantic_trace.get("topic_matches") or [])
                 retrieved_topics_payload = list(semantic_trace.get("retrieved_topics") or [])
@@ -1521,7 +1697,7 @@ JSON Output:
                 self.semantic_checker.rules_to_check = rule_ids
                 self.semantic_checker.rule_translations = current_translations
                 print(f"Running unified v2 rule check with {len(rule_ids)} rules...")
-                result = self.semantic_checker.analyze(sample)
+                result = self.semantic_checker.analyze(verification_sample)
                 diagnostics = result.get("diagnostics", [])
                 candidate_diagnostics = list(diagnostics)
                 diagnostics, low_conf_suppressed = self._filter_low_confidence_unified_diagnostics(
@@ -1561,7 +1737,7 @@ JSON Output:
 
                     # 3. Run Rule Check
                     print(f"Running rule check with {len(rule_ids)} rules...")
-                    result = self.semantic_checker.analyze(sample)
+                    result = self.semantic_checker.analyze(verification_sample)
                     diagnostics = result.get("diagnostics", [])
                     used_rules = rule_ids
                     verifier_used = "top_down_rule_based" if not self._unified_mode else "unified_rule_based"
@@ -1601,7 +1777,6 @@ JSON Output:
         sample_for_check: Dict[str, Any] = {
             "question": str(sample.get("question") or ""),
             "prediction": str(sample.get("prediction") or ""),
-            "answer": str(sample.get("answer") or ""),
             "context": str(sample.get("context") or ""),
             "id": sample.get("id"),
         }
@@ -1989,6 +2164,10 @@ JSON Output:
             "semantic_selection_error": semantic_selection_error,
             "semantic_failed_stage": semantic_failed_stage,
             "semantic_input_policy": semantic_input_policy,
+            "background_analysis": background_analysis,
+            "navigation_trace": navigation_trace,
+            "terminal_stage": terminal_stage,
+            "empty_reason": empty_reason,
             "retrieved_domains": retrieved_domains_payload,
             "retrieved_topics": retrieved_topics_payload,
             "retrieved_clusters": retrieved_clusters_payload,

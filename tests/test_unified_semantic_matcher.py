@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 
-from core.unified_semantic_matcher import UnifiedSemanticMatcher
+from core.unified_semantic_matcher import SemanticSelectionError, UnifiedSemanticMatcher
 
 
 class _FakeMessage:
@@ -12,13 +13,14 @@ class _FakeMessage:
 
 
 class _FakeChoice:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, finish_reason: str = "stop") -> None:
         self.message = _FakeMessage(content)
+        self.finish_reason = finish_reason
 
 
 class _FakeResponse:
-    def __init__(self, content: str) -> None:
-        self.choices = [_FakeChoice(content)]
+    def __init__(self, content: str, finish_reason: str = "stop") -> None:
+        self.choices = [_FakeChoice(content, finish_reason)]
 
 
 class _FakeCompletions:
@@ -135,6 +137,28 @@ def _catalog() -> dict:
     }
 
 
+def _background_analysis(task_focus: str = "Classify the stated physics task.") -> dict:
+    return {
+        "task_focus": task_focus,
+        "objects": [],
+        "processes": [],
+        "conditions": [],
+        "target_quantity": "",
+        "symbols_and_units": [],
+        "missing_information": [],
+        "inactive_context": [],
+    }
+
+
+def _domain_json(domains: list[dict], task_focus: str = "Classify the stated physics task.") -> str:
+    return json.dumps(
+        {
+            "background_analysis": _background_analysis(task_focus),
+            "domains": domains,
+        }
+    )
+
+
 class UnifiedSemanticMatcherTests(unittest.TestCase):
     def test_chat_json_accepts_fenced_json_object(self) -> None:
         matcher = UnifiedSemanticMatcher(
@@ -156,12 +180,469 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
 
         self.assertEqual(result["topics"][0]["topic"], "Gravitation and Kepler's Laws")
 
+    def test_chat_json_retries_invalid_content_and_records_bounded_attempts(self) -> None:
+        client = _FakeClient(
+            [
+                "0.00000000000021",
+                "not json",
+                '{"domains":[]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=client,
+            api_key="must-not-appear-in-trace",
+            json_retries=3,
+            max_response_tokens=999_999,
+        )
+
+        result = matcher._chat_json(system_prompt="system", user_prompt="user", list_key="domains")
+
+        self.assertEqual(result, {"domains": []})
+        self.assertEqual(len(client.requests), 3)
+        self.assertTrue(all(request["max_tokens"] == matcher.HARD_MAX_RESPONSE_TOKENS for request in client.requests))
+        attempts = matcher.last_trace["stages"]["chat_json"]["api_attempts"]
+        self.assertEqual([item["raw"] for item in attempts], ["0.00000000000021", "not json", '{"domains":[]}'])
+        self.assertEqual([item["finish_reason"] for item in attempts], ["stop", "stop", "stop"])
+        self.assertNotIn("must-not-appear-in-trace", json.dumps(matcher.last_trace, ensure_ascii=False))
+        retry_messages = client.requests[1]["messages"]
+        self.assertIn("top-level JSON object", retry_messages[-1]["content"])
+        self.assertIn("'domains' field is an array", retry_messages[-1]["content"])
+
+    def test_chat_json_stops_after_initial_request_plus_three_retries(self) -> None:
+        client = _FakeClient(["bad-1", "bad-2", "bad-3", "bad-4", '{"rules":[]}'])
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client, json_retries=99)
+
+        with self.assertRaisesRegex(RuntimeError, "after 4 attempts"):
+            matcher._chat_json(system_prompt="system", user_prompt="user", list_key="rules")
+
+        self.assertEqual(len(client.requests), 4)
+        self.assertEqual(len(matcher.last_trace["stages"]["chat_json"]["api_attempts"]), 4)
+
+    def test_chat_json_retries_missing_or_non_array_selection_key(self) -> None:
+        client = _FakeClient(
+            [
+                '{"wrong":[]}',
+                '{"domains":{}}',
+                '{"domains":[]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client, json_retries=2)
+
+        result = matcher._chat_json(system_prompt="system", user_prompt="user", list_key="domains")
+
+        self.assertEqual(result, {"domains": []})
+        self.assertEqual(len(client.requests), 3)
+        errors = [
+            item.get("error", "")
+            for item in matcher.last_trace["stages"]["chat_json"]["api_attempts"]
+        ]
+        self.assertIn("'domains' array", errors[0])
+        self.assertIn("'domains' array", errors[1])
+
+    def test_domain_retries_missing_or_wrong_background_analysis(self) -> None:
+        domain_item = {
+            "domain": "Mechanics",
+            "relevant": True,
+            "score": 0.9,
+            "reason": "orbital motion",
+        }
+        valid_analysis = _background_analysis("Classify a satellite-orbit problem.")
+        client = _FakeClient(
+            [
+                json.dumps({"domains": [domain_item]}),
+                json.dumps({"background_analysis": [], "domains": [domain_item]}),
+                json.dumps({"background_analysis": valid_analysis, "domains": [domain_item]}),
+                '{"topics":[]}',
+                '{"topics":[]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client, json_retries=3)
+
+        result = matcher.select_tree_semantically(
+            {"question": "A satellite moves in orbit.", "context": "", "prediction": "claim"},
+            _catalog(),
+        )
+
+        self.assertEqual(result["background_analysis"], valid_analysis)
+        attempts = result["navigation_trace"]["stages"]["domain"]["api_attempts"]
+        self.assertEqual(len(attempts), 3)
+        self.assertIn("background_analysis", attempts[0]["error"])
+        self.assertIn("background_analysis", attempts[1]["error"])
+        topic_payload = json.loads(client.requests[-2]["messages"][-1]["content"])
+        self.assertEqual(topic_payload["background_analysis"], valid_analysis)
+
+    def test_background_analysis_and_topic_id_flow_through_navigation(self) -> None:
+        catalog = copy.deepcopy(_catalog())
+        topic = catalog["domains"][1]["topics"][0]
+        topic["retrieval_hints"] = {
+            "scene_keywords": ["pinhole observation", "moving rod"],
+            "llm_discriminative_terms": ["observer-frame exposure"],
+        }
+        analysis = {
+            "task_focus": "audit the observed rod length",
+            "objects": ["rod", "pinhole camera"],
+            "processes": ["relativistic observation"],
+            "conditions": ["camera frame is specified"],
+            "target_quantity": "observed length",
+            "symbols_and_units": ["v: speed"],
+            "missing_information": [],
+            "inactive_context": ["unrelated apparatus history"],
+        }
+        client = _FakeClient(
+            [
+                json.dumps(
+                    {
+                        "background_analysis": analysis,
+                        "domains": [
+                            {
+                                "domain_id": "modern_physics",
+                                "relevant": True,
+                                "score": 0.95,
+                                "reason": "relativistic observation",
+                            }
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "topics": [
+                            {
+                                "topic_id": "modern_physics.special_relativity_time_dilation_length_contraction",
+                                "relevant": True,
+                                "score": 0.94,
+                                "reason": "moving rod observation",
+                            }
+                        ]
+                    }
+                ),
+                '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":0.9,"reason":"pinhole"}]}',
+                '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.93,"reason":"auditable"}]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+        sample = {
+            "question": "RAW_QUESTION: A pinhole camera observes a moving rod.",
+            "context": "RAW_CONTEXT: Work in the camera frame.",
+            "prediction": "UNTRUSTED_PREDICTION: exposure is simultaneous.",
+        }
+
+        result = matcher.select_tree_semantically(sample, catalog)
+
+        self.assertEqual(result["background_analysis"], analysis)
+        self.assertEqual(result["domain_judgments"][0]["domain_id"], "modern_physics")
+        self.assertEqual(
+            result["selected_topics"][0]["topic_id"],
+            "modern_physics.special_relativity_time_dilation_length_contraction",
+        )
+        payloads = [
+            json.loads(next(message for message in request["messages"] if message["role"] == "user")["content"])
+            for request in client.requests
+        ]
+        topic_candidate = payloads[1]["candidate_topics"][0]
+        self.assertEqual(topic_candidate["topic_id"], result["selected_topics"][0]["topic_id"])
+        self.assertIn("retrieval_hints", topic_candidate)
+        self.assertIn("cluster_previews", topic_candidate)
+        for payload in payloads[1:]:
+            self.assertEqual(payload["background_analysis"], analysis)
+            self.assertIn(sample["question"], payload["problem_background"])
+            self.assertIn(sample["context"], payload["problem_background"])
+        self.assertNotIn(sample["prediction"], json.dumps(payloads[:3], ensure_ascii=False))
+        self.assertEqual(payloads[3]["student_solution"], sample["prediction"])
+        stages = result["navigation_trace"]["stages"]
+        self.assertEqual(
+            {item["domain_id"] for item in stages["domain"]["candidates"]},
+            {"mechanics", "modern_physics"},
+        )
+        self.assertIn(
+            "mechanics",
+            {item["domain_id"] for item in stages["domain"]["not_selected"]},
+        )
+        self.assertEqual(stages["domain"]["not_selected"][0]["reason"], "not_returned_by_model")
+        self.assertIn("exp_pinhole", {item["rule_id"] for item in stages["rule"]["candidates"]})
+        self.assertEqual(stages["rule"]["candidates"][0]["batch_index"], 1)
+
+    def test_invalid_domain_items_trigger_contract_retry(self) -> None:
+        client = _FakeClient(
+            [
+                json.dumps(
+                    {
+                        "background_analysis": _background_analysis(),
+                        "domains": [
+                            {"domain": "Mechanics", "relevant": "false", "score": 1.0, "reason": "bad bool"},
+                            {"domain": "Unknown Domain", "relevant": True, "score": 1.0, "reason": "unknown"},
+                        ]
+                    }
+                ),
+                _domain_json(
+                    [{"domain": "Mechanics", "relevant": True, "score": 0.9, "reason": "valid"}]
+                ),
+                '{"topics":[]}',
+                '{"topics":[]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        result = matcher.select_tree_semantically(
+            {"question": "A satellite moves in orbit.", "context": "", "prediction": ""},
+            _catalog(),
+        )
+
+        self.assertEqual(result["selected_domains"], ["Mechanics"])
+        attempts = result["navigation_trace"]["stages"]["domain"]["api_attempts"]
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("JSON boolean", attempts[0]["error"])
+
+    def test_out_of_range_selection_score_triggers_retry(self) -> None:
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [{"domain": "Mechanics", "relevant": True, "score": 95, "reason": "invalid scale"}]
+                ),
+                _domain_json(
+                    [{"domain": "Mechanics", "relevant": True, "score": 0.95, "reason": "valid scale"}]
+                ),
+                '{"topics":[]}',
+                '{"topics":[]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        result = matcher.select_tree_semantically(
+            {"question": "A mechanics problem.", "context": "", "prediction": "claim"},
+            _catalog(),
+        )
+
+        attempts = result["navigation_trace"]["stages"]["domain"]["api_attempts"]
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("0 to 1", attempts[0]["error"])
+
+    def test_stage_failure_exposes_partial_result_and_raw_attempts(self) -> None:
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [{"domain": "Modern Physics", "relevant": True, "score": 0.9, "reason": "modern"}]
+                ),
+                '{"topics":[{"topic_id":"modern_physics.special_relativity_time_dilation_length_contraction","relevant":true,"score":0.9,"reason":"relativity"}]}',
+                "0.1",
+                "0.2",
+                "0.3",
+                "0.4",
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        with self.assertRaises(SemanticSelectionError) as caught:
+            matcher.select_tree_semantically(
+                {"question": "A pinhole camera observes a moving rod.", "context": "", "prediction": "claim"},
+                _catalog(),
+            )
+
+        error = caught.exception
+        self.assertEqual(error.stage, "cluster")
+        self.assertEqual(error.partial_result["selected_domains"], ["Modern Physics"])
+        self.assertEqual(len(error.partial_result["selected_topics"]), 1)
+        self.assertEqual(error.trace["status"], "failed")
+        self.assertEqual(error.trace["terminal_stage"], "cluster")
+        attempts = error.trace["stages"]["cluster"]["api_attempts"]
+        self.assertEqual([item["raw"] for item in attempts], ["0.1", "0.2", "0.3", "0.4"])
+
+    def test_second_topic_cluster_failure_keeps_first_topic_cluster(self) -> None:
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [
+                        {"domain": "Mechanics", "relevant": True, "score": 1.0, "reason": "orbit"},
+                        {"domain": "Modern Physics", "relevant": True, "score": 0.9, "reason": "observation"},
+                    ]
+                ),
+                json.dumps(
+                    {
+                        "topics": [
+                            {
+                                "topic_id": "mechanics.gravitation_and_keplers_laws",
+                                "relevant": True,
+                                "score": 1.0,
+                                "reason": "orbit",
+                            },
+                            {
+                                "topic_id": "modern_physics.special_relativity_time_dilation_length_contraction",
+                                "relevant": True,
+                                "score": 0.9,
+                                "reason": "observation",
+                            },
+                        ]
+                    }
+                ),
+                '{"clusters":[{"cluster_id":"orbital_decay_and_orbit_accounting","relevant":true,"score":0.95,"reason":"orbit decay"}]}',
+                "bad-1",
+                "bad-2",
+                "bad-3",
+                "bad-4",
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        with self.assertRaises(SemanticSelectionError) as caught:
+            matcher.select_tree_semantically(
+                {"question": "Compare an orbit and an observation setup.", "context": "", "prediction": "claim"},
+                _catalog(),
+            )
+
+        self.assertEqual(caught.exception.stage, "cluster")
+        self.assertEqual(
+            [item["cluster_id"] for item in caught.exception.partial_result["selected_clusters"]],
+            ["orbital_decay_and_orbit_accounting"],
+        )
+
+    def test_later_rule_batch_failure_keeps_earlier_rule_hit(self) -> None:
+        rules = [
+            {
+                "rule_id": f"r{index}",
+                "title": f"Rule {index}",
+                "summary": "A candidate check.",
+                "trigger": "stated setup",
+                "check_logic": "audit the claim",
+                "error_type": "logic",
+                "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+            }
+            for index in range(2)
+        ]
+        catalog = {
+            "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2"},
+            "domains": [
+                {
+                    "id": "test_domain",
+                    "name": "Test Domain",
+                    "summary": "A test domain.",
+                    "topics": [
+                        {
+                            "id": "test_domain.test_topic",
+                            "name": "Test Topic",
+                            "summary": "A clusterless test topic.",
+                            "rules": rules,
+                            "scenario_clusters": [],
+                        }
+                    ],
+                }
+            ],
+        }
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [{"domain_id": "test_domain", "relevant": True, "score": 1.0, "reason": "test"}]
+                ),
+                '{"topics":[{"topic_id":"test_domain.test_topic","relevant":true,"score":1.0,"reason":"test"}]}',
+                '{"rules":[{"rule_id":"r0","applicable":true,"score":0.9,"reason":"first hit"}]}',
+                "bad-1",
+                "bad-2",
+                "bad-3",
+                "bad-4",
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=client,
+            rule_candidate_batch_size=1,
+        )
+
+        with self.assertRaises(SemanticSelectionError) as caught:
+            matcher.select_tree_semantically(
+                {"question": "A test setup.", "context": "", "prediction": "A claim."},
+                catalog,
+            )
+
+        self.assertEqual(caught.exception.stage, "rule")
+        self.assertEqual(
+            [item["rule_id"] for item in caught.exception.partial_result["selected_rules"]],
+            ["r0"],
+        )
+
+    @staticmethod
+    def _catalog_with_general_reasoning() -> dict:
+        catalog = copy.deepcopy(_catalog())
+        topic = catalog["domains"][1]["topics"][0]
+        topic["rules"].append(
+            {
+                "rule_id": "exp_general_reasoning",
+                "title": "General consistency check",
+                "summary": "Audit a general logical consistency condition.",
+                "trigger": "a derived claim",
+                "check_logic": "compare the claim with stated conditions",
+                "error_type": "logic",
+                "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+            }
+        )
+        topic["scenario_clusters"].append(
+            {
+                "id": "general_reasoning",
+                "name": "General Reasoning",
+                "summary": "Cross-scenario consistency checks.",
+                "rule_groups": [],
+                "rule_ids": ["exp_general_reasoning"],
+            }
+        )
+        return catalog
+
+    def test_general_reasoning_is_not_evaluated_after_specific_rule_hit(self) -> None:
+        catalog = self._catalog_with_general_reasoning()
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [{"domain": "Modern Physics", "relevant": True, "score": 1.0, "reason": "modern"}]
+                ),
+                '{"topics":[{"topic_id":"modern_physics.special_relativity_time_dilation_length_contraction","relevant":true,"score":1.0,"reason":"relativity"}]}',
+                '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":1.0,"reason":"specific"}]}',
+                '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.95,"reason":"specific audit"}]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        result = matcher.select_tree_semantically(
+            {"question": "A pinhole camera observes a moving rod.", "context": "", "prediction": "A claim."},
+            catalog,
+        )
+
+        self.assertEqual(
+            [item["rule_id"] for item in result["selected_rules"]],
+            ["exp_pinhole"],
+        )
+        sources = {item["candidate_source"] for item in result["navigation_trace"]["stages"]["rule"]["accepted"]}
+        self.assertEqual(sources, {"selected_cluster"})
+        self.assertEqual(len(client.requests), 4)
+
+    def test_general_reasoning_is_used_after_specific_cluster_returns_no_rule(self) -> None:
+        catalog = self._catalog_with_general_reasoning()
+        client = _FakeClient(
+            [
+                _domain_json(
+                    [{"domain": "Modern Physics", "relevant": True, "score": 1.0, "reason": "modern"}]
+                ),
+                '{"topics":[{"topic_id":"modern_physics.special_relativity_time_dilation_length_contraction","relevant":true,"score":1.0,"reason":"relativity"}]}',
+                '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":1.0,"reason":"specific"}]}',
+                '{"rules":[]}',
+                '{"rules":[{"rule_id":"exp_general_reasoning","applicable":true,"score":0.9,"reason":"general audit"}]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        result = matcher.select_tree_semantically(
+            {"question": "A pinhole camera observes a moving rod.", "context": "", "prediction": "A claim."},
+            catalog,
+        )
+
+        self.assertEqual([item["rule_id"] for item in result["selected_rules"]], ["exp_general_reasoning"])
+        self.assertEqual(result["selected_rules"][0]["candidate_source"], "general_reasoning_fallback")
+        self.assertEqual(len(client.requests), 5)
+
     def test_select_tree_semantically_returns_structured_results(self) -> None:
         matcher = UnifiedSemanticMatcher(
             model="fake-model",
             client=_FakeClient(
                 [
-                    '{"domains":[{"domain":"Modern Physics","relevant":true,"score":0.91,"reason":"relativity setup"}]}',
+                    _domain_json(
+                        [{"domain": "Modern Physics", "relevant": True, "score": 0.91, "reason": "relativity setup"}]
+                    ),
                     '{"topics":[{"domain":"Modern Physics","topic":"Special Relativity (Time Dilation, Length Contraction)","relevant":true,"score":0.89,"reason":"moving rod under pinhole observation"}]}',
                     '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":0.87,"reason":"camera observation cluster"}]}',
                     '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.93,"reason":"matches pinhole moving rod scenario"}]}',
@@ -186,7 +667,9 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
     def test_navigation_uses_background_and_only_rule_selection_receives_prediction(self) -> None:
         client = _FakeClient(
             [
-                '{"domains":[{"domain":"Modern Physics","relevant":true,"score":0.91,"reason":"relativity setup"}]}',
+                _domain_json(
+                    [{"domain": "Modern Physics", "relevant": True, "score": 0.91, "reason": "relativity setup"}]
+                ),
                 '{"topics":[{"domain":"Modern Physics","topic":"Special Relativity (Time Dilation, Length Contraction)","relevant":true,"score":0.89,"reason":"moving rod under pinhole observation"}]}',
                 '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":0.87,"reason":"camera observation cluster"}]}',
                 '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.93,"reason":"matches the student claim"}]}',
@@ -227,7 +710,12 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
         self.assertEqual(result["input_policy"], "background_navigation_prediction_rule_only")
 
     def test_empty_domain_selection_short_circuits_the_tree(self) -> None:
-        client = _FakeClient(['{"domains":[]}'])
+        client = _FakeClient(
+            [
+                _domain_json([], "Identify an ambiguous physical task."),
+                _domain_json([], "Identify an ambiguous physical task."),
+            ]
+        )
         matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
 
         result = matcher.select_tree_semantically(
@@ -240,7 +728,7 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             _catalog(),
         )
 
-        self.assertEqual(len(client.requests), 1)
+        self.assertEqual(len(client.requests), 2)
         self.assertEqual(result["selected_domains"], [])
         self.assertEqual(result["selected_topics"], [])
         self.assertEqual(result["selected_clusters"], [])
@@ -249,7 +737,10 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
     def test_empty_topic_selection_short_circuits_before_cluster_and_rule(self) -> None:
         client = _FakeClient(
             [
-                '{"domains":[{"domain":"Modern Physics","relevant":true,"score":0.9,"reason":"possible modern setup"}]}',
+                _domain_json(
+                    [{"domain": "Modern Physics", "relevant": True, "score": 0.9, "reason": "possible modern setup"}]
+                ),
+                '{"topics":[]}',
                 '{"topics":[]}',
             ]
         )
@@ -265,11 +756,51 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             _catalog(),
         )
 
-        self.assertEqual(len(client.requests), 2)
+        self.assertEqual(len(client.requests), 3)
         self.assertEqual(result["selected_domains"], ["Modern Physics"])
         self.assertEqual(result["selected_topics"], [])
         self.assertEqual(result["selected_clusters"], [])
         self.assertEqual(result["selected_rules"], [])
+
+    def test_empty_domain_and_topic_are_rechecked_once_before_acceptance(self) -> None:
+        client = _FakeClient(
+            [
+                "not-json-domain-response",
+                _domain_json([], "Audit a relativistic observation."),
+                _domain_json(
+                    [
+                        {
+                            "domain": "Modern Physics",
+                            "relevant": True,
+                            "score": 0.95,
+                            "reason": "relativistic observation",
+                        }
+                    ],
+                    "Audit a relativistic observation.",
+                ),
+                '{"topics":[{"topic_id":"modern_physics.special_relativity_time_dilation_length_contraction","relevant":false,"score":0.2,"reason":"first pass unsure"}]}',
+                '{"topics":[{"topic_id":"modern_physics.special_relativity_time_dilation_length_contraction","relevant":true,"score":0.94,"reason":"moving rod"}]}',
+                '{"clusters":[]}',
+                '{"clusters":[{"cluster_id":"observation_and_projection","relevant":true,"score":0.93,"reason":"camera"}]}',
+                '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.92,"reason":"auditable"}]}',
+            ]
+        )
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+
+        result = matcher.select_tree_semantically(
+            {
+                "question": "A pinhole camera observes a moving rod.",
+                "context": "",
+                "prediction": "Treat the exposure as simultaneous.",
+            },
+            _catalog(),
+        )
+
+        self.assertEqual([item["rule_id"] for item in result["selected_rules"]], ["exp_pinhole"])
+        self.assertEqual(len(result["navigation_trace"]["stages"]["domain"]["api_attempts"]), 3)
+        self.assertEqual(len(result["navigation_trace"]["stages"]["topic"]["api_attempts"]), 2)
+        self.assertEqual(len(result["navigation_trace"]["stages"]["cluster"]["api_attempts"]), 2)
+        self.assertIn("reconsider", result["navigation_trace"]["stages"]["topic"]["api_attempts"][0]["error"])
 
     def test_domain_topic_and_cluster_outputs_obey_hard_limits(self) -> None:
         catalog = {
@@ -303,6 +834,7 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             ],
         }
         domain_response = {
+            "background_analysis": _background_analysis("Classify a broad multi-domain task."),
             "domains": [
                 {
                     "domain": f"Domain {index}",
@@ -410,7 +942,9 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
 
         client = _FakeClient(
             [
-                '{"domains":[{"domain":"Batch Domain","relevant":true,"score":1.0,"reason":"batch domain"}]}',
+                _domain_json(
+                    [{"domain": "Batch Domain", "relevant": True, "score": 1.0, "reason": "batch domain"}]
+                ),
                 '{"topics":[{"domain":"Batch Domain","topic":"Batch Topic","relevant":true,"score":1.0,"reason":"batch topic"}]}',
                 *['{"rules":[]}' for _ in expected_batches],
             ]
@@ -448,15 +982,17 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
         self.assertEqual(seen_rule_ids, [rule["rule_id"] for rule in rules])
         self.assertEqual(result["selected_rules"], [])
 
-    def test_rule_selection_falls_back_to_topic_when_cluster_path_returns_no_rule(self) -> None:
+    def test_rule_selection_does_not_broaden_past_existing_cluster_boundaries(self) -> None:
         matcher = UnifiedSemanticMatcher(
             model="fake-model",
             client=_FakeClient(
                 [
-                    '{"domains":[{"domain":"Modern Physics","relevant":true,"score":0.91,"reason":"relativity setup"}]}',
+                    _domain_json(
+                        [{"domain": "Modern Physics", "relevant": True, "score": 0.91, "reason": "relativity setup"}]
+                    ),
                     '{"topics":[{"domain":"Modern Physics","topic":"Special Relativity (Time Dilation, Length Contraction)","relevant":true,"score":0.89,"reason":"moving rod under pinhole observation"}]}',
                     '{"clusters":[]}',
-                    '{"rules":[{"rule_id":"exp_pinhole","applicable":true,"score":0.93,"reason":"topic fallback still identifies the pinhole rule"}]}',
+                    '{"clusters":[]}',
                 ]
             ),
         )
@@ -468,8 +1004,8 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
         }
         result = matcher.select_tree_semantically(sample, _catalog())
         self.assertEqual(result["selected_clusters"], [])
-        self.assertEqual(len(result["selected_rules"]), 1)
-        self.assertEqual(result["selected_rules"][0]["rule_id"], "exp_pinhole")
+        self.assertEqual(result["selected_rules"], [])
+        self.assertEqual(len(matcher._client.requests), 4)
 
     def test_clusterless_topic_rules_are_capped(self) -> None:
         catalog = {
@@ -506,7 +1042,9 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             model="fake-model",
             client=_FakeClient(
                 [
-                    '{"domains":[{"domain":"Electromagnetism","relevant":true,"score":0.95,"reason":"circuit problem"}]}',
+                    _domain_json(
+                        [{"domain": "Electromagnetism", "relevant": True, "score": 0.95, "reason": "circuit problem"}]
+                    ),
                     '{"topics":[{"domain":"Electromagnetism","topic":"DC Circuits and Kirchhoff\'s Laws","relevant":true,"score":0.94,"reason":"static circuit solving"}]}',
                     '{"rules":[{"rule_id":"exp_dc_0","applicable":true,"score":0.95,"reason":"strongly applicable"},{"rule_id":"exp_dc_1","applicable":true,"score":0.9,"reason":"also applicable"},{"rule_id":"exp_dc_2","applicable":true,"score":0.85,"reason":"weaker but still relevant"}]}',
                 ]
@@ -575,7 +1113,9 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             model="fake-model",
             client=_FakeClient(
                 [
-                    '{"domains":[{"domain":"Mechanics","relevant":true,"score":1.0,"reason":"mechanics"}]}',
+                    _domain_json(
+                        [{"domain": "Mechanics", "relevant": True, "score": 1.0, "reason": "mechanics"}]
+                    ),
                     '{"topics":[{"domain":"Mechanics","topic":"Topic A","relevant":true,"score":1.0,"reason":"a"},{"domain":"Mechanics","topic":"Topic B","relevant":true,"score":1.0,"reason":"b"},{"domain":"Mechanics","topic":"Topic C","relevant":true,"score":0.9,"reason":"c"}]}',
                     '{"clusters":[{"cluster_id":"cluster_0","relevant":true,"score":1.0,"reason":"a"}]}',
                     '{"clusters":[{"cluster_id":"cluster_1","relevant":true,"score":1.0,"reason":"b"}]}',
