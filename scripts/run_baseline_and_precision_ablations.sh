@@ -127,5 +127,5 @@ if [[ -x "$PYTHON" ]]; then
     echo "---"
     echo "<!-- auto tables batch-only $(date -u +%Y-%m-%dT%H:%M:%SZ) STAMP=$STAMP -->"
     STAMP_BATCH="$STAMP" "$PYTHON" "$ROOT/scripts/emit_dual_chain_results_md.py"
-  } >> "$ROOT/docs/dual_chain_experiment_tracking_20260510.md" || true
+  } >> "$ROOT/results/dual_chain_experiment_tracking.md" || true
 fi

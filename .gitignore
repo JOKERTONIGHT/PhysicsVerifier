@@ -215,9 +215,5 @@ results/
 # logs
 logs/
 
-# docs: keep canonical project plans, ignore local working notes
-docs/*
-!docs/项目进展.md
-!docs/背景信息方案.md
-!docs/典型问题.md
-!docs/背景检索样本结果.md
+# Private local documents
+private_docs/
