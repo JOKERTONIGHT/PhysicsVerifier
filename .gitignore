@@ -217,3 +217,7 @@ logs/
 
 # Private local documents
 private_docs/
+
+# Local transfer archives
+/data.zip
+/results.zip
