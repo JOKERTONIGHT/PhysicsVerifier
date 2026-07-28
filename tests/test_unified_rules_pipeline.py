@@ -84,8 +84,10 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("semantic_experience_distilled_for_cluster.json", command)
         self.assertIn("rule_embedding_clusters.json", command)
         self.assertIn("semantic_experience_generalized.json", command)
+        self.assertIn("--model gemini-3-flash-preview-nothinking", command)
+        self.assertIn("--fallback-model gemini-2.5-flash-nothinking", command)
         self.assertIn("--max-clusters 0", command)
-        self.assertIn("--request-timeout 180", command)
+        self.assertIn("--request-timeout 120", command)
         self.assertIn("--resume", command)
         self.assertIn("--continue-on-error", command)
 

@@ -7,7 +7,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List, Sequence
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -167,6 +167,13 @@ def _retry_user_prompt(user_prompt: str) -> str:
     )
 
 
+def _is_route_unavailable(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return "no available sub-groups" in message or (
+        "503" in message and "bad_response_status_code" in message
+    )
+
+
 def _call_model(
     *,
     client: Any,
@@ -176,48 +183,58 @@ def _call_model(
     max_tokens: int,
     attempts: int,
     enable_thinking: bool = False,
+    fallback_models: Sequence[str] = (),
 ) -> Dict[str, Any]:
     last_error: Exception | None = None
-    active_user_prompt = user_prompt
-    for attempt in range(1, attempts + 1):
-        started_at = time.monotonic()
-        print(
-            f"[generalize-api] attempt {attempt}/{attempts} model={model}",
-            flush=True,
-        )
-        try:
-            request: Dict[str, Any] = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": active_user_prompt},
-                ],
-                "temperature": 0.0,
-                "max_tokens": max_tokens,
-                **_thinking_kwargs(enable_thinking=enable_thinking),
-            }
-            response = client.chat.completions.create(**request)
-            message = response.choices[0].message
-            payload = _extract_json_object(message.content)
-            payload["_api_attempts"] = attempt
+    models = _ordered_unique([model, *fallback_models])
+    for model_index, active_model in enumerate(models, start=1):
+        active_user_prompt = user_prompt
+        for attempt in range(1, attempts + 1):
+            started_at = time.monotonic()
             print(
-                f"[generalize-api] success attempt={attempt} "
-                f"elapsed={time.monotonic() - started_at:.1f}s",
+                f"[generalize-api] model {model_index}/{len(models)} "
+                f"attempt {attempt}/{attempts} model={active_model}",
                 flush=True,
             )
-            return payload
-        except Exception as exc:  # pragma: no cover - exercised against live APIs
-            last_error = exc
-            print(
-                f"[generalize-api] failed attempt={attempt} "
-                f"elapsed={time.monotonic() - started_at:.1f}s "
-                f"error={type(exc).__name__}: {exc}",
-                flush=True,
-            )
-            if attempt < attempts:
-                active_user_prompt = _retry_user_prompt(user_prompt)
-                time.sleep(1.0)
-    raise RuntimeError(f"candidate generalization failed after {attempts} attempts: {last_error}")
+            try:
+                request: Dict[str, Any] = {
+                    "model": active_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": active_user_prompt},
+                    ],
+                    "temperature": 0.0,
+                    "max_tokens": max_tokens,
+                    **_thinking_kwargs(enable_thinking=enable_thinking),
+                }
+                response = client.chat.completions.create(**request)
+                message = response.choices[0].message
+                payload = _extract_json_object(message.content)
+                payload["_api_attempts"] = attempt
+                payload["_model_used"] = active_model
+                print(
+                    f"[generalize-api] success model={active_model} attempt={attempt} "
+                    f"elapsed={time.monotonic() - started_at:.1f}s",
+                    flush=True,
+                )
+                return payload
+            except Exception as exc:  # pragma: no cover - exercised against live APIs
+                last_error = exc
+                route_unavailable = _is_route_unavailable(exc)
+                print(
+                    f"[generalize-api] failed model={active_model} attempt={attempt} "
+                    f"elapsed={time.monotonic() - started_at:.1f}s "
+                    f"error={type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                if route_unavailable:
+                    break
+                if attempt < attempts:
+                    active_user_prompt = _retry_user_prompt(user_prompt)
+                    time.sleep(1.0)
+    raise RuntimeError(
+        f"candidate generalization failed across models {models}: {last_error}"
+    )
 
 
 def _materialize_cluster_result(
@@ -296,6 +313,7 @@ def _materialize_cluster_result(
         "topic": topic,
         "cluster_id": cluster_id,
         "api_attempts": int(model_payload.get("_api_attempts") or 1),
+        "model_used": _text(model_payload.get("_model_used") or ""),
         "input_candidate_ids": input_ids,
         "generated_rules": generated_rules,
         "mappings": mappings,
@@ -369,6 +387,11 @@ def _build_result_payload(
             "max_api_attempts_used": max(
                 (int(item.get("api_attempts") or 0) for item in cluster_results),
                 default=0,
+            ),
+            "models_used": _ordered_unique(
+                item.get("model_used")
+                for item in cluster_results
+                if _text(item.get("model_used") or "")
             ),
         },
         "rules": formal_rules,
@@ -621,7 +644,13 @@ def main() -> None:
         "--output",
         default="results/unified_rules_3000/semantic_experience_generalized_pilot.json",
     )
-    parser.add_argument("--model", default="qwen3-30b-a3b")
+    parser.add_argument("--model", default="gemini-3-flash-preview-nothinking")
+    parser.add_argument(
+        "--fallback-model",
+        action="append",
+        default=["gemini-2.5-flash-nothinking"],
+        help="Repeat to add fallback models. Route-unavailable 503 errors switch immediately.",
+    )
     parser.add_argument("--domain", default="")
     parser.add_argument("--topic", default="")
     parser.add_argument("--cluster-id", default="")
@@ -630,8 +659,8 @@ def main() -> None:
     parser.add_argument("--min-source-samples", type=int, default=2)
     parser.add_argument("--max-candidates-per-batch", type=int, default=12)
     parser.add_argument("--max-tokens", type=int, default=4000)
-    parser.add_argument("--attempts", type=int, default=3)
-    parser.add_argument("--request-timeout", type=float, default=180.0)
+    parser.add_argument("--attempts", type=int, default=2)
+    parser.add_argument("--request-timeout", type=float, default=120.0)
     parser.add_argument(
         "--enable-thinking",
         action="store_true",
@@ -665,6 +694,7 @@ def main() -> None:
             max_tokens=max(256, int(args.max_tokens)),
             attempts=max(1, int(args.attempts)),
             enable_thinking=bool(args.enable_thinking),
+            fallback_models=args.fallback_model,
         )
 
     output_path = Path(args.output)
@@ -676,6 +706,7 @@ def main() -> None:
 
     def save_progress(payload: Dict[str, Any]) -> None:
         payload["metadata"]["model"] = args.model
+        payload["metadata"]["fallback_models"] = _ordered_unique(args.fallback_model)
         payload["metadata"]["candidate_source"] = args.candidates
         payload["metadata"]["cluster_source"] = args.clusters
         payload["metadata"]["output_mode"] = "prompt_json"

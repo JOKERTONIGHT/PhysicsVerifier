@@ -50,7 +50,7 @@ class GeneralizeExperienceCandidatesTest(unittest.TestCase):
         )
 
         with patch("scripts.generalize_experience_candidates.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, "failed after 2 attempts"):
+            with self.assertRaisesRegex(RuntimeError, "failed across models"):
                 _call_model(
                     client=client,
                     model="test-model",
@@ -66,6 +66,44 @@ class GeneralizeExperienceCandidatesTest(unittest.TestCase):
                 "enable_thinking"
             ]
         )
+
+    def test_route_unavailable_switches_to_fallback_without_repeating_primary(self):
+        class FakeCompletions:
+            def __init__(self):
+                self.models = []
+
+            def create(self, **kwargs):
+                self.models.append(kwargs["model"])
+                if kwargs["model"] == "unavailable-primary":
+                    raise RuntimeError(
+                        "503 bad_response_status_code: No available sub-groups"
+                    )
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content='{"rules":[]}')
+                        )
+                    ]
+                )
+
+        completions = FakeCompletions()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+        result = _call_model(
+            client=client,
+            model="unavailable-primary",
+            fallback_models=["working-fallback"],
+            system_prompt="system",
+            user_prompt="user",
+            max_tokens=256,
+            attempts=3,
+        )
+
+        self.assertEqual(
+            completions.models,
+            ["unavailable-primary", "working-fallback"],
+        )
+        self.assertEqual(result["_model_used"], "working-fallback")
 
     def test_prompt_requires_shared_information(self):
         _, prompt = _build_prompt(

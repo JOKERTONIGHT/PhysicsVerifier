@@ -219,9 +219,10 @@ def build_catalog_structure_validation_command(*, dataset: str = DEFAULT_DATASET
 def build_generalization_command(
     *,
     dataset: str = DEFAULT_DATASET,
-    model: str = "qwen3-30b-a3b",
+    model: str = "gemini-3-flash-preview-nothinking",
+    fallback_model: str = "gemini-2.5-flash-nothinking",
     max_candidates_per_batch: int = 12,
-    request_timeout: int = 180,
+    request_timeout: int = 120,
 ) -> str:
     paths = dataset_paths(dataset)
     parts = [
@@ -235,6 +236,8 @@ def build_generalization_command(
         str(paths["generalized"]).replace("\\", "/"),
         "--model",
         model,
+        "--fallback-model",
+        fallback_model,
         "--max-clusters",
         "0",
         "--max-candidates-per-batch",
@@ -489,9 +492,10 @@ def main() -> None:
         help="Print the candidate generalization command; this step calls API.",
     )
     generalize_parser.add_argument("--dataset", default=DEFAULT_DATASET)
-    generalize_parser.add_argument("--model", default="qwen3-30b-a3b")
+    generalize_parser.add_argument("--model", default="gemini-3-flash-preview-nothinking")
+    generalize_parser.add_argument("--fallback-model", default="gemini-2.5-flash-nothinking")
     generalize_parser.add_argument("--max-candidates-per-batch", type=int, default=12)
-    generalize_parser.add_argument("--request-timeout", type=int, default=180)
+    generalize_parser.add_argument("--request-timeout", type=int, default=120)
 
     prepare_generalized_parser = subparsers.add_parser(
         "prepare-generalized",
@@ -613,6 +617,7 @@ def main() -> None:
             build_generalization_command(
                 dataset=args.dataset,
                 model=args.model,
+                fallback_model=args.fallback_model,
                 max_candidates_per_batch=args.max_candidates_per_batch,
                 request_timeout=args.request_timeout,
             )
