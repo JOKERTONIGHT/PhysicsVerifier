@@ -35,6 +35,18 @@ class GeneralizeExperienceCandidatesTest(unittest.TestCase):
             ]
         )
 
+    def test_deepseek_uses_its_thinking_parameter(self):
+        self.assertEqual(
+            _thinking_kwargs(model="deepseek-v4-flash"),
+            {"extra_body": {"chat_template_kwargs": {"thinking": False}}},
+        )
+        self.assertTrue(
+            _thinking_kwargs(
+                model="deepseek-v4-flash",
+                enable_thinking=True,
+            )["extra_body"]["chat_template_kwargs"]["thinking"]
+        )
+
     def test_api_timeout_enters_bounded_outer_retry(self):
         class FakeCompletions:
             def __init__(self):

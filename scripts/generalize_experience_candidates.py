@@ -148,11 +148,16 @@ Topic: {topic}
     return system_prompt, user_prompt
 
 
-def _thinking_kwargs(*, enable_thinking: bool = False) -> Dict[str, Any]:
+def _thinking_kwargs(
+    *,
+    model: str = "",
+    enable_thinking: bool = False,
+) -> Dict[str, Any]:
+    parameter = "thinking" if "deepseek" in model.casefold() else "enable_thinking"
     return {
         "extra_body": {
             "chat_template_kwargs": {
-                "enable_thinking": bool(enable_thinking),
+                parameter: bool(enable_thinking),
             }
         }
     }
@@ -205,7 +210,10 @@ def _call_model(
                     ],
                     "temperature": 0.0,
                     "max_tokens": max_tokens,
-                    **_thinking_kwargs(enable_thinking=enable_thinking),
+                    **_thinking_kwargs(
+                        model=active_model,
+                        enable_thinking=enable_thinking,
+                    ),
                 }
                 response = client.chat.completions.create(**request)
                 message = response.choices[0].message
