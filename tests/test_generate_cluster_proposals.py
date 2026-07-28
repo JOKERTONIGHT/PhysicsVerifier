@@ -320,6 +320,7 @@ class GenerateClusterProposalTests(unittest.TestCase):
         proposal = result["proposals"][0]
         self.assertEqual(proposal["clusters"][0]["candidate_rule_ids"], ["r1", "r2"])
         self.assertEqual(proposal["residual_rule_ids"], ["r3"])
+        self.assertEqual(proposal["label_source"], "model")
         self.assertEqual(result["metadata"]["generator"], "embedding_cluster_labeling_v1")
 
     def test_generate_from_embedding_clusters_records_cjk_warning_without_failure(self) -> None:

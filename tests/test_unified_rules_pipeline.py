@@ -84,7 +84,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("semantic_experience_distilled_for_cluster.json", command)
         self.assertIn("rule_embedding_clusters.json", command)
         self.assertIn("semantic_experience_generalized.json", command)
-        self.assertIn("--model gemini-3-flash-preview-nothinking", command)
+        self.assertIn("--model deepseek-v4-flash-nothinking", command)
         self.assertIn("--fallback-model gemini-2.5-flash-nothinking", command)
         self.assertIn("--max-clusters 0", command)
         self.assertIn("--request-timeout 120", command)
@@ -92,11 +92,13 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("--continue-on-error", command)
 
     def test_cluster_proposal_command_uses_embedding_clusters_not_full_topic_rules(self) -> None:
-        command = build_cluster_proposal_command(dataset="3000", model="gemini-3-flash-preview-thinking")
+        command = build_cluster_proposal_command(dataset="3000")
 
         self.assertIn("scripts/generate_cluster_proposals.py", command)
         self.assertIn("--embedding-clusters results/unified_rules_3000/formal_rule_embedding_clusters.json", command)
         self.assertIn("--rule-input results/unified_rules_3000/formal_rule_embedding_input.json", command)
+        self.assertIn("--model deepseek-v4-flash-nothinking", command)
+        self.assertIn("--min-rule-count 1", command)
         self.assertIn("--resume", command)
         self.assertIn("--continue-on-error", command)
         self.assertNotIn("--distilled-experience", command)

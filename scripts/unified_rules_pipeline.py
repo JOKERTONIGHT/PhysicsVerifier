@@ -101,9 +101,9 @@ def build_server_command(
 def build_cluster_proposal_command(
     *,
     dataset: str = DEFAULT_DATASET,
-    model: str = "gemini-3-flash-preview-thinking",
+    model: str = "deepseek-v4-flash-nothinking",
     max_topics: int = 0,
-    min_rule_count: int = 40,
+    min_rule_count: int = 1,
     max_output_tokens: int = 16384,
     request_timeout: int = 180,
 ) -> str:
@@ -219,7 +219,7 @@ def build_catalog_structure_validation_command(*, dataset: str = DEFAULT_DATASET
 def build_generalization_command(
     *,
     dataset: str = DEFAULT_DATASET,
-    model: str = "gemini-3-flash-preview-nothinking",
+    model: str = "deepseek-v4-flash-nothinking",
     fallback_model: str = "gemini-2.5-flash-nothinking",
     max_candidates_per_batch: int = 12,
     request_timeout: int = 120,
@@ -492,7 +492,7 @@ def main() -> None:
         help="Print the candidate generalization command; this step calls API.",
     )
     generalize_parser.add_argument("--dataset", default=DEFAULT_DATASET)
-    generalize_parser.add_argument("--model", default="gemini-3-flash-preview-nothinking")
+    generalize_parser.add_argument("--model", default="deepseek-v4-flash-nothinking")
     generalize_parser.add_argument("--fallback-model", default="gemini-2.5-flash-nothinking")
     generalize_parser.add_argument("--max-candidates-per-batch", type=int, default=12)
     generalize_parser.add_argument("--request-timeout", type=int, default=120)
@@ -509,9 +509,9 @@ def main() -> None:
 
     cluster_parser = subparsers.add_parser("cluster-command", help="Print the cluster proposal command; this step calls API.")
     cluster_parser.add_argument("--dataset", default=DEFAULT_DATASET)
-    cluster_parser.add_argument("--model", default="gemini-3-flash-preview-thinking")
+    cluster_parser.add_argument("--model", default="deepseek-v4-flash-nothinking")
     cluster_parser.add_argument("--max-topics", type=int, default=0)
-    cluster_parser.add_argument("--min-rule-count", type=int, default=40)
+    cluster_parser.add_argument("--min-rule-count", type=int, default=1)
     cluster_parser.add_argument("--max-output-tokens", type=int, default=16384)
     cluster_parser.add_argument("--request-timeout", type=int, default=180)
 
@@ -527,7 +527,7 @@ def main() -> None:
     )
     formal_embedding_parser.add_argument("--dataset", default=DEFAULT_DATASET)
     formal_embedding_parser.add_argument("--embedding-model", default="text-embedding-3-large")
-    formal_embedding_parser.add_argument("--similarity-threshold", type=float, default=0.74)
+    formal_embedding_parser.add_argument("--similarity-threshold", type=float, default=0.72)
     formal_embedding_parser.add_argument("--min-cluster-size", type=int, default=4)
 
     analyze_embedding_parser = subparsers.add_parser("analyze-embedding", help="Analyze rule embedding clustering output.")

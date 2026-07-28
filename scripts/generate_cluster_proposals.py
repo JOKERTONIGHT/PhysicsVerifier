@@ -23,6 +23,11 @@ try:
 except ImportError:  # pragma: no cover - environment dependent
     OpenAI = None  # type: ignore[assignment]
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - environment dependent
+    load_dotenv = None
+
 
 def _norm_text(value: Any) -> str:
     if value is None:
@@ -82,7 +87,12 @@ def _dump_json(path: Path, payload: Any) -> None:
 def _build_client(*, api_key: str, base_url: str | None, trust_env: bool, request_timeout: float) -> Any:
     if not OpenAI:
         raise RuntimeError("OpenAI package is not available.")
-    kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url, "timeout": request_timeout}
+    kwargs: Dict[str, Any] = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "timeout": request_timeout,
+        "max_retries": 0,
+    }
     if httpx is not None:
         kwargs["http_client"] = httpx.Client(trust_env=trust_env, timeout=request_timeout)
     return OpenAI(**kwargs)
@@ -788,6 +798,7 @@ def generate_cluster_proposals_from_embedding_clusters(
                 "existing_cluster_count": 0,
                 "contains_cjk_generated_text": bool(cjk_offenders),
                 "cjk_generated_text_preview": cjk_offenders[0][:120] if cjk_offenders else "",
+                "label_source": "model",
                 **normalized,
             }
         )
@@ -826,6 +837,8 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="Save failures and continue with remaining topics.")
     args = parser.parse_args()
 
+    if load_dotenv:
+        load_dotenv()
     api_key = args.api_key or os.getenv("OPENAI_API_KEY") or ""
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured.")
