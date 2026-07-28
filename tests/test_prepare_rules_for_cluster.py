@@ -146,8 +146,10 @@ class PrepareRulesForClusterTests(unittest.TestCase):
         normalized = json.loads(normalized_output.read_text(encoding="utf-8"))
         rules_by_title = {rule["title"]: rule for rule in normalized["rules"]}
         rule = rules_by_title["连续性方程截面积校验"]
+        self.assertEqual(rule["rule_id"], "r1")
         self.assertEqual(rule["summary"], "流体连续性检查")
         self.assertNotIn("Mechanics /", rule["topic"])
+        self.assertEqual(rules_by_title["旧版伯努利规则"]["rule_id"], "exp_old")
         self.assertEqual(rules_by_title["旧版伯努利规则"]["summary"], "旧版流体能量规则")
 
         embedding_payload = json.loads(embedding_output.read_text(encoding="utf-8"))

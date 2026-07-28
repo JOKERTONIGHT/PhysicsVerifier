@@ -21,7 +21,7 @@ class ServerRunInputsTests(unittest.TestCase):
     def test_check_inputs_reports_ready_when_required_files_and_schema_exist(self) -> None:
         root = _case_dir()
         sample_path = root / "sample.json"
-        script_path = root / "run_semantic_experience.py"
+        script_path = root / "generate_experience_rules.py"
         rules_catalog_path = root / "rules_catalog_top_down.json"
         unified_catalog_path = root / "rules_unified.json"
         output_path = root / "preflight.json"
@@ -61,7 +61,7 @@ class ServerRunInputsTests(unittest.TestCase):
     def test_check_inputs_reports_not_ready_for_missing_auxiliary_schema(self) -> None:
         root = _case_dir()
         sample_path = root / "sample.json"
-        script_path = root / "run_semantic_experience.py"
+        script_path = root / "generate_experience_rules.py"
         rules_catalog_path = root / "rules_catalog_top_down.json"
         unified_catalog_path = root / "rules_unified.json"
 

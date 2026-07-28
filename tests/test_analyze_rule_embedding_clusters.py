@@ -77,6 +77,74 @@ class AnalyzeRuleEmbeddingClustersTests(unittest.TestCase):
                 strict=True,
             )
 
+    def test_missing_or_duplicate_rule_assignment_is_structurally_invalid(self) -> None:
+        root = _case_dir()
+        input_path = root / "clusters.json"
+        input_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {"rule_count": 3, "topic_count": 1},
+                    "topics": [
+                        {
+                            "topic_key": "mechanics::kinematics",
+                            "rule_count": 3,
+                            "clusters": [{"cluster_id": "c1", "rule_ids": ["r1", "r1"]}],
+                            "residual_rule_ids": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = analyze_embedding_clusters(input_path=input_path)
+
+        self.assertFalse(report["structural_valid"])
+        self.assertFalse(report["ready_for_labeling"])
+        self.assertEqual(report["invalid_topic_keys"], ["mechanics::kinematics"])
+
+    def test_cluster_ids_must_match_current_embedding_input(self) -> None:
+        root = _case_dir()
+        input_path = root / "clusters.json"
+        rule_input_path = root / "rules.json"
+        input_path.write_text(
+            json.dumps(
+                {
+                    "topics": [
+                        {
+                            "topic_key": "mechanics::kinematics",
+                            "rule_count": 1,
+                            "clusters": [],
+                            "residual_rule_ids": ["old_id"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        rule_input_path.write_text(
+            json.dumps(
+                {
+                    "rules": [
+                        {
+                            "topic_key": "mechanics::kinematics",
+                            "rule_id": "new_id",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = analyze_embedding_clusters(
+            input_path=input_path,
+            rule_input_path=rule_input_path,
+            min_clustered_rule_ratio=0.0,
+        )
+
+        self.assertFalse(report["source_alignment_valid"])
+        self.assertFalse(report["ready_for_labeling"])
+
 
 if __name__ == "__main__":
     unittest.main()

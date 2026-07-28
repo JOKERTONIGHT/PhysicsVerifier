@@ -40,7 +40,7 @@ lines = [
     "# 错误级实验汇总（默认规则库，无 LLM 元数据增强）",
     "",
     f"**STAMP:** `{stamp}`",
-    "**规则库:** `catalogs/unified_rule_library_v2_distilled300_20260503.json`",
+    "**规则库:** `catalogs/legacy/unified_rule_library_v2_distilled300_20260503.json`",
     "**符号预算:** 40 | **top_n:** 6 | **score≥4.0**",
     "",
     "| 配置 | Recall | Precision | F1 | 命中 GT | 预测诊断 | 样本触发率 |",

@@ -11,7 +11,7 @@ Usage:
         --dataset path/to/error_eval_dataset.json \
         --prior-results path/to/error_verifier_results.json \
         --output path/to/replayed_results.json \
-        --catalog catalogs/unified_rule_library_v2_llm_enhanced_20260504.json
+        --catalog catalogs/legacy/unified_rule_library_v2_llm_enhanced_20260504.json
 """
 from __future__ import annotations
 

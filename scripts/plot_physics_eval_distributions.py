@@ -379,7 +379,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--catalog",
-        default="catalogs/unified_rule_library_v2_distilled300_20260503.json",
+        default="catalogs/legacy/unified_rule_library_v2_distilled300_20260503.json",
     )
     parser.add_argument(
         "--eval-dataset",

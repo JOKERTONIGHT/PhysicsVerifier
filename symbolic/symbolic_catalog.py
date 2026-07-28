@@ -16,7 +16,7 @@ class SymbolicCheckSpec:
     params: Dict[str, Any] = field(default_factory=dict)
     match_rule_ids: List[str] = field(default_factory=list)
     match_keywords: List[str] = field(default_factory=list)
-    # Populated when loading catalogs/symbolic_catalog.json nested domains/topics layout;
+    # Populated when loading a catalog with a nested domains/topics layout;
     # used to avoid applying unrelated symbolic primitives across the entire library.
     catalog_domain: str = ""
     catalog_topic: str = ""

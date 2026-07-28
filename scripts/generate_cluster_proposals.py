@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,30 @@ def _ordered_unique(items: Iterable[Any]) -> List[str]:
 
 def _topic_key(domain: str, topic: str) -> str:
     return f"{_norm_text(domain).lower()}::{_norm_text(topic).lower()}"
+
+
+def _embedding_topic_fingerprint(topic_item: Dict[str, Any]) -> str:
+    membership = {
+        "topic_key": _norm_text(topic_item.get("topic_key") or "").casefold(),
+        "clusters": [
+            {
+                "cluster_id": _norm_text(cluster.get("cluster_id") or ""),
+                "rule_ids": sorted(_ordered_unique(cluster.get("rule_ids") or [])),
+            }
+            for cluster in (topic_item.get("clusters") or [])
+            if isinstance(cluster, dict)
+        ],
+        "residual_rule_ids": sorted(
+            _ordered_unique(topic_item.get("residual_rule_ids") or [])
+        ),
+    }
+    encoded = json.dumps(
+        membership,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _load_json(path: Path) -> Any:
@@ -418,6 +443,7 @@ def _normalize_embedding_cluster_labels(raw: Dict[str, Any], topic_item: Dict[st
             labels_by_source[source_id] = item
 
     clusters: List[Dict[str, Any]] = []
+    used_cluster_ids: set[str] = set()
     topic_label = re.sub(r"[^A-Za-z0-9 ]+", " ", _norm_text(topic_item.get("topic") or "")).strip()
     topic_label = re.sub(r"\s+", " ", topic_label)
     topic_label = " ".join(topic_label.split()[:5]).title()
@@ -427,9 +453,16 @@ def _normalize_embedding_cluster_labels(raw: Dict[str, Any], topic_item: Dict[st
         fallback_name = f"{topic_label} Cluster {index:02d}" if topic_label else source_id.replace("_", " ").title()
         fallback_summary = f"Embedding-derived cluster for {topic_label or 'this topic'} rules."
         cluster_id = _norm_text(label.get("cluster_id") or source_id)
+        normalized_cluster_id = re.sub(r"[^a-z0-9_]+", "_", cluster_id.lower()).strip("_") or source_id
+        base_cluster_id = normalized_cluster_id
+        suffix = 2
+        while normalized_cluster_id in used_cluster_ids:
+            normalized_cluster_id = f"{base_cluster_id}_{suffix:02d}"
+            suffix += 1
+        used_cluster_ids.add(normalized_cluster_id)
         clusters.append(
             {
-                "cluster_id": re.sub(r"[^a-z0-9_]+", "_", cluster_id.lower()).strip("_") or source_id,
+                "cluster_id": normalized_cluster_id,
                 "name": _norm_text(label.get("name") or fallback_name),
                 "summary": _norm_text(label.get("summary") or fallback_summary),
                 "description": _norm_text(label.get("description") or label.get("summary") or fallback_summary),
@@ -630,10 +663,18 @@ def generate_cluster_proposals_from_embedding_clusters(
             item for item in (existing_payload.get("failures") or [])
             if isinstance(item, dict)
         ]
-    completed_topic_keys = {
-        _norm_text(item.get("topic_key") or "").casefold()
+    expected_fingerprints = {
+        _norm_text(item.get("topic_key") or "").casefold(): _embedding_topic_fingerprint(item)
+        for item in topics
+    }
+    proposals = [
+        item
         for item in proposals
-        if isinstance(item, dict)
+        if _norm_text(item.get("source_fingerprint") or "")
+        == expected_fingerprints.get(_norm_text(item.get("topic_key") or "").casefold())
+    ]
+    completed_topic_keys = {
+        _norm_text(item.get("topic_key") or "").casefold() for item in proposals
     }
     original_failure_count = len(failures)
     failures = [
@@ -704,6 +745,7 @@ def generate_cluster_proposals_from_embedding_clusters(
                         "domain": _norm_text(topic_item.get("domain") or ""),
                         "topic": _norm_text(topic_item.get("topic") or ""),
                         "topic_key": topic_key,
+                        "source_fingerprint": expected_fingerprints[topic_key],
                         "rule_count": int(topic_item.get("rule_count") or 0),
                         "existing_cluster_count": 0,
                         "contains_cjk_generated_text": False,
@@ -741,6 +783,7 @@ def generate_cluster_proposals_from_embedding_clusters(
                 "domain": _norm_text(topic_item.get("domain") or ""),
                 "topic": _norm_text(topic_item.get("topic") or ""),
                 "topic_key": _norm_text(topic_item.get("topic_key") or "").casefold(),
+                "source_fingerprint": expected_fingerprints[topic_key],
                 "rule_count": int(topic_item.get("rule_count") or 0),
                 "existing_cluster_count": 0,
                 "contains_cjk_generated_text": bool(cjk_offenders),

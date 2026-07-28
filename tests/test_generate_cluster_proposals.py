@@ -14,6 +14,7 @@ from scripts.generate_cluster_proposals import (
     _collect_topic_candidates,
     _chat_json,
     _extract_json_object,
+    _embedding_topic_fingerprint,
     add_catalog_fallback_proposals,
     generate_cluster_proposals_from_embedding_clusters,
 )
@@ -470,6 +471,20 @@ class GenerateClusterProposalTests(unittest.TestCase):
     def test_generate_from_embedding_clusters_drops_stale_failures_when_resuming(self) -> None:
         root = _case_dir()
         output_path = root / "cluster_proposals.json"
+        topic_item = {
+            "domain": "Mechanics",
+            "topic": "Kinematics",
+            "topic_key": "Mechanics::Kinematics",
+            "rule_count": 2,
+            "clusters": [
+                {
+                    "cluster_id": "embedding_cluster_01",
+                    "rule_ids": ["r1", "r2"],
+                    "size": 2,
+                }
+            ],
+            "residual_rule_ids": [],
+        }
         output_path.write_text(
             json.dumps(
                 {
@@ -479,6 +494,7 @@ class GenerateClusterProposalTests(unittest.TestCase):
                             "domain": "Mechanics",
                             "topic": "Kinematics",
                             "topic_key": "mechanics::kinematics",
+                            "source_fingerprint": _embedding_topic_fingerprint(topic_item),
                             "rule_count": 2,
                             "clusters": [],
                             "residual_rule_ids": [],
@@ -504,16 +520,7 @@ class GenerateClusterProposalTests(unittest.TestCase):
         client = type("Client", (), {"chat": type("Chat", (), {"completions": _Completions()})()})()
         result = generate_cluster_proposals_from_embedding_clusters(
             embedding_clusters={
-                "topics": [
-                    {
-                        "domain": "Mechanics",
-                        "topic": "Kinematics",
-                        "topic_key": "Mechanics::Kinematics",
-                        "rule_count": 2,
-                        "clusters": [{"cluster_id": "embedding_cluster_01", "rule_ids": ["r1", "r2"], "size": 2}],
-                        "residual_rule_ids": [],
-                    }
-                ]
+                "topics": [topic_item]
             },
             rule_input={"rules": [{"rule_id": "r1"}, {"rule_id": "r2"}]},
             client=client,
