@@ -221,6 +221,7 @@ def build_generalization_command(
     dataset: str = DEFAULT_DATASET,
     model: str = "qwen3-30b-a3b",
     max_candidates_per_batch: int = 12,
+    request_timeout: int = 180,
 ) -> str:
     paths = dataset_paths(dataset)
     parts = [
@@ -238,6 +239,8 @@ def build_generalization_command(
         "0",
         "--max-candidates-per-batch",
         str(max_candidates_per_batch),
+        "--request-timeout",
+        str(request_timeout),
         "--resume",
         "--continue-on-error",
     ]
@@ -488,6 +491,7 @@ def main() -> None:
     generalize_parser.add_argument("--dataset", default=DEFAULT_DATASET)
     generalize_parser.add_argument("--model", default="qwen3-30b-a3b")
     generalize_parser.add_argument("--max-candidates-per-batch", type=int, default=12)
+    generalize_parser.add_argument("--request-timeout", type=int, default=180)
 
     prepare_generalized_parser = subparsers.add_parser(
         "prepare-generalized",
@@ -610,6 +614,7 @@ def main() -> None:
                 dataset=args.dataset,
                 model=args.model,
                 max_candidates_per_batch=args.max_candidates_per_batch,
+                request_timeout=args.request_timeout,
             )
         )
     elif args.command == "prepare-generalized":

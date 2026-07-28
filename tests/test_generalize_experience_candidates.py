@@ -1,10 +1,14 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from scripts.generalize_experience_candidates import (
     _build_prompt,
+    _call_model,
     _extract_json_object,
     _retry_user_prompt,
     _stable_rule_id,
+    _thinking_kwargs,
     generalize_candidates,
 )
 
@@ -19,6 +23,49 @@ class GeneralizeExperienceCandidatesTest(unittest.TestCase):
         prompt = _retry_user_prompt("original")
         self.assertIn("包含 rules 数组的 JSON 对象", prompt)
         self.assertIn("不得返回单个数字", prompt)
+
+    def test_thinking_is_disabled_by_default(self):
+        self.assertEqual(
+            _thinking_kwargs(),
+            {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}},
+        )
+        self.assertTrue(
+            _thinking_kwargs(enable_thinking=True)["extra_body"]["chat_template_kwargs"][
+                "enable_thinking"
+            ]
+        )
+
+    def test_api_timeout_enters_bounded_outer_retry(self):
+        class FakeCompletions:
+            def __init__(self):
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                raise TimeoutError("request timed out")
+
+        completions = FakeCompletions()
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=completions)
+        )
+
+        with patch("scripts.generalize_experience_candidates.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "failed after 2 attempts"):
+                _call_model(
+                    client=client,
+                    model="test-model",
+                    system_prompt="system",
+                    user_prompt="user",
+                    max_tokens=256,
+                    attempts=2,
+                )
+
+        self.assertEqual(len(completions.calls), 2)
+        self.assertFalse(
+            completions.calls[0]["extra_body"]["chat_template_kwargs"][
+                "enable_thinking"
+            ]
+        )
 
     def test_prompt_requires_shared_information(self):
         _, prompt = _build_prompt(

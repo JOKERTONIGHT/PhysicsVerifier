@@ -85,6 +85,7 @@ class UnifiedRulesPipelineTests(unittest.TestCase):
         self.assertIn("rule_embedding_clusters.json", command)
         self.assertIn("semantic_experience_generalized.json", command)
         self.assertIn("--max-clusters 0", command)
+        self.assertIn("--request-timeout 180", command)
         self.assertIn("--resume", command)
         self.assertIn("--continue-on-error", command)
 

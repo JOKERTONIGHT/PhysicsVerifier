@@ -28,7 +28,12 @@ def _load_json(path: Path) -> Any:
 
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def _text(value: Any) -> str:
@@ -143,14 +148,14 @@ Topic: {topic}
     return system_prompt, user_prompt
 
 
-def _thinking_kwargs() -> Dict[str, Any]:
-    disabled = _text(os.getenv("OPENAI_DISABLE_THINKING") or "").casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+def _thinking_kwargs(*, enable_thinking: bool = False) -> Dict[str, Any]:
+    return {
+        "extra_body": {
+            "chat_template_kwargs": {
+                "enable_thinking": bool(enable_thinking),
+            }
+        }
     }
-    return {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}} if disabled else {}
 
 
 def _retry_user_prompt(user_prompt: str) -> str:
@@ -170,10 +175,16 @@ def _call_model(
     user_prompt: str,
     max_tokens: int,
     attempts: int,
+    enable_thinking: bool = False,
 ) -> Dict[str, Any]:
     last_error: Exception | None = None
     active_user_prompt = user_prompt
     for attempt in range(1, attempts + 1):
+        started_at = time.monotonic()
+        print(
+            f"[generalize-api] attempt {attempt}/{attempts} model={model}",
+            flush=True,
+        )
         try:
             request: Dict[str, Any] = {
                 "model": model,
@@ -183,15 +194,26 @@ def _call_model(
                 ],
                 "temperature": 0.0,
                 "max_tokens": max_tokens,
-                **_thinking_kwargs(),
+                **_thinking_kwargs(enable_thinking=enable_thinking),
             }
             response = client.chat.completions.create(**request)
             message = response.choices[0].message
             payload = _extract_json_object(message.content)
             payload["_api_attempts"] = attempt
+            print(
+                f"[generalize-api] success attempt={attempt} "
+                f"elapsed={time.monotonic() - started_at:.1f}s",
+                flush=True,
+            )
             return payload
         except Exception as exc:  # pragma: no cover - exercised against live APIs
             last_error = exc
+            print(
+                f"[generalize-api] failed attempt={attempt} "
+                f"elapsed={time.monotonic() - started_at:.1f}s "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
             if attempt < attempts:
                 active_user_prompt = _retry_user_prompt(user_prompt)
                 time.sleep(1.0)
@@ -499,7 +521,7 @@ def generalize_candidates(
             min_source_samples=minimum_samples,
         )
 
-    for batch in batches:
+    for batch_number, batch in enumerate(batches, start=1):
         rows = batch["candidates"]
         input_ids = [_text(item.get("rule_id") or "") for item in rows]
         input_sample_ids = _ordered_unique(
@@ -537,6 +559,12 @@ def generalize_candidates(
             if on_progress:
                 on_progress(current_payload())
             continue
+        print(
+            f"[generalize] batch {batch_number}/{len(batches)} "
+            f"{batch['domain']} / {batch['topic']} / {batch['cluster_id']} "
+            f"candidates={len(rows)}",
+            flush=True,
+        )
         try:
             model_payload = generate(batch["domain"], batch["topic"], rows)
             result = _materialize_cluster_result(
@@ -603,6 +631,12 @@ def main() -> None:
     parser.add_argument("--max-candidates-per-batch", type=int, default=12)
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--attempts", type=int, default=3)
+    parser.add_argument("--request-timeout", type=float, default=180.0)
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Enable model thinking. Disabled by default for stable structured output.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     args = parser.parse_args()
@@ -613,7 +647,13 @@ def main() -> None:
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is not set")
     base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-    client = openai.OpenAI(api_key=api_key, base_url=base_url)
+    request_timeout = max(1.0, float(args.request_timeout))
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=request_timeout,
+        max_retries=0,
+    )
 
     def generate(domain: str, topic: str, candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
         system_prompt, user_prompt = _build_prompt(domain, topic, candidates)
@@ -624,6 +664,7 @@ def main() -> None:
             user_prompt=user_prompt,
             max_tokens=max(256, int(args.max_tokens)),
             attempts=max(1, int(args.attempts)),
+            enable_thinking=bool(args.enable_thinking),
         )
 
     output_path = Path(args.output)
@@ -638,6 +679,8 @@ def main() -> None:
         payload["metadata"]["candidate_source"] = args.candidates
         payload["metadata"]["cluster_source"] = args.clusters
         payload["metadata"]["output_mode"] = "prompt_json"
+        payload["metadata"]["request_timeout_seconds"] = request_timeout
+        payload["metadata"]["thinking_enabled"] = bool(args.enable_thinking)
         _write_json(output_path, payload)
 
     result = generalize_candidates(
