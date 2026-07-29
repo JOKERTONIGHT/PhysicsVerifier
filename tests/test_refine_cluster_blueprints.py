@@ -59,6 +59,43 @@ class RefineClusterBlueprintsTests(unittest.TestCase):
         self.assertEqual(len(residual_clusters[0]["rule_groups"][0]["rule_ids"]), 12)
         self.assertEqual(len(residual_clusters[1]["rule_groups"][0]["rule_ids"]), 2)
 
+    def test_residual_clusters_include_rule_navigation_hints(self) -> None:
+        proposals = {
+            "proposals": [
+                {
+                    "domain": "Electromagnetism",
+                    "topic": "DC Circuits",
+                    "topic_key": "electromagnetism::dc circuits",
+                    "clusters": [],
+                    "residual_rule_ids": ["r_meter", "r_node"],
+                }
+            ]
+        }
+        rule_index = {
+            "r_meter": {
+                "title": "理想电表接入审计",
+                "trigger": "接入理想电流表或理想电压表",
+            },
+            "r_node": {
+                "title": "节点电势校验",
+                "trigger": "使用节点电势法求解直流回路",
+            },
+        }
+
+        blueprints = build_generated_blueprints_from_refined_proposals(
+            proposals,
+            rule_index=rule_index,
+        )
+        residual = blueprints["electromagnetism::dc circuits"][0]
+
+        self.assertIn("理想电表接入审计", residual["description"])
+        self.assertIn("理想电表接入审计", residual["includes"])
+        self.assertIn("接入理想电流表或理想电压表", residual["entry_cues"])
+        self.assertEqual(
+            residual["rule_groups"][0]["rule_ids"],
+            ["r_meter", "r_node"],
+        )
+
     def test_build_generated_blueprints_maps_navigation_cues_to_builder_compat_fields(self) -> None:
         proposals = {
             "proposals": [

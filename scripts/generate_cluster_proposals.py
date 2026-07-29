@@ -683,13 +683,19 @@ def generate_cluster_proposals_from_embedding_clusters(
         if _norm_text(item.get("source_fingerprint") or "")
         == expected_fingerprints.get(_norm_text(item.get("topic_key") or "").casefold())
     ]
+    for item in proposals:
+        if not _norm_text(item.get("label_source") or ""):
+            item["label_source"] = "model"
     completed_topic_keys = {
         _norm_text(item.get("topic_key") or "").casefold() for item in proposals
     }
     original_failure_count = len(failures)
     failures = [
         item for item in failures
-        if _norm_text(item.get("topic_key") or "").casefold() not in completed_topic_keys
+        if (
+            _norm_text(item.get("topic_key") or "").casefold() in expected_fingerprints
+            and _norm_text(item.get("topic_key") or "").casefold() not in completed_topic_keys
+        )
     ]
 
     def _current_payload() -> Dict[str, Any]:

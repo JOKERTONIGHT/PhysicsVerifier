@@ -307,7 +307,43 @@ def _proposal_stats(path: Path | None) -> Dict[str, Any]:
 def _runtime_eval_stats(path: Path | None, *, catalog_path: Path) -> Dict[str, Any]:
     if not path or not path.exists():
         return {"available": False}
-    payload = _load_json(path)
+    raw_payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw_payload, list):
+        rows = [
+            {
+                "sample_id": _text(item.get("id") or item.get("sample_id")),
+                "topic_count": len(item.get("retrieved_topics") or []),
+                "cluster_count": len(item.get("retrieved_clusters") or []),
+                "rule_count": len(item.get("retrieved_rules") or []),
+                "semantic_selection_error": _text(item.get("semantic_selection_error")),
+            }
+            for item in raw_payload
+            if isinstance(item, dict)
+        ]
+        selected_rule_counts = [int(row.get("rule_count") or 0) for row in rows]
+        payload = {
+            "summary": {
+                "sample_count": len(rows),
+                "semantic_error_count": sum(
+                    1
+                    for row in rows
+                    if _text(row.get("semantic_selection_error"))
+                ),
+                "rule_selection_rate": (
+                    sum(count > 0 for count in selected_rule_counts) / len(rows)
+                    if rows
+                    else 0.0
+                ),
+                "average_selected_rules": (
+                    sum(selected_rule_counts) / len(rows) if rows else 0.0
+                ),
+            },
+            "rows": rows,
+        }
+    elif isinstance(raw_payload, dict):
+        payload = raw_payload
+    else:
+        raise ValueError(f"Expected object or trace-list JSON: {path}")
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     rows = [item for item in (payload.get("rows") or []) if isinstance(item, dict)]
     empty_rows = [row for row in rows if int(row.get("rule_count") or 0) == 0]

@@ -391,6 +391,20 @@ def _navigation_role_catalog() -> dict:
 
 
 class UnifiedSemanticMatcherTests(unittest.TestCase):
+    def test_request_timeout_is_bounded_and_visible_in_trace(self) -> None:
+        matcher = UnifiedSemanticMatcher(
+            model="fake-model",
+            client=_FakeClient([]),
+            request_timeout=37,
+        )
+
+        self.assertEqual(matcher.request_timeout, 37.0)
+        self.assertEqual(
+            matcher.last_trace["model_config"]["request_timeout_seconds"],
+            37.0,
+        )
+        self.assertEqual(matcher.last_trace["model_config"]["sdk_max_retries"], 0)
+
     @staticmethod
     def _selection_schema(list_key: str) -> dict:
         return {
@@ -1570,6 +1584,53 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             ["initial_primary"],
         )
 
+    def test_deferred_bucket_exposes_more_representative_rules_than_primary(self) -> None:
+        catalog = _navigation_role_catalog()
+        topic = catalog["domains"][0]["topics"][0]
+        residual = next(
+            cluster
+            for cluster in topic["scenario_clusters"]
+            if cluster["id"] == "residual_rules_01"
+        )
+        for index in range(2, 9):
+            rule_id = f"r_residual_{index}"
+            topic["rules"].append(
+                {
+                    "rule_id": rule_id,
+                    "title": f"Residual rule {index}",
+                    "summary": f"Audit residual mechanism {index}.",
+                    "trigger": f"Residual mechanism {index}.",
+                    "check_logic": f"Check residual mechanism {index}.",
+                    "error_type": "logic",
+                    "symbolic_hint": {
+                        "primitive": "none",
+                        "canonical": "",
+                        "required_symbols": [],
+                    },
+                }
+            )
+            residual["rule_ids"].append(rule_id)
+
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=_FakeClient([]))
+        topic_match = matcher._build_topic_candidates(catalog, ["Mechanics"])[0]
+        candidates = {
+            item["cluster_id"]: item
+            for item in matcher._build_cluster_candidates(topic_match)
+        }
+
+        self.assertEqual(
+            len(candidates["initial_primary"]["representative_rules"]),
+            1,
+        )
+        self.assertEqual(
+            len(candidates["residual_rules_01"]["representative_rules"]),
+            8,
+        )
+        self.assertEqual(
+            candidates["residual_rules_01"]["representative_rules"][-1]["rule_id"],
+            "r_residual_8",
+        )
+
     def test_topic_shortlist_keeps_one_candidate_per_selected_domain(self) -> None:
         domains = []
         returned_topics = []
@@ -1707,6 +1768,95 @@ class UnifiedSemanticMatcherTests(unittest.TestCase):
             [item["cluster_id"] for item in result["navigation_clusters"]],
             ["alternative_primary_one", "embedding_cluster_01"],
         )
+
+    def test_confirmation_rejection_recovers_to_untried_deferred_bucket(self) -> None:
+        class RecoveryCompletions:
+            def __init__(self) -> None:
+                self.responses = [
+                    '{"rules":[{"rule_id":"r_initial","applicable":true,"score":0.95,"reason":"provisional"}]}',
+                    '{"clusters":[{"cluster_id":"alternative_primary_one","relevant":true,"score":0.9,"reason":"bounded primary recovery"}]}',
+                    '{"rules":[{"rule_id":"r_alt_one","applicable":true,"score":0.9,"reason":"provisional alternative"}]}',
+                    '{"clusters":[{"cluster_id":"residual_rules_01","relevant":true,"score":0.92,"reason":"matching deferred rule"}]}',
+                    '{"rules":[{"rule_id":"r_residual","applicable":true,"score":0.96,"reason":"matching rule"}]}',
+                ]
+                self.requests: list[dict[str, object]] = []
+
+            def create(self, **request: object) -> _FakeResponse:
+                self.requests.append(request)
+                messages = request.get("messages")
+                assert isinstance(messages, list)
+                payload = json.loads(messages[-1]["content"])
+                if (
+                    payload.get("selection_phase")
+                    == "background_only_rule_precision_confirmation"
+                ):
+                    decisions = []
+                    for candidate in payload["preliminary_rules"]:
+                        confirmed = candidate["rule_id"] == "r_residual"
+                        decisions.append(
+                            {
+                                "rule_id": candidate["rule_id"],
+                                "decision": (
+                                    "confirm"
+                                    if confirmed
+                                    else "reject_missing_background"
+                                ),
+                                "background_anchor_index": 0 if confirmed else -1,
+                            }
+                        )
+                    return _FakeResponse(json.dumps({"decisions": decisions}))
+                if not self.responses:
+                    raise AssertionError("No fake recovery response remains.")
+                content = self.responses.pop(0)
+                return _FakeResponse(
+                    _FakeCompletions._adapt_rule_contract(content, request)
+                )
+
+        completions = RecoveryCompletions()
+        client = type(
+            "RecoveryClient",
+            (),
+            {
+                "chat": type(
+                    "RecoveryChat",
+                    (),
+                    {"completions": completions},
+                )()
+            },
+        )()
+        catalog = _navigation_role_catalog()
+        matcher = UnifiedSemanticMatcher(model="fake-model", client=client)
+        topic_match = matcher._build_topic_candidates(catalog, ["Mechanics"])[0]
+        initial_cluster = next(
+            item
+            for item in matcher._build_cluster_candidates(topic_match)
+            if item["cluster_id"] == "initial_primary"
+        )
+
+        result = matcher.select_rules_semantically(
+            {
+                "question": "Use the residual mechanics configuration.",
+                "context": "",
+                "prediction": "A residual mechanism is used in this derivation.",
+            },
+            [topic_match],
+            [initial_cluster],
+            _background_analysis("Audit the residual mechanics configuration."),
+        )
+
+        self.assertEqual(
+            [item["rule_id"] for item in result["selected_rules"]],
+            ["r_residual"],
+        )
+        self.assertEqual(
+            [item["cluster_id"] for item in result["navigation_clusters"]],
+            ["alternative_primary_one", "residual_rules_01"],
+        )
+        stages = matcher.last_trace["stages"]
+        self.assertEqual(stages["cluster_confirmation_backtrack"]["chat_call_count"], 1)
+        self.assertEqual(stages["cluster_confirmation_fallback"]["chat_call_count"], 1)
+        self.assertEqual(stages["rule_confirmation"]["chat_call_count"], 3)
+        self.assertEqual(stages["rule_confirmation"]["empty_reason"], "")
 
     @staticmethod
     def _catalog_with_general_reasoning() -> dict:

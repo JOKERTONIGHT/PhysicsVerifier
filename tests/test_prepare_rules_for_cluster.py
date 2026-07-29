@@ -18,6 +18,94 @@ def _case_dir() -> Path:
 
 
 class PrepareRulesForClusterTests(unittest.TestCase):
+    def test_incremental_mode_preserves_baseline_rule_identity(self) -> None:
+        root = _case_dir()
+        knowledge = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [{"name": "Kinematics", "rules": []}],
+                }
+            ]
+        }
+        baseline = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [
+                        {
+                            "name": "Kinematics",
+                            "rules": [
+                                {
+                                    "rule_id": "old_id",
+                                    "title": "Existing rule",
+                                    "summary": "Existing summary",
+                                    "trigger": "Existing trigger",
+                                    "check_logic": "Existing check",
+                                    "error_type": "logic",
+                                }
+                            ],
+                            "scenario_clusters": [],
+                        }
+                    ],
+                }
+            ]
+        }
+        distilled = {
+            "rules": [
+                {
+                    "rule_id": "old_id",
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "title": "Reworded existing rule",
+                    "trigger": "Reworded trigger",
+                    "check_logic": "Reworded check",
+                    "error_type": "logic",
+                },
+                {
+                    "rule_id": "new_id",
+                    "domain": "Mechanics",
+                    "topic": "Kinematics",
+                    "title": "New rule",
+                    "trigger": "New trigger",
+                    "check_logic": "New check",
+                    "error_type": "logic",
+                },
+            ]
+        }
+        paths = {
+            "knowledge": root / "knowledge.json",
+            "tagged": root / "tagged.json",
+            "baseline": root / "baseline.json",
+            "distilled": root / "distilled.json",
+            "normalized": root / "normalized.json",
+            "catalog": root / "catalog.json",
+            "report": root / "report.json",
+        }
+        paths["knowledge"].write_text(json.dumps(knowledge), encoding="utf-8")
+        paths["tagged"].write_text("[]", encoding="utf-8")
+        paths["baseline"].write_text(json.dumps(baseline), encoding="utf-8")
+        paths["distilled"].write_text(json.dumps(distilled), encoding="utf-8")
+
+        report = prepare_rules_for_cluster(
+            distilled_input=paths["distilled"],
+            knowledge_path=paths["knowledge"],
+            tagged_path=paths["tagged"],
+            baseline_catalog_path=paths["baseline"],
+            distilled_output=paths["normalized"],
+            catalog_output=paths["catalog"],
+            report_output=paths["report"],
+            scenario_cluster_blueprints_paths=[],
+            preserve_baseline_rule_ids=True,
+        )
+
+        payload = json.loads(paths["normalized"].read_text(encoding="utf-8"))
+        rules = {rule["rule_id"]: rule for rule in payload["rules"]}
+        self.assertEqual(set(rules), {"old_id", "new_id"})
+        self.assertEqual(rules["old_id"]["title"], "Existing rule")
+        self.assertEqual(report["normalization"]["preserved_by_rule_id"], 1)
+        self.assertTrue(report["normalization"]["preserve_baseline_rule_ids"])
+
     def test_prepares_single_cluster_ready_rule_set(self) -> None:
         root = _case_dir()
         distilled_path = root / "distilled.json"

@@ -414,7 +414,17 @@ def run_build_blueprints(*, dataset: str = DEFAULT_DATASET, root: Path | None = 
     proposals = json.loads(paths["cluster_proposals"].read_text(encoding="utf-8"))
     catalog = json.loads(paths["catalog"].read_text(encoding="utf-8"))
     proposals = add_catalog_fallback_proposals(proposals, catalog)
-    blueprints = build_generated_blueprints_from_refined_proposals(proposals)
+    rule_index = {
+        str(rule.get("rule_id") or ""): rule
+        for domain in catalog.get("domains", []) or []
+        for topic in domain.get("topics", []) or []
+        for rule in topic.get("rules", []) or []
+        if str(rule.get("rule_id") or "")
+    }
+    blueprints = build_generated_blueprints_from_refined_proposals(
+        proposals,
+        rule_index=rule_index,
+    )
     _write_json(paths["generated_blueprints"], blueprints)
     return {
         "generated_blueprints": str(paths["generated_blueprints"]),

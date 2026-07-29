@@ -507,6 +507,12 @@ class GenerateClusterProposalTests(unittest.TestCase):
                             "domain": "Mechanics",
                             "topic": "Kinematics",
                             "error": "old failure",
+                        },
+                        {
+                            "topic_key": "mechanics::obsolete topic",
+                            "domain": "Mechanics",
+                            "topic": "Obsolete Topic",
+                            "error": "old target failure",
                         }
                     ],
                 }
@@ -537,6 +543,7 @@ class GenerateClusterProposalTests(unittest.TestCase):
 
         self.assertEqual(result["metadata"]["failure_count"], 0)
         self.assertEqual(result["failures"], [])
+        self.assertEqual(result["proposals"][0]["label_source"], "model")
 
     def test_add_catalog_fallback_proposals_adds_missing_rule_topics(self) -> None:
         payload = {

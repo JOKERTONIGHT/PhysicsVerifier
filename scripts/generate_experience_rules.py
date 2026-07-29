@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -25,6 +26,35 @@ except ImportError as exc:  # pragma: no cover
 class TopicItem:
     domain: str
     topic: str
+
+
+def _canonical_topic(raw_topic: Dict[str, Any], topics: List[TopicItem]) -> TopicItem:
+    if not topics:
+        raise ValueError("Topic catalog is empty.")
+    raw_domain = _normalize_text(raw_topic.get("domain", "")).casefold()
+    raw_name = _normalize_text(raw_topic.get("topic", "")).casefold()
+    exact = {
+        (item.domain.casefold(), item.topic.casefold()): item
+        for item in topics
+    }.get((raw_domain, raw_name))
+    if exact is not None:
+        return exact
+
+    def score(item: TopicItem) -> Tuple[float, float, str, str]:
+        domain = item.domain.casefold()
+        topic = item.topic.casefold()
+        domain_similarity = difflib.SequenceMatcher(None, raw_domain, domain).ratio()
+        topic_similarity = difflib.SequenceMatcher(None, raw_name, topic).ratio()
+        exact_bonus = 2.0 if raw_domain and raw_domain == domain else 0.0
+        topic_bonus = 2.0 if raw_name and raw_name == topic else 0.0
+        return (
+            exact_bonus + topic_bonus + domain_similarity + topic_similarity,
+            topic_similarity,
+            item.domain,
+            item.topic,
+        )
+
+    return max(topics, key=score)
 
 
 def _normalize_text(text: str) -> str:
@@ -185,14 +215,19 @@ def _resume_done_map(existing_payload: Dict[str, Any]) -> Dict[str, Dict[str, An
     }
 
 
-def _build_client() -> Any:
+def _build_client(request_timeout: float) -> Any:
     if load_dotenv:
         load_dotenv()
     base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is not set")
-    return openai.OpenAI(base_url=base_url, api_key=api_key)
+    return openai.OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=max(1.0, float(request_timeout)),
+        max_retries=0,
+    )
 
 
 def _semantic_prompt(sample: Dict[str, Any], topics_block: str, max_rules_per_sample: int) -> Tuple[str, str]:
@@ -273,8 +308,24 @@ def _call_json(client: Any, model: str, system_prompt: str, user_prompt: str, te
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content
-    return json.loads(raw)
+    raw = str(response.choices[0].message.content or "").strip()
+    if not raw:
+        raise ValueError("empty model response")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        fenced = re.search(
+            r"```(?:json)?\s*(\{.*\})\s*```",
+            raw,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        candidate = fenced.group(1) if fenced else raw[raw.find("{") : raw.rfind("}") + 1]
+        if not candidate.startswith("{") or not candidate.endswith("}"):
+            raise ValueError("model response does not contain a JSON object")
+        parsed = json.loads(candidate)
+    if not isinstance(parsed, dict):
+        raise ValueError("model response must be a JSON object")
+    return parsed
 
 
 def _normalize_semantic_result(
@@ -286,18 +337,8 @@ def _normalize_semantic_result(
 ) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Semantic extraction response must be a JSON object.")
-    topic_lookup = {
-        (item.domain.casefold(), item.topic.casefold()): item
-        for item in topics
-    }
     raw_topic = parsed.get("topic_guess") if isinstance(parsed.get("topic_guess"), dict) else {}
-    topic_key = (
-        _normalize_text(raw_topic.get("domain", "")).casefold(),
-        _normalize_text(raw_topic.get("topic", "")).casefold(),
-    )
-    if topic_key not in topic_lookup:
-        raise ValueError("Semantic extraction returned a topic outside the catalog.")
-    canonical_topic = topic_lookup[topic_key]
+    canonical_topic = _canonical_topic(raw_topic, topics)
 
     normalized_rules: List[Dict[str, Any]] = []
     rule_limit = max(0, int(max_rules_per_sample))
@@ -398,13 +439,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run pure semantic audit and distilled experience generation.")
     parser.add_argument("--input", type=str, default="data/evaluation_sample_300.json")
     parser.add_argument("--rules-catalog", type=str, default="catalogs/rules_catalog_top_down.json")
-    parser.add_argument("--model", type=str, default="gemini-3-flash-preview-thinking")
+    parser.add_argument("--model", type=str, default="deepseek-v4-flash-nothinking")
     parser.add_argument("--output", type=str, default="results/semantic_experience_300.json")
     parser.add_argument("--distilled-output", type=str, default="results/semantic_experience_distilled_300.json")
     parser.add_argument("--max-rules-per-sample", type=int, default=2)
     parser.add_argument("--min-rule-count", type=int, default=2)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-tokens", type=int, default=1200)
+    parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument("--attempts", type=int, default=2)
     parser.add_argument("--sleep", type=float, default=0.0)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
@@ -433,7 +476,7 @@ def main() -> None:
     topics = _load_topics(rules_catalog_path)
     topics_block = _topics_prompt(topics)
 
-    client = _build_client()
+    client = _build_client(args.request_timeout)
 
     existing_payload = _load_existing(output_path) if args.resume else {"samples": []}
     done_map = _resume_done_map(existing_payload)
@@ -459,7 +502,7 @@ def main() -> None:
 
         ok = False
         last_error = None
-        for _ in range(3):
+        for _ in range(max(1, int(args.attempts))):
             try:
                 parsed = _call_json(
                     client=client,

@@ -12,7 +12,7 @@ from core.unified_semantic_matcher import UnifiedSemanticMatcher
 CATALOG_PATH = (
     Path(__file__).resolve().parents[1]
     / "catalogs"
-    / "rules_unified_3000_runtime_backfilled.json"
+    / "rules_unified_3000.json"
 )
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "typical_samples.json"
 
@@ -23,9 +23,9 @@ CASES: list[dict[str, Any]] = [
         "question": "Calculate the magnetic flux Phi through the loop.",
         "prediction": "Use the straight-wire field and integrate it over the loop area.",
         "domain": "Electromagnetism",
-        "topic_id": "electromagnetism.biot_savart_law_and_ampere_s_law",
-        "topic": "Biot-Savart Law and Ampere's Law",
-        "cluster_id": "symmetry_loop_and_field_direction",
+        "topic_id": "electromagnetism.electromagnetic_induction_and_faraday_s_law",
+        "topic": "Electromagnetic Induction and Faraday's Law",
+        "cluster_id": "flux_integrals_and_field_geometry",
         "background_analysis": {
             "task_focus": "Compute the magnetic flux through a loop.",
             "objects": ["magnetic-field source", "loop"],
@@ -49,7 +49,7 @@ CASES: list[dict[str, Any]] = [
         "domain": "Electromagnetism",
         "topic_id": "electromagnetism.electrostatics_in_conductors_and_insulators",
         "topic": "Electrostatics in Conductors and Insulators",
-        "cluster_id": "boundary_images_forces_conductors_dielectrics",
+        "cluster_id": "residual_rules_01",
         "background_analysis": {
             "task_focus": "Find the force holding two charged conducting hemispheres together.",
             "objects": ["charged conducting sphere", "two hemispheres"],
@@ -71,7 +71,7 @@ CASES: list[dict[str, Any]] = [
         "domain": "Electromagnetism",
         "topic_id": "electromagnetism.dc_circuits_and_kirchhoff_s_laws",
         "topic": "DC Circuits and Kirchhoff's Laws",
-        "cluster_id": "general_reasoning",
+        "cluster_id": "residual_rules_01",
         "background_analysis": {
             "task_focus": "Find the current through an ideal ammeter connected between A and B.",
             "objects": ["ideal ammeter", "DC resistor network", "current source"],
@@ -144,7 +144,7 @@ CASES: list[dict[str, Any]] = [
         "domain": "Modern Physics",
         "topic_id": "modern_physics.cosmology_and_general_relativity_basics",
         "topic": "Cosmology and General Relativity (Basics)",
-        "cluster_id": "horizon_and_cosmic_evolution",
+        "cluster_id": "residual_rules_01",
         "background_analysis": {
             "task_focus": "Check the near-horizon metric scaling of a proper length.",
             "objects": ["black-hole horizon", "near-horizon circle"],

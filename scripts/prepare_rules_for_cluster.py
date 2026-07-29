@@ -464,6 +464,7 @@ def prepare_rules_for_cluster(
     report_output: Path,
     embedding_input_output: Path | None = None,
     scenario_cluster_blueprints_paths: Sequence[Path] | None = None,
+    preserve_baseline_rule_ids: bool = False,
 ) -> Dict[str, Any]:
     distilled_payload = _load_json(distilled_input)
     generalized_support_validated = _validate_generalized_support(distilled_payload)
@@ -474,7 +475,29 @@ def prepare_rules_for_cluster(
         else []
     )
     all_raw_rules = raw_rules + baseline_rules
-    canonical_rules = [_canonical_rule(rule) for rule in all_raw_rules]
+    canonical_distilled_rules = [_canonical_rule(rule) for rule in raw_rules]
+    canonical_baseline_rules = [_canonical_rule(rule) for rule in baseline_rules]
+    preserved_by_rule_id = 0
+    covered_by_exact_content = 0
+    if preserve_baseline_rule_ids:
+        baseline_ids = {
+            rule["source_rule_id"]
+            for rule in canonical_baseline_rules
+            if rule["source_rule_id"]
+        }
+        baseline_keys = {_merge_key(rule) for rule in canonical_baseline_rules}
+        additions: List[Dict[str, Any]] = []
+        for rule in canonical_distilled_rules:
+            if rule["source_rule_id"] in baseline_ids:
+                preserved_by_rule_id += 1
+                continue
+            if _merge_key(rule) in baseline_keys:
+                covered_by_exact_content += 1
+                continue
+            additions.append(rule)
+        canonical_rules = canonical_baseline_rules + additions
+    else:
+        canonical_rules = canonical_distilled_rules + canonical_baseline_rules
     groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = defaultdict(list)
     for rule in canonical_rules:
         groups[_merge_key(rule)].append(rule)
@@ -510,6 +533,9 @@ def prepare_rules_for_cluster(
             ),
             "merged_exact_duplicate_groups": len(duplicate_groups),
             "merged_exact_duplicate_rules": sum(len(items) for items in duplicate_groups),
+            "preserve_baseline_rule_ids": bool(preserve_baseline_rule_ids),
+            "preserved_by_rule_id": preserved_by_rule_id,
+            "covered_by_exact_content": covered_by_exact_content,
         },
         "rules": normalized_rules,
     }
@@ -571,6 +597,14 @@ def main() -> None:
     parser.add_argument("--knowledge", default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--tagged", default="catalogs/rules_300_tagged.json")
     parser.add_argument("--baseline-catalog", default="catalogs/rules_unified.json")
+    parser.add_argument(
+        "--preserve-baseline-rule-ids",
+        action="store_true",
+        help=(
+            "Keep the baseline catalog authoritative and add only genuinely new "
+            "generalized rules."
+        ),
+    )
     parser.add_argument("--distilled-output", default="results/unified_rules_3000/semantic_experience_distilled_for_cluster.json")
     parser.add_argument("--catalog-output", default="catalogs/rules_unified_3000.json")
     parser.add_argument("--report-output", default="results/unified_rules_3000/precluster_report.json")
@@ -597,6 +631,7 @@ def main() -> None:
             if args.scenario_cluster_blueprints is not None
             else None
         ),
+        preserve_baseline_rule_ids=bool(args.preserve_baseline_rule_ids),
     )
     print(_console_json({"normalization": report["normalization"], "catalog": report["catalog"]}))
 

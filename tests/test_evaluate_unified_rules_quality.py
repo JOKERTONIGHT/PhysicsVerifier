@@ -190,6 +190,67 @@ class EvaluateUnifiedRulesQualityTests(unittest.TestCase):
         self.assertEqual(report["cluster_quality"]["unclustered_rule_count"], 0)
         self.assertNotIn("继续补齐尚未进入 scenario clusters 的 topic。", report["overall"]["recommended_next_steps"])
 
+    def test_evaluate_catalog_quality_accepts_raw_retrieval_traces(self) -> None:
+        root = _case_dir()
+        catalog_path = root / "catalog.json"
+        proposals_path = root / "proposals.json"
+        runtime_path = root / "runtime.json"
+        output_path = root / "quality.json"
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "metadata": {
+                        "catalog_type": "unified_rules_v2",
+                        "schema_profile": "semantic_navigation_tree_minimal",
+                        "total_domains": 1,
+                        "total_topics": 1,
+                        "topics_with_rules": 1,
+                        "total_executable_rules": 1,
+                        "total_scenario_clusters": 1,
+                    },
+                    "domains": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        proposals_path.write_text(
+            json.dumps({"proposals": [], "failures": []}),
+            encoding="utf-8",
+        )
+        runtime_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "s1",
+                        "retrieved_topics": [{"topic": "T"}],
+                        "retrieved_clusters": [{"cluster": "C"}],
+                        "retrieved_rules": [],
+                        "semantic_selection_error": "",
+                    },
+                    {
+                        "id": "s2",
+                        "retrieved_topics": [{"topic": "T"}],
+                        "retrieved_clusters": [{"cluster": "C"}],
+                        "retrieved_rules": [{"rule_id": "r1"}],
+                        "semantic_selection_error": "",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        report = evaluate_catalog_quality(
+            catalog_path=catalog_path,
+            cluster_proposals_path=proposals_path,
+            runtime_eval_path=runtime_path,
+            output_path=output_path,
+        )
+
+        self.assertEqual(report["runtime_eval"]["sample_count"], 2)
+        self.assertEqual(report["runtime_eval"]["rule_selection_rate"], 0.5)
+        self.assertEqual(report["runtime_eval"]["average_selected_rules"], 0.5)
+        self.assertEqual(report["runtime_eval"]["empty_rule_sample_ids"], ["s1"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,6 +89,7 @@ class UnifiedSemanticMatcher:
         rule_candidate_batch_chars: int | None = None,
         max_response_tokens: int | None = None,
         json_retries: int | None = None,
+        request_timeout: float | None = None,
         allow_json_object_fallback: bool | None = None,
         structured_output_adapter: str | None = None,
     ) -> None:
@@ -126,6 +127,20 @@ class UnifiedSemanticMatcher:
             self.MAX_JSON_RETRIES,
             max(0, int(self.MAX_JSON_RETRIES if json_retries is None else json_retries)),
         )
+        timeout_env = norm_text(
+            os.getenv("UNIFIED_SEMANTIC_REQUEST_TIMEOUT_SEC")
+            or os.getenv("PHYSICSVERIFIER_LLM_TIMEOUT_SEC")
+            or ""
+        )
+        try:
+            configured_timeout = (
+                float(request_timeout)
+                if request_timeout is not None
+                else float(timeout_env or 120)
+            )
+        except (TypeError, ValueError):
+            configured_timeout = 120.0
+        self.request_timeout = max(1.0, configured_timeout)
         fallback_env = norm_text(
             os.getenv("UNIFIED_SEMANTIC_ALLOW_JSON_OBJECT_FALLBACK") or ""
         ).casefold()
@@ -183,6 +198,8 @@ class UnifiedSemanticMatcher:
                     else min(self.max_response_tokens, self.RETRY_RESPONSE_TOKENS)
                 ),
                 "json_attempts": self.json_retries + 1,
+                "request_timeout_seconds": self.request_timeout,
+                "sdk_max_retries": 0,
                 "structured_output": (
                     "forced_tool_call_schema_validated"
                     if self.structured_output_adapter == "forced_tool_call"
@@ -892,7 +909,12 @@ class UnifiedSemanticMatcher:
             raise RuntimeError("Semantic matcher model is not configured.")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is not configured.")
-        client_kwargs: Dict[str, Any] = {"api_key": self.api_key, "base_url": self.base_url}
+        client_kwargs: Dict[str, Any] = {
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "timeout": self.request_timeout,
+            "max_retries": 0,
+        }
         if httpx is not None:
             client_kwargs["http_client"] = httpx.Client(trust_env=self.trust_env)
         self._client = OpenAI(**client_kwargs)
@@ -1605,6 +1627,7 @@ class UnifiedSemanticMatcher:
         for cluster in topic_obj.get("scenario_clusters", []) or []:
             if not isinstance(cluster, dict):
                 continue
+            navigation_role = cls._cluster_navigation_role(cluster)
             cluster_rule_ids = [norm_text(item) for item in (cluster.get("rule_ids") or []) if norm_text(item)]
             rule_groups = []
             for group in cluster.get("rule_groups", []) or []:
@@ -1626,12 +1649,13 @@ class UnifiedSemanticMatcher:
                     "cluster_id": norm_text(cluster.get("id") or cluster.get("cluster_id") or ""),
                     "cluster": norm_text(cluster.get("name") or "Unknown"),
                     "summary": norm_text(cluster.get("summary") or ""),
-                    "navigation_role": cls._cluster_navigation_role(cluster),
+                    "navigation_role": navigation_role,
                     "rule_groups": rule_groups,
                     "rule_ids": cluster_rule_ids,
                     "representative_rules": cls._cluster_representative_rules(
                         rule_ids=cluster_rule_ids,
                         topic_rules=topic_rules,
+                        limit=12 if navigation_role == "deferred_bucket" else 3,
                     ),
                     "topic_obj": topic_obj,
                     "cluster_obj": cluster,
@@ -2744,11 +2768,13 @@ class UnifiedSemanticMatcher:
             "say that the solution is correct, incorrect, or violates the rule. Return selected applicable rules only; "
             "omission means not applicable, and rejected rules must never be emitted. For every selected rule, choose "
             "background_anchor_index from background_anchor_options and claim_anchor_index from claim_anchor_options. "
-            "Both indices are zero-based. Apply this strict conjunction before selecting: (1) the background quote "
-            "must establish every distinctive object, configuration, boundary condition, and operation required by "
-            "the rule trigger; (2) the claim quote must contain the specific formula, assumption, construction, or "
-            "step audited by check_logic. Generic object or quantity words are insufficient by themselves. Any "
-            "special configuration required by a rule must be explicitly established by the source quote. Rules "
+            "Both indices are zero-based. Apply this conjunction before selecting: (1) the full problem background "
+            "must establish the distinctive object, configuration, and boundary conditions required by the rule; "
+            "the selected background quote is the decisive source anchor and need not repeat every fact in isolation; "
+            "(2) the claim quote must contain the specific formula, assumption, construction, or step audited by "
+            "check_logic. A standard physical method or consequence may be implicit in an explicitly stated "
+            "configuration, but missing geometry, topology, boundary conditions, or numerical data must not be "
+            "invented. Generic object or quantity words are insufficient by themselves. Rules "
             "about a similar object under different "
             "conditions are false positives. If "
             "either exact anchor is unavailable, omit the rule. If a necessary physical fact appears only in the "
@@ -3009,7 +3035,7 @@ class UnifiedSemanticMatcher:
         self._begin_stage(
             "rule_confirmation",
             candidate_count=len(judgments),
-            reset=True,
+            reset="rule_confirmation" not in (self.last_trace.get("stages") or {}),
         )
         background_source = "\n".join(
             [
@@ -3089,9 +3115,11 @@ class UnifiedSemanticMatcher:
                 "that each preliminary rule has a potentially auditable solution step; your only task is to decide "
                 "whether the raw question/context actually establishes the rule's physical applicability. Every "
                 "preliminary rule is only a hypothesis produced by an independent batch. Classify each rule "
-                "independently; final ranking and capping happen later. Exact source quotation is necessary but not sufficient. Confirm a rule "
-                "only when one background option explicitly or unambiguously establishes its distinctive objects, "
-                "configuration, boundary conditions, operation, and target quantity. The prior stage has already "
+                "independently; final ranking and capping happen later. Consider the full raw question/context and "
+                "use one background option as the decisive source anchor; that anchor need not repeat every relevant "
+                "fact in isolation. Confirm a rule when the source establishes its distinctive objects, configuration, "
+                "boundary conditions, and target quantity. A standard physical method or consequence may be implicit "
+                "in that explicit configuration and need not be named by the problem. The prior stage has already "
                 "checked the solution-side auditable claim; do not repeat or infer that unavailable evidence. Shared "
                 "domain, topic, symbols, or generic object words are never evidence for a missing distinctive "
                 "precondition. Facts present only in an unseen solution must never be supplied to the problem. "
@@ -3099,7 +3127,8 @@ class UnifiedSemanticMatcher:
                 "one rule per domain or topic, and do not reject a rule merely because another rule overlaps it; "
                 "the unseen claim may make either rule necessary. Classify every preliminary rule exactly once using "
                 "one of these decisions: confirm, reject_missing_background, or reject_different_configuration. "
-                "Rejection is the default whenever a distinctive fact is absent. For a rejection set the background "
+                "Reject whenever a distinctive source fact is absent, contradicted, or replaced by a different "
+                "configuration; never invent missing geometry, topology, boundary conditions, or data. For a rejection set the background "
                 "anchor index to -1; for confirmation use a valid zero-based index. This is "
                 "applicability retrieval, not a correctness verdict. Return JSON only."
             ),
@@ -3164,6 +3193,8 @@ class UnifiedSemanticMatcher:
             self._trace_accept("rule_confirmation", self._compact_judgment(judgment))
         if not confirmed:
             self._set_empty_reason("rule_confirmation", "model_confirmed_no_rules")
+        else:
+            self._stage_trace("rule_confirmation")["empty_reason"] = ""
         self._active_stage = "rule"
         return confirmed
 
@@ -3190,10 +3221,16 @@ class UnifiedSemanticMatcher:
             )
             all_topic_candidates = self._build_rule_candidates(topic_match)
             allowed_ids = {norm_text(rule_id) for rule_id in item.get("rule_ids", []) or [] if norm_text(rule_id)}
-            rule_candidates = [candidate for candidate in all_topic_candidates if candidate["rule_id"] in allowed_ids]
+            already_attempted = attempted_rule_ids.setdefault(topic_key, set())
+            rule_candidates = [
+                candidate
+                for candidate in all_topic_candidates
+                if candidate["rule_id"] in allowed_ids
+                and candidate["rule_id"] not in already_attempted
+            ]
             if not rule_candidates:
                 return False
-            attempted_rule_ids.setdefault(topic_key, set()).update(candidate["rule_id"] for candidate in rule_candidates)
+            already_attempted.update(candidate["rule_id"] for candidate in rule_candidates)
             topic_obj = item.get("topic_obj") if isinstance(item.get("topic_obj"), dict) else {}
             cluster_judgments = self._select_rules_for_context(
                 sample=sample,
@@ -3454,6 +3491,96 @@ class UnifiedSemanticMatcher:
                     self._compact_judgment(omitted),
                     "confirmation_candidate_limit",
                 )
+            merged.sort(
+                key=lambda item: (
+                    -float(item["score"]),
+                    -float(item.get("background_order_score") or 0.0),
+                    item["domain"],
+                    item["topic"],
+                    item["rule_id"],
+                )
+            )
+
+        # A provisional rule is not a successful navigation result until the
+        # background-only gate confirms it. If every provisional rule for a
+        # topic is rejected, perform one bounded in-tree recovery: one
+        # untried primary cluster followed by one deferred bucket. This avoids
+        # the former dead end where a false provisional hit prevented access
+        # to a relevant coarse leaf.
+        confirmed_topic_keys = {
+            (item["domain"], item["topic"])
+            for item in merged
+        }
+        provisional_topic_keys = {
+            (item["domain"], item["topic"])
+            for item in all_judgments
+        }
+        for topic_match in selected_topic_list:
+            topic_key = (topic_match["domain"], topic_match["topic"])
+            if (
+                topic_key in confirmed_topic_keys
+                or topic_key not in provisional_topic_keys
+            ):
+                continue
+            all_clusters = self._build_cluster_candidates(topic_match)
+            attempted_ids = attempted_rule_ids.setdefault(topic_key, set())
+
+            def has_untried_rules(cluster: Dict[str, Any]) -> bool:
+                return any(
+                    norm_text(rule_id) not in attempted_ids
+                    for rule_id in (cluster.get("rule_ids") or [])
+                    if norm_text(rule_id)
+                )
+
+            recovery_groups = (
+                (
+                    "primary",
+                    "cluster_confirmation_backtrack",
+                    "confirmation_primary_backtrack",
+                ),
+                (
+                    "deferred_bucket",
+                    "cluster_confirmation_fallback",
+                    "confirmation_deferred_fallback",
+                ),
+            )
+            for navigation_role, stage, candidate_source in recovery_groups:
+                candidates = [
+                    cluster
+                    for cluster in all_clusters
+                    if cluster["navigation_role"] == navigation_role
+                    and has_untried_rules(cluster)
+                ]
+                recovered_cluster = self._select_one_navigation_cluster(
+                    sample=sample,
+                    topic_match=topic_match,
+                    candidates=candidates,
+                    background_analysis=background_analysis,
+                    stage=stage,
+                    candidate_source=candidate_source,
+                )
+                if recovered_cluster is None:
+                    continue
+                navigation_clusters.append(recovered_cluster)
+                judgment_start = len(all_judgments)
+                evaluate_cluster(recovered_cluster)
+                recovery_judgments = all_judgments[judgment_start:]
+                if not recovery_judgments:
+                    continue
+                recovery_pool = recovery_judgments[:confirmation_limit]
+                self._checkpoint_partial_items(
+                    "rule",
+                    [*merged, *recovery_pool],
+                )
+                recovered_rules = self._confirm_rule_judgments(
+                    sample=sample,
+                    background_analysis=background_analysis,
+                    judgments=recovery_pool,
+                )
+                if recovered_rules:
+                    merged.extend(recovered_rules)
+                    confirmed_topic_keys.add(topic_key)
+                    break
             merged.sort(
                 key=lambda item: (
                     -float(item["score"]),
