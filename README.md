@@ -28,6 +28,9 @@ PhysicsVerifier 用于检查物理竞赛题的模型解答。系统根据题目�
 所有项目命令必须先进入对应的 conda 环境。
 
 ```bash
+conda env create -f environment.yml
+conda activate physicsverifier
+
 python scripts/run_verifier.py --help
 ```
 
