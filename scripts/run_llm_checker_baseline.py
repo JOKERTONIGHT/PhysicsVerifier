@@ -33,8 +33,67 @@ def extract_json(text: str) -> dict:
             return json.loads(candidate)
         except json.JSONDecodeError as e:
             last_err = e
-    print(f"Failed to parse JSON: {last_err}\nRaw text: {text[:2000]}")
-    return {"diagnostics": []}
+    return {
+        "diagnostics": [],
+        "_parse_error": f"{type(last_err).__name__}: {last_err}" if last_err else "unknown_parse_error",
+    }
+
+
+def structured_output_kwargs(adapter: str) -> Dict[str, Any]:
+    schema = {
+        "type": "object",
+        "properties": {
+            "diagnostics": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string"},
+                        "evidence": {
+                            "type": "object",
+                            "properties": {"quote": {"type": "string"}},
+                            "required": ["quote"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "required": ["message", "evidence"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["diagnostics"],
+        "additionalProperties": False,
+    }
+    if adapter == "json_object":
+        return {"response_format": {"type": "json_object"}}
+    if adapter == "forced_tool_call":
+        return {
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "submit_diagnostics",
+                        "description": "Submit the physics-error diagnostics.",
+                        "parameters": schema,
+                    },
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": "submit_diagnostics"},
+            },
+        }
+    return {}
+
+
+def response_payload_text(response: Any, adapter: str) -> str:
+    message = response.choices[0].message
+    if adapter == "forced_tool_call":
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not tool_calls:
+            raise ValueError("forced_tool_call response did not contain a tool call")
+        return str(tool_calls[0].function.arguments or "")
+    return str(message.content or "")
 
 
 def _openai_disable_thinking_kwargs() -> Dict[str, Any]:
@@ -71,6 +130,12 @@ def main():
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b-instruct-2507", help="Model name")
     parser.add_argument("--out_json", type=str, required=True, help="Output JSON path")
     parser.add_argument(
+        "--output-adapter",
+        choices=["plain", "json_object", "forced_tool_call"],
+        default="plain",
+        help="Structured-output transport. Use forced_tool_call for OpenAI-compatible endpoints that support tools.",
+    )
+    parser.add_argument(
         "--flush-every",
         type=int,
         default=1,
@@ -102,7 +167,7 @@ def main():
     print(
         f"[baseline] loaded {len(data)} samples from {args.input!r} | "
         f"model={args.model!r} | progress every {max(0, int(args.progress_interval))} (0=off) | "
-        f"no_tqdm={bool(args.no_tqdm)}",
+        f"no_tqdm={bool(args.no_tqdm)} | output_adapter={args.output_adapter!r}",
         flush=True,
     )
 
@@ -185,10 +250,12 @@ Return ONLY the JSON object without any markdown formatting or extra text."""
         user_msg = f"--- Problem ---\n{question}\n\n--- Student Solution ---\n{prediction}\n\nReview the solution and output the JSON diagnostics."
         
         parsed = {"diagnostics": []}
+        parse_ok = False
+        attempt_logs: List[Dict[str, Any]] = []
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                resp = client.chat.completions.create(
+                request_kwargs: Dict[str, Any] = dict(
                     model=args.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -199,10 +266,24 @@ Return ONLY the JSON object without any markdown formatting or extra text."""
                     timeout=float(args.timeout),
                     **_openai_disable_thinking_kwargs(),
                 )
-                content = resp.choices[0].message.content
+                request_kwargs.update(structured_output_kwargs(args.output_adapter))
+                resp = client.chat.completions.create(**request_kwargs)
+                content = response_payload_text(resp, args.output_adapter)
                 parsed = extract_json(content)
+                parse_error = str(parsed.get("_parse_error") or "") if isinstance(parsed, dict) else ""
+                if parse_error:
+                    raise ValueError(f"invalid baseline JSON: {parse_error}")
+                parse_ok = True
+                attempt_logs.append({"attempt": attempt + 1, "ok": True})
                 break
             except Exception as e:
+                attempt_logs.append(
+                    {
+                        "attempt": attempt + 1,
+                        "ok": False,
+                        "error": f"{type(e).__name__}: {str(e)[:400]}",
+                    }
+                )
                 print(f"Error evaluating sample {item_id} (Attempt {attempt+1}/{max_retries}): {e}")
                 time.sleep(5)
             
@@ -211,6 +292,9 @@ Return ONLY the JSON object without any markdown formatting or extra text."""
             "topic": item.get("topic", "Unknown"),
             "verifier": f"baseline_llm_{args.model}",
             "diagnostics": normalize_baseline_diagnostics(parsed),
+            "output_adapter": args.output_adapter,
+            "parse_ok": parse_ok,
+            "attempt_logs": attempt_logs,
         }
         results.append(res_item)
         if len(results) % flush_every == 0:
