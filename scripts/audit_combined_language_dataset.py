@@ -70,7 +70,11 @@ def main() -> None:
     )
     parser.add_argument("--max-rollouts", type=int, default=0, help="0 = scan all rollout batches (slow on multi-GB files).")
     parser.add_argument("--out-json", type=str, default=str(REPO_ROOT / "data" / "derived" / "combined_language_audit.json"))
-    parser.add_argument("--out-md", type=str, default=str(REPO_ROOT / "docs" / "combined_language_audit_report.md"))
+    parser.add_argument(
+        "--out-md",
+        type=str,
+        default=str(REPO_ROOT / "results" / "data_audit" / "combined_language_audit_report.md"),
+    )
     args = parser.parse_args()
 
     src = Path(args.input)

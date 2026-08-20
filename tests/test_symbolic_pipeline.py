@@ -217,6 +217,7 @@ class ExperienceCodeSymbolicCheckTests(unittest.TestCase):
         verifier = PhysicsRuleVerifier(
             llm_model=None,
             unified_rules_path=str(catalog_path),
+            unified_retrieval_mode="lexical",
             experience_code_manifest_path=str(manifest_path),
             experience_code_module=module_name,
             log_dir=str(tmp / "logs"),

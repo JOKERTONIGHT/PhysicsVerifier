@@ -6,7 +6,7 @@ contract, and the per-primitive distribution.
 
 Usage:
     .venv/bin/python scripts/audit_symbolic_hints.py \
-        --catalog catalogs/unified_rule_library_v2_llm_enhanced_20260504.json
+        --catalog catalogs/legacy/unified_rule_library_v2_llm_enhanced_20260504.json
 """
 from __future__ import annotations
 

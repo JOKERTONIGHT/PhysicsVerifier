@@ -1,0 +1,17 @@
+name: physicsverifier
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - antlr4-python3-runtime==4.11.1
+      - httpx==0.28.1
+      - matplotlib>=3.8
+      - numpy>=2.0
+      - openai==2.31.0
+      - python-dotenv==1.2.2
+      - sympy==1.14.0
+      - tqdm==4.67.3

@@ -683,6 +683,16 @@ def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
             tagged_reference = topic.get("tagged_reference") if isinstance(topic.get("tagged_reference"), dict) else {}
             retrieval_hints = topic.get("retrieval_hints") if isinstance(topic.get("retrieval_hints"), dict) else {}
             knowledge_reference = topic.get("knowledge_reference") if isinstance(topic.get("knowledge_reference"), dict) else {}
+            includes = ordered_unique(
+                list(topic.get("includes") or [])
+                + list(retrieval_hints.get("includes") or [])
+                + list(retrieval_hints.get("positive_contexts") or [])
+            )
+            excludes = ordered_unique(
+                list(topic.get("excludes") or [])
+                + list(retrieval_hints.get("excludes") or [])
+                + list(retrieval_hints.get("negative_contexts") or [])
+            )
             out.append(
                 {
                     "domain": domain_name,
@@ -696,6 +706,8 @@ def build_topic_candidates(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
                     # LLM-enhanced signals (present only in enhanced catalogs)
                     "llm_problem_phrases": ordered_unique(retrieval_hints.get("llm_problem_phrases") or []),
                     "llm_discriminative_terms": ordered_unique(retrieval_hints.get("llm_discriminative_terms") or []),
+                    "includes": includes,
+                    "excludes": excludes,
                 }
             )
     return out
@@ -783,6 +795,12 @@ def score_topic_candidate(
         symbol_hits = [
             sym for sym in ordered_unique(candidate.get("required_symbols") or []) if match_phrase_or_symbol(sym, text_for_topic)
         ]
+    include_hits = [
+        item for item in ordered_unique(candidate.get("includes") or []) if match_phrase_or_symbol(item, text_for_topic)
+    ]
+    exclude_hits = [
+        item for item in ordered_unique(candidate.get("excludes") or []) if match_phrase_or_symbol(item, text_for_topic)
+    ]
 
     # LLM-enhanced signals (present only in LLM-enhanced catalogs)
     llm_phrase_hits: List[str] = []
@@ -812,7 +830,9 @@ def score_topic_candidate(
         8.0,
     )
     symbol_score = min(sum(_symbol_df_weight(hit, signal_df["symbol_df"]) for hit in symbol_hits), 3.0)
-    score = float(phrase_score + scene_score + keyword_score + symbol_score + llm_score)
+    include_score = min(len(include_hits) * 1.5, 4.5)
+    exclude_penalty = min(len(exclude_hits) * 3.0, 9.0)
+    score = max(0.0, float(phrase_score + scene_score + keyword_score + symbol_score + llm_score + include_score - exclude_penalty))
 
     return {
         "domain": candidate["domain"],
@@ -826,6 +846,9 @@ def score_topic_candidate(
             "symbol_gate_open": symbol_gate_open,
             "llm_phrase_hits": llm_phrase_hits,
             "llm_term_hits": llm_term_hits,
+            "include_hits": include_hits,
+            "exclude_hits": exclude_hits,
+            "exclude_penalty": round(exclude_penalty, 4),
         },
         "topic_obj": candidate["topic_obj"],
     }
@@ -942,7 +965,17 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
         for sym in ordered_unique(match_features.get("required_symbols") or [])
         if match_phrase_or_symbol(sym, hay_raw) or (hay_norm and match_phrase_or_symbol(sym, hay_norm))
     ]
-    negative_hits = _hits_in_student(list(ordered_unique(match_features.get("negative_keywords") or [])))
+    precision_negative = ordered_unique(rule.get("negative_conditions") or [])
+    precision_preconditions = ordered_unique(rule.get("preconditions") or [])
+    precision_violations = ordered_unique(rule.get("violation_signatures") or [])
+    precision_evidence = ordered_unique(rule.get("evidence_requirements") or [])
+
+    negative_hits = _hits_in_student(
+        list(ordered_unique(list(match_features.get("negative_keywords") or []) + precision_negative))
+    )
+    precondition_hits = _hits_in_student(precision_preconditions)
+    violation_signature_hits = _hits_in_student(precision_violations)
+    evidence_requirement_hits = _hits_in_student(precision_evidence)
     lexical_hits = len(trigger_hits) + len(object_hits) + len(symbol_hits)
 
     # LLM-enhanced signals (present only in enhanced catalogs)
@@ -991,6 +1024,9 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
         min(len(trigger_hits) * 3, 9)
         + min(len(object_hits) * 2, 6)
         + min(len(symbol_hits) * 2, 4)
+        + min(len(precondition_hits) * 1.0, 3.0)
+        + min(len(violation_signature_hits) * 1.5, 4.5)
+        + min(len(evidence_requirement_hits) * 0.8, 2.4)
         + support_prior
         + llm_rule_score
     )
@@ -1020,10 +1056,16 @@ def score_rule_candidate(rule: Dict[str, Any], text_for_rule: str) -> Dict[str, 
             "llm_term_hits": llm_term_hits,
             "llm_only_soft_hit": llm_only,
             "negative_keyword_hits": negative_hits,
+            "precondition_hits": precondition_hits,
+            "violation_signature_hits": violation_signature_hits,
+            "evidence_requirement_hits": evidence_requirement_hits,
             "negative_keyword_penalty": round(neg_penalty, 4),
             "score_components": {
                 "anchor_score": min(len(trigger_hits) * 3, 9) + min(len(symbol_hits) * 2, 4),
                 "object_score": min(len(object_hits) * 2, 6),
+                "precondition_score": min(len(precondition_hits) * 1.0, 3.0),
+                "violation_signature_score": min(len(violation_signature_hits) * 1.5, 4.5),
+                "evidence_requirement_score": min(len(evidence_requirement_hits) * 0.8, 2.4),
                 "support_prior": round(support_prior, 4),
                 "llm_hint_score": round(llm_rule_score, 4),
             },

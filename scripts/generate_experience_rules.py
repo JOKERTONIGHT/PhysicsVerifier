@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -27,12 +28,70 @@ class TopicItem:
     topic: str
 
 
+def _canonical_topic(raw_topic: Dict[str, Any], topics: List[TopicItem]) -> TopicItem:
+    if not topics:
+        raise ValueError("Topic catalog is empty.")
+    raw_domain = _normalize_text(raw_topic.get("domain", "")).casefold()
+    raw_name = _normalize_text(raw_topic.get("topic", "")).casefold()
+    exact = {
+        (item.domain.casefold(), item.topic.casefold()): item
+        for item in topics
+    }.get((raw_domain, raw_name))
+    if exact is not None:
+        return exact
+
+    def score(item: TopicItem) -> Tuple[float, float, str, str]:
+        domain = item.domain.casefold()
+        topic = item.topic.casefold()
+        domain_similarity = difflib.SequenceMatcher(None, raw_domain, domain).ratio()
+        topic_similarity = difflib.SequenceMatcher(None, raw_name, topic).ratio()
+        exact_bonus = 2.0 if raw_domain and raw_domain == domain else 0.0
+        topic_bonus = 2.0 if raw_name and raw_name == topic else 0.0
+        return (
+            exact_bonus + topic_bonus + domain_similarity + topic_similarity,
+            topic_similarity,
+            item.domain,
+            item.topic,
+        )
+
+    return max(topics, key=score)
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip())
 
 
 def _safe_id(value: Any) -> str:
     return str(value) if value is not None else "unknown"
+
+
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _extraction_fingerprint(
+    sample: Dict[str, Any],
+    *,
+    model: str,
+    max_rules_per_sample: int,
+) -> str:
+    payload = {
+        "prompt_version": 2,
+        "id": _safe_id(sample.get("id")),
+        "question": _normalize_text(sample.get("question", "")),
+        "prediction": _normalize_text(sample.get("prediction", "")),
+        "answer": _normalize_text(sample.get("answer", "")),
+        "model": model,
+        "max_rules_per_sample": int(max_rules_per_sample),
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _empty_auxiliary() -> Dict[str, Any]:
@@ -133,6 +192,8 @@ def _load_existing(path: Path) -> Dict[str, Any]:
 
 
 def _is_failure_placeholder(item: Dict[str, Any]) -> bool:
+    if item.get("status") == "failed":
+        return True
     audit = item.get("semantic_audit") if isinstance(item.get("semantic_audit"), dict) else {}
     text_parts = [str(audit.get("summary") or "")]
     for err in audit.get("key_errors") or []:
@@ -154,14 +215,19 @@ def _resume_done_map(existing_payload: Dict[str, Any]) -> Dict[str, Dict[str, An
     }
 
 
-def _build_client() -> Any:
+def _build_client(request_timeout: float) -> Any:
     if load_dotenv:
         load_dotenv()
     base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is not set")
-    return openai.OpenAI(base_url=base_url, api_key=api_key)
+    return openai.OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=max(1.0, float(request_timeout)),
+        max_retries=0,
+    )
 
 
 def _semantic_prompt(sample: Dict[str, Any], topics_block: str, max_rules_per_sample: int) -> Tuple[str, str]:
@@ -242,8 +308,71 @@ def _call_json(client: Any, model: str, system_prompt: str, user_prompt: str, te
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content
-    return json.loads(raw)
+    raw = str(response.choices[0].message.content or "").strip()
+    if not raw:
+        raise ValueError("empty model response")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        fenced = re.search(
+            r"```(?:json)?\s*(\{.*\})\s*```",
+            raw,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        candidate = fenced.group(1) if fenced else raw[raw.find("{") : raw.rfind("}") + 1]
+        if not candidate.startswith("{") or not candidate.endswith("}"):
+            raise ValueError("model response does not contain a JSON object")
+        parsed = json.loads(candidate)
+    if not isinstance(parsed, dict):
+        raise ValueError("model response must be a JSON object")
+    return parsed
+
+
+def _normalize_semantic_result(
+    parsed: Dict[str, Any],
+    *,
+    sample_id: str,
+    topics: List[TopicItem],
+    max_rules_per_sample: int,
+) -> Dict[str, Any]:
+    if not isinstance(parsed, dict):
+        raise ValueError("Semantic extraction response must be a JSON object.")
+    raw_topic = parsed.get("topic_guess") if isinstance(parsed.get("topic_guess"), dict) else {}
+    canonical_topic = _canonical_topic(raw_topic, topics)
+
+    normalized_rules: List[Dict[str, Any]] = []
+    rule_limit = max(0, int(max_rules_per_sample))
+    for rule in parsed.get("experience_rules", []) or []:
+        if rule_limit == 0:
+            break
+        if not isinstance(rule, dict):
+            continue
+        if not all(
+            _normalize_text(rule.get(field, ""))
+            for field in ("title", "trigger", "check_logic")
+        ):
+            continue
+        normalized_rules.append(rule)
+        if len(normalized_rules) >= rule_limit:
+            break
+    audit = parsed.get("semantic_audit")
+    if not isinstance(audit, dict):
+        audit = {
+            "is_correct": not normalized_rules,
+            "error_types": [],
+            "summary": "",
+            "key_errors": [],
+        }
+    return {
+        "sample_id": sample_id,
+        "status": "ok",
+        "topic_guess": {
+            "domain": canonical_topic.domain,
+            "topic": canonical_topic.topic,
+        },
+        "semantic_audit": audit,
+        "experience_rules": normalized_rules,
+    }
 
 
 def _fingerprint_rule(rule: Dict[str, Any], domain: str, topic: str) -> str:
@@ -283,9 +412,9 @@ def _build_distilled_library(samples_payload: List[Dict[str, Any]], min_count: i
                     "sample_ids": [],
                 },
             )
-            entry["count"] += 1
             if sample_id not in entry["sample_ids"]:
                 entry["sample_ids"].append(sample_id)
+            entry["count"] = len(entry["sample_ids"])
             _merge_auxiliary(entry["auxiliary"], _normalize_auxiliary(rule), sample_id)
 
     rules = [v for v in bucket.values() if int(v.get("count", 0)) >= min_count]
@@ -310,13 +439,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run pure semantic audit and distilled experience generation.")
     parser.add_argument("--input", type=str, default="data/evaluation_sample_300.json")
     parser.add_argument("--rules-catalog", type=str, default="catalogs/rules_catalog_top_down.json")
-    parser.add_argument("--model", type=str, default="gemini-3-flash-preview-thinking")
+    parser.add_argument("--model", type=str, default="deepseek-v4-flash-nothinking")
     parser.add_argument("--output", type=str, default="results/semantic_experience_300.json")
     parser.add_argument("--distilled-output", type=str, default="results/semantic_experience_distilled_300.json")
     parser.add_argument("--max-rules-per-sample", type=int, default=2)
     parser.add_argument("--min-rule-count", type=int, default=2)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-tokens", type=int, default=1200)
+    parser.add_argument("--request-timeout", type=float, default=120.0)
+    parser.add_argument("--attempts", type=int, default=2)
     parser.add_argument("--sleep", type=float, default=0.0)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
@@ -334,11 +465,18 @@ def main() -> None:
 
     if args.limit and args.limit > 0:
         samples = samples[: args.limit]
+    sample_ids = [_safe_id(sample.get("id")) for sample in samples if isinstance(sample, dict)]
+    if len(sample_ids) != len(samples) or any(
+        not sample_id or sample_id == "unknown" for sample_id in sample_ids
+    ):
+        raise SystemExit("Every input sample must be an object with a non-empty id.")
+    if len(sample_ids) != len(set(sample_ids)):
+        raise SystemExit("Input JSON contains duplicate sample ids.")
 
     topics = _load_topics(rules_catalog_path)
     topics_block = _topics_prompt(topics)
 
-    client = _build_client()
+    client = _build_client(args.request_timeout)
 
     existing_payload = _load_existing(output_path) if args.resume else {"samples": []}
     done_map = _resume_done_map(existing_payload)
@@ -348,7 +486,15 @@ def main() -> None:
 
     for sample in samples:
         sid = _safe_id(sample.get("id"))
-        if sid in done_map:
+        input_fingerprint = _extraction_fingerprint(
+            sample,
+            model=args.model,
+            max_rules_per_sample=args.max_rules_per_sample,
+        )
+        if (
+            sid in done_map
+            and done_map[sid].get("input_fingerprint") == input_fingerprint
+        ):
             all_outputs.append(done_map[sid])
             continue
 
@@ -356,7 +502,7 @@ def main() -> None:
 
         ok = False
         last_error = None
-        for _ in range(3):
+        for _ in range(max(1, int(args.attempts))):
             try:
                 parsed = _call_json(
                     client=client,
@@ -366,8 +512,14 @@ def main() -> None:
                     temperature=args.temperature,
                     max_tokens=args.max_tokens,
                 )
-                parsed["sample_id"] = sid
-                all_outputs.append(parsed)
+                normalized = _normalize_semantic_result(
+                    parsed,
+                    sample_id=sid,
+                    topics=topics,
+                    max_rules_per_sample=args.max_rules_per_sample,
+                )
+                normalized["input_fingerprint"] = input_fingerprint
+                all_outputs.append(normalized)
                 ok = True
                 break
             except Exception as exc:
@@ -378,6 +530,8 @@ def main() -> None:
             all_outputs.append(
                 {
                     "sample_id": sid,
+                    "status": "failed",
+                    "input_fingerprint": input_fingerprint,
                     "topic_guess": {"domain": "Unknown", "topic": "Unknown"},
                     "semantic_audit": {
                         "is_correct": False,
@@ -391,22 +545,36 @@ def main() -> None:
 
         processed += 1
         if processed % 10 == 0:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(
-                json.dumps({"samples": all_outputs}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
+            _write_json(
+                output_path,
+                {
+                    "metadata": {
+                        "generator": "semantic_experience_extractor_v2",
+                        "model": args.model,
+                        "max_rules_per_sample": args.max_rules_per_sample,
+                    },
+                    "samples": all_outputs,
+                },
             )
             print(f"Processed {processed}/{len(samples)}")
 
         if args.sleep > 0:
             time.sleep(args.sleep)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps({"samples": all_outputs}, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(
+        output_path,
+        {
+            "metadata": {
+                "generator": "semantic_experience_extractor_v2",
+                "model": args.model,
+                "max_rules_per_sample": args.max_rules_per_sample,
+            },
+            "samples": all_outputs,
+        },
+    )
 
     distilled = _build_distilled_library(all_outputs, min_count=max(1, int(args.min_rule_count)))
-    distilled_path.parent.mkdir(parents=True, exist_ok=True)
-    distilled_path.write_text(json.dumps(distilled, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(distilled_path, distilled)
 
     print(f"Done. Semantic sample output: {output_path}")
     print(f"Done. Distilled rule library: {distilled_path}")

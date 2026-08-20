@@ -97,6 +97,13 @@ def main() -> None:
         action="store_true",
         help="Regenerate existing LLM hints instead of only filling missing coverage.",
     )
+    enhance.add_argument("--rule-id", action="append", default=[], help="Only enhance this rule id; can be repeated.")
+    enhance.add_argument(
+        "--rule-ids-file",
+        type=str,
+        default="",
+        help="Optional JSON/text file containing rule ids to enhance. Keeps API use focused on FP rules.",
+    )
 
     args = parser.parse_args()
 
@@ -156,6 +163,19 @@ def main() -> None:
 
     if args.command == "enhance":
         catalog = load_json(args.catalog)
+        rule_ids_filter = set(str(item).strip() for item in (args.rule_id or []) if str(item).strip())
+        if args.rule_ids_file:
+            raw = Path(args.rule_ids_file).read_text(encoding="utf-8")
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    rule_ids_filter.update(str(item).strip() for item in parsed if str(item).strip())
+                elif isinstance(parsed, dict):
+                    rule_ids_filter.update(
+                        str(item).strip() for item in (parsed.get("rule_ids") or []) if str(item).strip()
+                    )
+            except json.JSONDecodeError:
+                rule_ids_filter.update(line.strip() for line in raw.splitlines() if line.strip())
         catalog = enhance_catalog(
             catalog,
             model=args.model,
@@ -166,6 +186,7 @@ def main() -> None:
             rule_batch_size=args.rule_batch_size,
             sleep_between_calls=args.sleep,
             refresh_existing=args.refresh_existing,
+            rule_ids_filter=rule_ids_filter or None,
             verbose=True,
         )
         write_json(args.output, catalog)

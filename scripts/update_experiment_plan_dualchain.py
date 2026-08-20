@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh auto-generated tables inside docs/实验计划与数据采集说明.md (stdlib only).
+"""Refresh auto-generated tables inside results/dual_chain_experiment_tracking.md (stdlib only).
 
 Markers in the doc (do not remove):
   <!-- AUTO:DUALCHAIN_BATCH_TABLES --> ... <!-- END:DUALCHAIN_BATCH_TABLES -->
@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLAN = ROOT / "docs" / "实验计划与数据采集说明.md"
+PLAN = ROOT / "results" / "dual_chain_experiment_tracking.md"
 STAMP_FILE = ROOT / "results" / "_batch_baseline_ablations_stamp.txt"
 STAMP_4B_FILE = ROOT / "results" / "_dualchain_check4b_stamp.txt"
 UTC = datetime.timezone.utc

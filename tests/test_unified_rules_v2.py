@@ -18,6 +18,132 @@ from rule_framework.builder import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _semantic_runtime_catalog() -> dict:
+    rule = {
+        "rule_id": "exp_pinhole",
+        "title": "Pinhole simultaneity",
+        "trigger": "pinhole camera sees moving rod",
+        "check_logic": "treat exposure as simultaneous in observer frame",
+        "error_type": "logic",
+        "scope": "domain",
+        "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": ["L", "v"]},
+        "match_features": {
+            "trigger_keywords": ["pinhole", "camera"],
+            "object_keywords": ["moving", "rod"],
+            "required_symbols": ["L", "v"],
+            "primitive": "none",
+        },
+    }
+    cluster = {
+        "id": "observation_and_projection",
+        "name": "Observation and Projection Geometry",
+        "summary": "Camera timing and projection in relativistic observation.",
+        "rule_groups": [],
+        "rule_ids": ["exp_pinhole"],
+    }
+    return {
+        "metadata": {"version": "2.0", "catalog_type": "unified_rules_v2"},
+        "domains": [
+            {
+                "name": "Modern Physics",
+                "topics": [
+                    {
+                        "name": "Special Relativity",
+                        "summary": "Relativistic observation and frame effects.",
+                        "rules": [rule],
+                        "scenario_clusters": [cluster],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+class _FakeSemanticMatcher:
+    available = True
+
+    def __init__(self, rule_score=0.93):
+        self.rule_score = float(rule_score)
+
+    def select_tree_semantically(self, sample_payload, catalog_payload):
+        topic = catalog_payload["domains"][0]["topics"][0]
+        cluster = topic["scenario_clusters"][0]
+        rule = topic["rules"][0]
+        return {
+            "input_policy": "background_navigation_prediction_rule_only",
+            "domain_judgments": [
+                {"domain": "Modern Physics", "score": 0.96, "reason": "relativistic observation"}
+            ],
+            "selected_domains": ["Modern Physics"],
+            "selected_topics": [
+                {
+                    "domain": "Modern Physics",
+                    "topic": "Special Relativity",
+                    "score": 0.94,
+                    "reason": "moving-rod observation",
+                    "topic_obj": topic,
+                }
+            ],
+            "selected_clusters": [
+                {
+                    "domain": "Modern Physics",
+                    "topic": "Special Relativity",
+                    "cluster_id": "observation_and_projection",
+                    "cluster": "Observation and Projection Geometry",
+                    "score": 0.92,
+                    "reason": "camera observation cluster",
+                    "cluster_obj": cluster,
+                }
+            ],
+            "selected_rules": [
+                {
+                    "domain": "Modern Physics",
+                    "topic": "Special Relativity",
+                    "cluster_id": "observation_and_projection",
+                    "cluster": "Observation and Projection Geometry",
+                    "score": self.rule_score,
+                    "reason": "directly applicable pinhole rule",
+                    "rule_obj": rule,
+                }
+            ],
+        }
+
+
+class _UnavailableSemanticMatcher:
+    available = False
+
+    def select_tree_semantically(self, sample_payload, catalog_payload):
+        raise AssertionError("unavailable matcher must not be called")
+
+
+class _EmptyRuleSemanticMatcher(_FakeSemanticMatcher):
+    def select_tree_semantically(self, sample_payload, catalog_payload):
+        result = super().select_tree_semantically(sample_payload, catalog_payload)
+        result["selected_rules"] = []
+        return result
+
+
+class _RecordingExperienceCodeEngine:
+    available = True
+
+    def __init__(self, topic_rule_ids):
+        self.topic_rule_ids = list(topic_rule_ids)
+        self.list_topic_calls = []
+        self.run_calls = []
+
+    def list_topic_rule_ids(self, domain, topic):
+        self.list_topic_calls.append((domain, topic))
+        return list(self.topic_rule_ids)
+
+    def run_rule(self, rule_id, sample):
+        self.run_calls.append(rule_id)
+        return {
+            "result": "fail",
+            "message": f"generated check failed for {rule_id}",
+            "evidence": "exposure as simultaneous",
+        }
+
+
 class UnifiedRulesV2RepositoryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -99,6 +225,34 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
 
 
 class UnifiedRulesV2UnitTests(unittest.TestCase):
+    def _run_semantic_symbolic_case(self, *, catalog, matcher, engine, suffix):
+        sample = {
+            "id": f"sample_{suffix}",
+            "question": "A pinhole camera observes a rod moving with velocity v.",
+            "prediction": "Treat the exposure as simultaneous in the observer frame.",
+            "answer": "",
+        }
+        test_dir = REPO_ROOT / "results" / f"_unified_v2_{suffix}_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=matcher,
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=True,
+            )
+            verifier.experience_code_engine = engine
+            verifier.semantic_checker.analyze = lambda _: {"diagnostics": []}
+            return verifier.verify(sample)
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
     def test_manual_override_relabels_generic_trig_rule(self) -> None:
         knowledge = {
             "domains": [
@@ -540,6 +694,7 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             verifier = PhysicsRuleVerifier(
                 llm_model=None,
                 unified_rules_path=str(catalog_path),
+                unified_retrieval_mode="lexical",
                 log_dir=str(test_dir),
                 results_dir=str(test_dir),
                 enable_agentic_postcheck=False,
@@ -555,9 +710,354 @@ class UnifiedRulesV2UnitTests(unittest.TestCase):
             self.assertTrue(result["retrieved_topics"])
             self.assertTrue(result["retrieved_rules"])
             self.assertEqual(result["topic"], "Kinematics")
+            self.assertEqual(result["retrieval_score_kind"], "lexical")
+            self.assertEqual(result["retrieved_rules"][0]["score_kind"], "lexical")
             self.assertEqual(result["retrieved_rules"][0]["scope"], "domain")
         finally:
             shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_runtime_verifier_uses_injected_semantic_tree_by_default(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        sample = {
+            "id": "sample_semantic_runtime",
+            "question": "A pinhole camera observes a rod moving with velocity v.",
+            "prediction": "Treat the exposure as simultaneous in the observer frame.",
+            "answer": "",
+        }
+        test_dir = REPO_ROOT / "results" / "_unified_v2_semantic_runtime_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=_FakeSemanticMatcher(),
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=False,
+            )
+            verifier.semantic_checker.analyze = lambda _: {"diagnostics": []}
+
+            def unexpected_lexical(*args, **kwargs):
+                raise AssertionError("semantic default must not call lexical retrieval")
+
+            verifier._retrieve_unified_v2_topics = unexpected_lexical
+            verifier._retrieve_unified_v2_rules = unexpected_lexical
+            result = verifier.verify(sample)
+
+            self.assertEqual(verifier.unified_retrieval_mode, "semantic")
+            self.assertEqual(result["selection_strategy"], "semantic_tree_selection")
+            self.assertEqual(result["semantic_selection_error"], "")
+            self.assertEqual(result["verifier"], "unified_v2_semantic_rule_based")
+            self.assertEqual(result["topic"], "Special Relativity")
+            self.assertEqual(result["retrieved_clusters"][0]["cluster_id"], "observation_and_projection")
+            self.assertEqual(result["retrieved_rules"][0]["rule_id"], "exp_pinhole")
+            self.assertEqual(result["retrieval_score_kind"], "semantic_0_1")
+            self.assertEqual(result["retrieved_rules"][0]["score_kind"], "semantic_0_1")
+            self.assertEqual(result["retrieved_rules"][0]["publish_gate"]["score_kind"], "semantic_0_1")
+            self.assertEqual(verifier.semantic_checker.rules_to_check, ["exp_pinhole"])
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_public_semantic_retrieval_trace_does_not_call_checker_or_symbolic(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        sample = {
+            "id": "sample_semantic_retrieval_only",
+            "question": "A pinhole camera observes a rod moving with velocity v.",
+            "prediction": "Treat the exposure as simultaneous in the observer frame.",
+            "answer": "",
+        }
+        test_dir = REPO_ROOT / "results" / "_unified_v2_semantic_retrieval_only_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=_FakeSemanticMatcher(),
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=True,
+            )
+
+            def unexpected_checker(_):
+                raise AssertionError("retrieval-only must not call Semantic Checker")
+
+            class UnexpectedSymbolicEngine:
+                available = True
+
+                def run_rule(self, *args, **kwargs):
+                    raise AssertionError("retrieval-only must not run generated symbolic checks")
+
+                def list_topic_rule_ids(self, *args, **kwargs):
+                    raise AssertionError("retrieval-only must not enumerate symbolic checks")
+
+            verifier.semantic_checker.analyze = unexpected_checker
+            verifier.experience_code_engine = UnexpectedSymbolicEngine()
+            checker_rules_before = list(verifier.semantic_checker.rules_to_check)
+            trace = verifier.retrieve_unified_semantic_tree(sample)
+
+            self.assertEqual(trace["id"], sample["id"])
+            self.assertEqual(trace["verifier"], "unified_v2_semantic_retrieval_only")
+            self.assertEqual(trace["selection_strategy"], "semantic_tree_selection")
+            self.assertEqual(trace["topic"], "Special Relativity")
+            self.assertEqual(trace["retrieved_domains"][0]["domain"], "Modern Physics")
+            self.assertEqual(trace["retrieved_topics"][0]["topic"], "Special Relativity")
+            self.assertEqual(trace["retrieved_clusters"][0]["cluster_id"], "observation_and_projection")
+            self.assertEqual(trace["retrieved_rules"][0]["rule_id"], "exp_pinhole")
+            self.assertNotIn("diagnostics", trace)
+            self.assertEqual(verifier.semantic_checker.rules_to_check, checker_rules_before)
+            json.dumps(trace, ensure_ascii=False)
+
+            verifier.unified_retrieval_mode = "lexical"
+            with self.assertRaisesRegex(ValueError, "requires unified_retrieval_mode='semantic'"):
+                verifier.retrieve_unified_semantic_tree(sample)
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_semantic_min_publish_score_keeps_trace_but_blocks_execution(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        sample = {
+            "id": "sample_semantic_publish_threshold",
+            "question": "A pinhole camera observes a rod moving with velocity v.",
+            "prediction": "Treat the exposure as simultaneous in the observer frame.",
+            "answer": "",
+        }
+        engine = _RecordingExperienceCodeEngine(["exp_pinhole"])
+        test_dir = REPO_ROOT / "results" / "_unified_v2_semantic_publish_threshold_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=_FakeSemanticMatcher(rule_score=0.93),
+                semantic_min_publish_score=0.95,
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=True,
+            )
+            verifier.experience_code_engine = engine
+            verifier.semantic_checker.rules_to_check = []
+
+            def unexpected_checker(_):
+                raise AssertionError("below-threshold semantic rule must not enter the checker")
+
+            verifier.semantic_checker.analyze = unexpected_checker
+            result = verifier.verify(sample)
+
+            self.assertEqual(result["semantic_min_publish_score"], 0.95)
+            self.assertEqual([item["rule_id"] for item in result["retrieved_rules"]], ["exp_pinhole"])
+            gate = result["retrieved_rules"][0]["publish_gate"]
+            self.assertFalse(gate["publishable"])
+            self.assertIn("below_semantic_publish_score", gate["reasons"])
+            self.assertEqual(gate["min_publish_score"], 0.95)
+            self.assertEqual(verifier.semantic_checker.rules_to_check, [])
+            self.assertEqual(engine.list_topic_calls, [])
+            self.assertEqual(engine.run_calls, [])
+            self.assertEqual(result["experience_code_post_diagnostics"], [])
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_unavailable_semantic_matcher_does_not_fall_back_to_lexical(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        sample = {
+            "id": "sample_semantic_unavailable",
+            "question": "A pinhole camera observes a moving rod.",
+            "prediction": "Use length contraction.",
+            "answer": "",
+        }
+        test_dir = REPO_ROOT / "results" / "_unified_v2_semantic_unavailable_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=_UnavailableSemanticMatcher(),
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=False,
+            )
+
+            def unexpected_lexical(*args, **kwargs):
+                raise AssertionError("unavailable semantic matcher must not trigger lexical fallback")
+
+            verifier._retrieve_unified_v2_topics = unexpected_lexical
+            verifier._retrieve_unified_v2_rules = unexpected_lexical
+            result = verifier.verify(sample)
+
+            self.assertEqual(result["selection_strategy"], "semantic_unavailable")
+            self.assertEqual(result["semantic_failed_stage"], "initialization")
+            self.assertIn("not available", result["semantic_selection_error"])
+            self.assertEqual(result["retrieved_topics"], [])
+            self.assertEqual(result["retrieved_clusters"], [])
+            self.assertEqual(result["retrieved_rules"], [])
+            self.assertEqual(result["verifier"], "unified_v2_semantic_rule_based")
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_run_batch_fail_fast_keeps_failure_trace_and_allows_semantic_empty(self) -> None:
+        catalog = _semantic_runtime_catalog()
+
+        class ErrorMatcher:
+            available = True
+
+            def __init__(self):
+                self.calls = []
+
+            def select_tree_semantically(self, sample_payload, catalog_payload):
+                self.calls.append(str(sample_payload.get("id")))
+                raise RuntimeError("fake API failure")
+
+        class EmptyMatcher:
+            available = True
+
+            def __init__(self):
+                self.calls = []
+
+            def select_tree_semantically(self, sample_payload, catalog_payload):
+                self.calls.append(str(sample_payload.get("id")))
+                return {
+                    "domain_judgments": [],
+                    "selected_domains": [],
+                    "selected_topics": [],
+                    "selected_clusters": [],
+                    "selected_rules": [],
+                }
+
+        test_dir = REPO_ROOT / "results" / "_unified_v2_semantic_fail_fast_test"
+        if test_dir.exists():
+            shutil.rmtree(test_dir, ignore_errors=True)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            catalog_path = test_dir / "rules_unified.json"
+            catalog_path.write_text(json.dumps(catalog, ensure_ascii=False), encoding="utf-8")
+            samples = [
+                {"id": "first", "question": "q1", "prediction": "p1", "answer": ""},
+                {"id": "second", "question": "q2", "prediction": "p2", "answer": ""},
+            ]
+
+            error_matcher = ErrorMatcher()
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=error_matcher,
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=False,
+            )
+            partial = verifier.run_batch(
+                samples,
+                progress_interval=0,
+                fail_fast_on_semantic_error=True,
+            )
+            self.assertEqual(error_matcher.calls, ["first"])
+            self.assertEqual(len(partial), 1)
+            self.assertEqual(partial[0]["id"], "first")
+            self.assertEqual(partial[0]["selection_strategy"], "semantic_error")
+            self.assertEqual(partial[0]["semantic_failed_stage"], "tree")
+            self.assertIn("fake API failure", partial[0]["semantic_selection_error"])
+
+            empty_matcher = EmptyMatcher()
+            verifier = PhysicsRuleVerifier(
+                llm_model=None,
+                unified_rules_path=str(catalog_path),
+                semantic_matcher=empty_matcher,
+                log_dir=str(test_dir),
+                results_dir=str(test_dir),
+                enable_symbolic_check=False,
+            )
+            completed = verifier.run_batch(
+                samples,
+                progress_interval=0,
+                fail_fast_on_semantic_error=True,
+            )
+            self.assertEqual(empty_matcher.calls, ["first", "second"])
+            self.assertEqual(len(completed), 2)
+            self.assertEqual(
+                [item["selection_strategy"] for item in completed],
+                ["semantic_tree_empty", "semantic_tree_empty"],
+            )
+        finally:
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    def test_semantic_bottom_up_runs_only_selected_publishable_rules(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        topic = catalog["domains"][0]["topics"][0]
+        unselected_rule = dict(topic["rules"][0])
+        unselected_rule.update(
+            {
+                "rule_id": "exp_unselected",
+                "title": "Unselected neighboring rule",
+            }
+        )
+        topic["rules"].append(unselected_rule)
+        engine = _RecordingExperienceCodeEngine(["exp_pinhole", "exp_unselected"])
+
+        result = self._run_semantic_symbolic_case(
+            catalog=catalog,
+            matcher=_FakeSemanticMatcher(),
+            engine=engine,
+            suffix="semantic_bottom_up_selected_only",
+        )
+
+        self.assertEqual(engine.list_topic_calls, [])
+        self.assertEqual(engine.run_calls, ["exp_pinhole"])
+        self.assertEqual(
+            [item["rule_id"] for item in result["experience_code_post_diagnostics"]],
+            ["exp_pinhole"],
+        )
+        self.assertEqual(
+            [item["experience_code"]["rule_id"] for item in result["experience_post_diagnostics"]],
+            ["exp_pinhole"],
+        )
+
+    def test_semantic_tree_empty_does_not_sweep_topic_experience_code(self) -> None:
+        engine = _RecordingExperienceCodeEngine(["exp_pinhole"])
+
+        result = self._run_semantic_symbolic_case(
+            catalog=_semantic_runtime_catalog(),
+            matcher=_EmptyRuleSemanticMatcher(),
+            engine=engine,
+            suffix="semantic_bottom_up_empty",
+        )
+
+        self.assertEqual(result["selection_strategy"], "semantic_tree_empty")
+        self.assertEqual(engine.list_topic_calls, [])
+        self.assertEqual(engine.run_calls, [])
+        self.assertEqual(result["experience_code_post_diagnostics"], [])
+        self.assertEqual(result["experience_post_diagnostics"], [])
+
+    def test_semantic_bottom_up_skips_selected_rule_blocked_by_static_gate(self) -> None:
+        catalog = _semantic_runtime_catalog()
+        catalog["domains"][0]["topics"][0]["rules"][0]["publishable"] = False
+        engine = _RecordingExperienceCodeEngine(["exp_pinhole"])
+
+        result = self._run_semantic_symbolic_case(
+            catalog=catalog,
+            matcher=_FakeSemanticMatcher(),
+            engine=engine,
+            suffix="semantic_bottom_up_static_gate",
+        )
+
+        self.assertFalse(result["retrieved_rules"][0]["publish_gate"]["publishable"])
+        self.assertEqual(engine.list_topic_calls, [])
+        self.assertEqual(engine.run_calls, [])
+        self.assertEqual(result["experience_code_post_diagnostics"], [])
+        self.assertEqual(result["experience_post_diagnostics"], [])
 
     def test_meta_rules_are_deprioritized_inside_same_topic(self) -> None:
         catalog = {

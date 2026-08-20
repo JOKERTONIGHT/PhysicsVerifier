@@ -15,6 +15,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from core.physics_rule_verifier import PhysicsRuleVerifier
 
 
+def _write_json_checkpoint(path: Path, payload: Any) -> None:
+    """Atomically preserve completed samples during long retrieval runs."""
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(path)
+
+
 def _strip_symbolic_fields_from_diagnostic(d: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(d)
     out.pop("symbolic_cross_checks", None)
@@ -32,9 +39,63 @@ def _build_main_result(sample_result: Dict[str, Any]) -> Dict[str, Any]:
         "id": sample_result.get("id"),
         "topic": sample_result.get("topic"),
         "verifier": sample_result.get("verifier"),
+        "unified_retrieval_mode": sample_result.get("unified_retrieval_mode"),
+        "semantic_min_publish_score": sample_result.get("semantic_min_publish_score"),
+        "selection_strategy": sample_result.get("selection_strategy"),
+        "retrieval_score_kind": sample_result.get("retrieval_score_kind"),
+        "semantic_selection_error": sample_result.get("semantic_selection_error"),
+        "semantic_failed_stage": sample_result.get("semantic_failed_stage"),
+        "terminal_stage": sample_result.get("terminal_stage"),
+        "empty_reason": sample_result.get("empty_reason"),
         "diagnostics": diagnostics,
         "score": sample_result.get("score"),
     }
+
+
+def _print_semantic_retrieval_summary(raw_results: List[Dict[str, Any]]) -> None:
+    semantic_results = [
+        item
+        for item in (raw_results or [])
+        if isinstance(item, dict)
+        and str(item.get("selection_strategy") or "").startswith("semantic_")
+    ]
+    if not semantic_results:
+        return
+
+    rule_hit_samples = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") == "semantic_tree_selection"
+            and bool(item.get("retrieved_rules"))
+        ]
+    )
+    empty_without_rules = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") == "semantic_tree_empty"
+        ]
+    )
+    errors = len(
+        [
+            item
+            for item in semantic_results
+            if str(item.get("selection_strategy") or "") in {"semantic_error", "semantic_unavailable"}
+        ]
+    )
+    print(
+        "[PhysicsVerifier] semantic retrieval summary: "
+        f"processed={len(semantic_results)}, rule_hit_samples={rule_hit_samples}, "
+        f"empty_without_rules={empty_without_rules}, errors={errors}",
+        flush=True,
+    )
+    if empty_without_rules:
+        print(
+            "[PhysicsVerifier] semantic_tree_empty is not a successful rule hit; "
+            "inspect terminal_stage and empty_reason in the saved trace.",
+            flush=True,
+        )
 
 
 def _build_symbolic_audit(sample_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,7 +224,23 @@ def main() -> None:
         "--full-output",
         type=str,
         default="",
-        help="Optional path to write full raw verifier outputs (includes retrieved topics/rules and agentic payload).",
+        help="Optional path for full traces, including selected domains/topics/clusters/rules and gate details.",
+    )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help=(
+            "Run only the canonical unified-v2 semantic Domain/Topic/Cluster/Rule tree. "
+            "Write the full retrieval trace to --output without invoking the Semantic Checker or symbolic checks."
+        ),
+    )
+    parser.add_argument(
+        "--continue-on-semantic-error",
+        action="store_true",
+        help=(
+            "Continue processing remaining samples after semantic API/JSON failures. "
+            "All partial traces are saved, but the command still exits non-zero when any failure occurred."
+        ),
     )
     parser.add_argument("--catalog", type=str, default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
@@ -222,7 +299,13 @@ def main() -> None:
         "--min-diagnostic-rule-score",
         type=float,
         default=None,
-        help="Override the minimum rule score for diagnostic publication/sweeps.",
+        help="Lexical diagnostics only: override the legacy lexical rule-score threshold.",
+    )
+    parser.add_argument(
+        "--semantic-min-publish-score",
+        type=float,
+        default=None,
+        help="Semantic mode: minimum 0-1 API score for checker injection/publication; trace keeps lower scores.",
     )
     parser.add_argument(
         "--unified-rule-top-n",
@@ -231,9 +314,36 @@ def main() -> None:
         help="Unified v2: maximum rules to retrieve per sample for SRD injection (default 6).",
     )
     parser.add_argument(
+        "--unified-retrieval-mode",
+        choices=["semantic", "lexical"],
+        default="semantic",
+        help="Unified v2 retrieval path. Semantic API tree is the production default; lexical is diagnostics only.",
+    )
+    parser.add_argument(
+        "--semantic-json-attempts",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Total JSON-response attempts per semantic selection stage (initial request included; N >= 1).",
+    )
+    parser.add_argument(
+        "--semantic-output-adapter",
+        choices=[
+            "openai_json_schema",
+            "vllm_structured_outputs",
+            "vllm_guided_json",
+            "forced_tool_call",
+        ],
+        default=None,
+        help=(
+            "Structured-output transport for semantic retrieval. "
+            "Defaults to UNIFIED_SEMANTIC_OUTPUT_ADAPTER or openai_json_schema."
+        ),
+    )
+    parser.add_argument(
         "--topic-skip-prediction",
         action="store_true",
-        help="For unified v2, exclude prediction from topic retrieval text (sets PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION).",
+        help="Lexical diagnostics only: exclude prediction text from topic scoring.",
     )
     parser.add_argument(
         "--max-per-sample",
@@ -268,8 +378,17 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    if args.semantic_json_attempts is not None and args.semantic_json_attempts < 1:
+        parser.error("--semantic-json-attempts must be at least 1")
+
     if args.topic_skip_prediction:
         os.environ["PHYSICSVERIFIER_TOPIC_SKIP_PREDICTION"] = "1"
+        if args.unified_retrieval_mode == "semantic":
+            print(
+                "[PhysicsVerifier] --topic-skip-prediction is ignored in semantic mode; "
+                "Domain/Topic/Cluster already use question+context only.",
+                flush=True,
+            )
 
     with open(args.input, "r", encoding="utf-8") as f:
         samples = json.load(f)
@@ -295,47 +414,130 @@ def main() -> None:
         max_diagnostics_per_paragraph=args.max_per_paragraph,
         quote_required_symbol_ratio=args.quote_symbol_ratio,
         unified_rule_top_n=args.unified_rule_top_n,
+        unified_retrieval_mode=args.unified_retrieval_mode,
+        semantic_min_publish_score=args.semantic_min_publish_score,
+        semantic_json_attempts=args.semantic_json_attempts,
+        semantic_output_adapter=args.semantic_output_adapter,
     )
 
-    raw_results = verifier.run_batch(
-        samples,
-        progress_interval=max(0, int(args.progress_interval)),
-        verbose_per_sample=bool(args.verbose_per_sample),
-    )
+    if args.retrieval_only:
+        if not verifier._unified_v2_mode:
+            parser.error("--retrieval-only requires a unified_rules_v2 catalog via --unified-catalog")
+        if args.unified_retrieval_mode != "semantic":
+            parser.error("--retrieval-only requires --unified-retrieval-mode semantic")
 
-    # Main output: only final diagnostics (after symbolic suppression), without symbolic metadata.
-    results = [_build_main_result(r) for r in (raw_results or []) if isinstance(r, dict)]
-
-    # Symbolic audit output: only samples that had symbolic checks or produced symbolic outputs.
-    symbolic_audit_all = [_build_symbolic_audit(r) for r in (raw_results or []) if isinstance(r, dict)]
-    symbolic_audit = [
-        a
-        for a in symbolic_audit_all
-        if (
-            a.get("checked_diagnostics")
-            or a.get("symbolic_checks")
-            or a.get("experience_code_checks")
-            or a.get("suppressed_diagnostics")
+    if (
+        verifier._unified_v2_mode
+        and args.unified_retrieval_mode == "semantic"
+        and (
+            verifier.semantic_matcher is None
+            or not bool(getattr(verifier.semantic_matcher, "available", False))
         )
-    ]
+    ):
+        print(
+            "Semantic unified retrieval is required but unavailable. Configure OPENAI_API_KEY, "
+            "the model, and optionally OPENAI_BASE_URL/OPENAI_API_BASE.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.retrieval_only:
+        raw_results = []
+        progress_interval = max(0, int(args.progress_interval))
+        for index, sample in enumerate(samples, start=1):
+            if args.verbose_per_sample:
+                print(f"Retrieving semantic tree for sample {sample.get('id')}...", flush=True)
+            result = verifier.retrieve_unified_semantic_tree(sample)
+            raw_results.append(result)
+            _write_json_checkpoint(out_path, raw_results)
+            if progress_interval > 0 and (index % progress_interval == 0 or index == n_samples):
+                print(
+                    f"[PhysicsVerifier] retrieval progress {index}/{n_samples} samples | "
+                    f"last_id={sample.get('id')!r}",
+                    flush=True,
+                )
+            if (
+                not args.continue_on_semantic_error
+                and str(result.get("selection_strategy") or "")
+                in {"semantic_error", "semantic_unavailable"}
+            ):
+                break
 
-    sym_path = Path(args.symbolic_output)
-    sym_path.parent.mkdir(parents=True, exist_ok=True)
-    sym_path.write_text(json.dumps(symbolic_audit, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_json_checkpoint(out_path, raw_results)
+        print(f"Semantic retrieval traces saved to {out_path}")
+    else:
+        raw_results = verifier.run_batch(
+            samples,
+            progress_interval=max(0, int(args.progress_interval)),
+            verbose_per_sample=bool(args.verbose_per_sample),
+            fail_fast_on_semantic_error=(
+                args.unified_retrieval_mode == "semantic"
+                and not args.continue_on_semantic_error
+            ),
+        )
 
-    if args.full_output:
-        full_path = Path(args.full_output)
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Main output: only final diagnostics (after symbolic suppression), without symbolic metadata.
+        results = [_build_main_result(r) for r in (raw_results or []) if isinstance(r, dict)]
 
-    print(f"Done. Results saved to {out_path}")
-    print(f"Done. Symbolic audit saved to {sym_path}")
-    if args.full_output:
-        print(f"Done. Full raw results saved to {args.full_output}")
+        # Symbolic audit output: only samples that had symbolic checks or produced symbolic outputs.
+        symbolic_audit_all = [_build_symbolic_audit(r) for r in (raw_results or []) if isinstance(r, dict)]
+        symbolic_audit = [
+            a
+            for a in symbolic_audit_all
+            if (
+                a.get("checked_diagnostics")
+                or a.get("symbolic_checks")
+                or a.get("experience_code_checks")
+                or a.get("suppressed_diagnostics")
+            )
+        ]
+
+        out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        sym_path = Path(args.symbolic_output)
+        sym_path.parent.mkdir(parents=True, exist_ok=True)
+        sym_path.write_text(json.dumps(symbolic_audit, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        if args.full_output:
+            full_path = Path(args.full_output)
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(json.dumps(raw_results, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        print(f"Done. Results saved to {out_path}")
+        print(f"Done. Symbolic audit saved to {sym_path}")
+        if args.full_output:
+            print(f"Done. Full raw results saved to {args.full_output}")
+
+    _print_semantic_retrieval_summary(raw_results or [])
+
+    semantic_failures = [
+        item
+        for item in (raw_results or [])
+        if str(item.get("selection_strategy") or "") in {"semantic_error", "semantic_unavailable"}
+    ]
+    if semantic_failures:
+        failed = semantic_failures[0]
+        print(
+            "Semantic retrieval failed; available results and traces were saved. "
+            f"sample={failed.get('id')!r}, stage={failed.get('semantic_failed_stage')!r}, "
+            f"error={failed.get('semantic_selection_error')!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    if args.retrieval_only and raw_results and not any(
+        str(item.get("selection_strategy") or "") == "semantic_tree_selection"
+        and bool(item.get("retrieved_rules"))
+        for item in raw_results
+        if isinstance(item, dict)
+    ):
+        print(
+            "Semantic retrieval completed without any rule hit; traces were saved for diagnosis.",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":

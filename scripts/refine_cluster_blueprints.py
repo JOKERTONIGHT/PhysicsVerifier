@@ -232,7 +232,11 @@ def refine_cluster_proposals(
     }
 
 
-def build_generated_blueprints_from_refined_proposals(refined_payload: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+def build_generated_blueprints_from_refined_proposals(
+    refined_payload: Dict[str, Any],
+    *,
+    rule_index: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, List[Dict[str, Any]]]:
     out: Dict[str, List[Dict[str, Any]]] = {}
     residual_chunk_size = 12
     for proposal in refined_payload.get("proposals", []) or []:
@@ -280,21 +284,41 @@ def build_generated_blueprints_from_refined_proposals(refined_payload: Dict[str,
         for chunk_index, start in enumerate(range(0, len(residual_rule_ids), residual_chunk_size), start=1):
             chunk_rule_ids = residual_rule_ids[start : start + residual_chunk_size]
             cluster_id = f"residual_rules_{chunk_index:02d}"
+            chunk_rules = [
+                rule_index[rule_id]
+                for rule_id in chunk_rule_ids
+                if rule_index and rule_id in rule_index
+            ]
+            titles = _ordered_unique(
+                _norm_text(rule.get("title") or "") for rule in chunk_rules
+            )
+            triggers = _ordered_unique(
+                _norm_text(rule.get("trigger") or "")[:160] for rule in chunk_rules
+            )
+            semantic_summary = (
+                f"Topic-specific checks: {'; '.join(titles)}"
+                if titles
+                else "Residual topic-specific checks outside the stronger scenario buckets."
+            )
             topic_clusters.append(
                 {
                     "cluster_id": cluster_id,
                     "name": f"Residual Topic Rules {chunk_index:02d}",
-                    "description": "Residual topic rules grouped explicitly so runtime navigation does not depend on one broad general reasoning bucket.",
-                    "includes": ["residual topic-specific checks"],
+                    "description": semantic_summary,
+                    "includes": titles or ["residual topic-specific checks"],
                     "excludes": [],
-                    "entry_cues": [],
+                    "entry_cues": triggers,
                     "related_clusters": [],
                     "rule_groups": [
                         {
                             "group_id": f"{cluster_id}_checks",
                             "name": f"Residual Topic Rule Checks {chunk_index:02d}",
-                            "summary": "Residual topic-specific checks outside the stronger scenario buckets.",
-                            "activation_condition": "Use when the problem belongs to the topic but does not match a stronger named scenario cluster.",
+                            "summary": semantic_summary,
+                            "activation_condition": (
+                                f"Use for: {'; '.join(triggers)}"
+                                if triggers
+                                else "Use when the problem belongs to the topic but does not match a stronger named scenario cluster."
+                            ),
                             "rule_ids": chunk_rule_ids,
                         }
                     ],

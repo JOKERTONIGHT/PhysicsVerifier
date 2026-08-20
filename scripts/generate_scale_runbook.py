@@ -31,7 +31,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
     return [
         f"mkdir -p results/checkpoints/{name} results/scale_curve/{name} catalogs/checkpoints",
         (
-            "./.venv/bin/python scripts/generate_experience_rules.py "
+            "python scripts/generate_experience_rules.py "
             f"--input {expansion_input} "
             "--rules-catalog catalogs/rules_catalog_top_down.json "
             f"--model {model} "
@@ -39,7 +39,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
             f"--distilled-output {distilled_output}"
         ),
         (
-            "./.venv/bin/python scripts/generate_symbolic_checks.py "
+            "python scripts/generate_symbolic_checks.py "
             f"--input {distilled_output} "
             "--model gpt-4.1-mini "
             "--output-module symbolic/generated_experience_checks.py "
@@ -47,12 +47,12 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
             f"--report {translation_report} --repair"
         ),
         (
-            "./.venv/bin/python scripts/manage_rule_library.py build "
+            "python scripts/manage_rule_library.py build "
             f"--experience {distilled_output} "
             f"--output {unified_catalog}"
         ),
         (
-            "./.venv/bin/python scripts/run_verifier.py "
+            "python scripts/run_verifier.py "
             f"--input {eval100_input} "
             f"--output {eval100_result} "
             f"--symbolic-output {eval100_audit} "
@@ -63,7 +63,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
             "--no-agentic"
         ),
         (
-            "./.venv/bin/python scripts/compute_strict_eval_metrics.py "
+            "python scripts/compute_strict_eval_metrics.py "
             f"--predictions {eval100_result} "
             f"--audit {eval100_audit} "
             "--rubric-meta data/rubric_eval_100_meta.json "
@@ -76,7 +76,7 @@ def _cmds_for_ckpt(ckpt: Dict[str, Any], model: str) -> List[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate runbook commands for scale-checkpoint experiments.")
     parser.add_argument("--manifest", type=str, default="results/scale_curve/checkpoint_manifest.json")
-    parser.add_argument("--output-md", type=str, default="docs/SCALE_EXPERIMENT_RUNBOOK.md")
+    parser.add_argument("--output-md", type=str, default="results/scale_curve/runbook.md")
     parser.add_argument("--output-sh", type=str, default="scripts/run_scale_checkpoints.sh")
     parser.add_argument("--model", type=str, default="qwen3-30b-a3b")
     args = parser.parse_args()
@@ -115,13 +115,13 @@ def main() -> None:
     lines_md.append("")
     lines_md.append("```bash")
     agg_cmd = (
-        "./.venv/bin/python scripts/aggregate_scale_curve.py "
+        "python scripts/aggregate_scale_curve.py "
         "--metrics-glob 'results/scale_curve/ckpt_*/strict_metrics.json' "
         "--output-csv results/scale_curve/curve_metrics.csv "
         "--output-json results/scale_curve/curve_metrics.json"
     )
     plot_cmd = (
-        "./.venv/bin/python scripts/plot_scale_curve.py "
+        "python scripts/plot_scale_curve.py "
         "--input-csv results/scale_curve/curve_metrics.csv "
         "--output results/scale_curve/scale_curve.png"
     )

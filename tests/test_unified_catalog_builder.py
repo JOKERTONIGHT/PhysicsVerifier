@@ -144,6 +144,53 @@ class UnifiedRulesV2RepositoryTests(unittest.TestCase):
         self.assertIn("symmetry_loop_and_field_direction", biot_cluster_ids)
 
 class UnifiedRulesV2UnitTests(unittest.TestCase):
+    def test_unsafe_generalization_cannot_build_catalog(self) -> None:
+        knowledge = {
+            "domains": [
+                {
+                    "name": "Mechanics",
+                    "topics": [{"name": "Kinematics", "rules": []}],
+                }
+            ]
+        }
+        rule = {
+            "rule_id": "gen_rule",
+            "domain": "Mechanics",
+            "topic": "Kinematics",
+            "title": "General rule",
+            "trigger": "General trigger",
+            "check_logic": "General check",
+            "error_type": "logic",
+            "symbolic_hint": {"primitive": "none", "canonical": "", "required_symbols": []},
+            "count": 2,
+            "sample_ids": ["s1", "s2"],
+        }
+        for metadata in [
+            {
+                "generator": "experience_candidate_generalizer_v1",
+                "scope_mode": "filtered",
+                "complete": True,
+            },
+            {
+                "generator": "experience_candidate_generalizer_v1",
+                "scope_mode": "full",
+                "complete": False,
+            },
+            {
+                "generator": "experience_candidate_generalizer_v1",
+                "scope_mode": "full",
+                "complete": True,
+                "formal_support_validated": False,
+            },
+        ]:
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(ValueError):
+                    build_unified_catalog_from_data(
+                        knowledge,
+                        {"metadata": metadata, "rules": [rule]},
+                        [],
+                    )
+
     def test_multiple_blueprint_sources_merge_by_topic_key(self) -> None:
         merged = merge_scenario_cluster_blueprints(
             {

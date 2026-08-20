@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.run_semantic_experience import _build_distilled_library, _resume_done_map, _semantic_prompt
+from scripts.generate_experience_rules import (
+    TopicItem,
+    _build_distilled_library,
+    _extraction_fingerprint,
+    _normalize_semantic_result,
+    _resume_done_map,
+    _semantic_prompt,
+)
 
 
 class SemanticExperienceAuxiliaryTests(unittest.TestCase):
@@ -90,6 +97,62 @@ class SemanticExperienceAuxiliaryTests(unittest.TestCase):
                 "evidence_sample_ids": [],
             },
         )
+
+    def test_duplicate_rules_in_one_sample_count_as_one_evidence_source(self) -> None:
+        rule = {
+            "title": "Timing check",
+            "trigger": "time interval relation",
+            "check_logic": "verify displacement over time",
+            "error_type": "logic",
+        }
+        distilled = _build_distilled_library(
+            [
+                {
+                    "sample_id": "s1",
+                    "topic_guess": {"domain": "Mechanics", "topic": "Kinematics"},
+                    "experience_rules": [rule, dict(rule)],
+                }
+            ],
+            min_count=1,
+        )
+
+        self.assertEqual(distilled["rules"][0]["count"], 1)
+        self.assertEqual(distilled["rules"][0]["sample_ids"], ["s1"])
+
+    def test_resume_fingerprint_changes_with_input_or_model(self) -> None:
+        sample = {"id": "s1", "question": "q", "prediction": "p", "answer": "a"}
+        first = _extraction_fingerprint(sample, model="m1", max_rules_per_sample=2)
+
+        self.assertNotEqual(
+            first,
+            _extraction_fingerprint(
+                dict(sample, prediction="changed"),
+                model="m1",
+                max_rules_per_sample=2,
+            ),
+        )
+        self.assertNotEqual(
+            first,
+            _extraction_fingerprint(sample, model="m2", max_rules_per_sample=2),
+        )
+
+    def test_semantic_result_canonicalizes_topic_and_caps_candidates(self) -> None:
+        result = _normalize_semantic_result(
+            {
+                "topic_guess": {"domain": "mechanics", "topic": "kinematics"},
+                "semantic_audit": {"is_correct": False},
+                "experience_rules": [
+                    {"title": "r1", "trigger": "t1", "check_logic": "c1"},
+                    {"title": "r2", "trigger": "t2", "check_logic": "c2"},
+                ],
+            },
+            sample_id="s1",
+            topics=[TopicItem(domain="Mechanics", topic="Kinematics")],
+            max_rules_per_sample=1,
+        )
+
+        self.assertEqual(result["topic_guess"], {"domain": "Mechanics", "topic": "Kinematics"})
+        self.assertEqual(len(result["experience_rules"]), 1)
 
     def test_prompt_requests_navigation_auxiliary_schema(self) -> None:
         _, user_prompt = _semantic_prompt(

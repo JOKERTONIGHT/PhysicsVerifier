@@ -72,7 +72,7 @@ def check_inputs(
     *,
     sample_path: Path,
     expected_samples: int = 3000,
-    run_script_path: Path = Path("scripts/run_semantic_experience.py"),
+    run_script_path: Path = Path("scripts/generate_experience_rules.py"),
     rules_catalog_path: Path = Path("catalogs/rules_catalog_top_down.json"),
     unified_catalog_path: Path = Path("catalogs/rules_unified.json"),
     output_path: Path | None = None,
@@ -119,7 +119,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Check local inputs before running 3000 semantic extraction on server.")
     parser.add_argument("--sample", default="data/evaluation_sample_3000_expansion.json")
     parser.add_argument("--expected-samples", type=int, default=3000)
-    parser.add_argument("--run-script", default="scripts/run_semantic_experience.py")
+    parser.add_argument("--run-script", default="scripts/generate_experience_rules.py")
     parser.add_argument("--rules-catalog", default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--unified-catalog", default="catalogs/rules_unified.json")
     parser.add_argument("--output", default="")

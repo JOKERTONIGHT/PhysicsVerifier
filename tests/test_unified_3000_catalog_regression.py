@@ -14,33 +14,19 @@ class Unified3000CatalogRegressionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.catalog = json.loads((REPO_ROOT / "catalogs" / "rules_unified_3000.json").read_text(encoding="utf-8"))
 
-    def test_seeded_170364_heat_transfer_rules_are_present(self) -> None:
-        heat_topic = None
+    def test_cluster_rule_ids_reference_rules_in_the_same_topic(self) -> None:
+        invalid_references = []
         for domain in self.catalog["domains"]:
-            if domain["name"] != "Thermodynamics & Statistical Physics":
-                continue
             for topic in domain["topics"]:
-                if topic["name"] == "Heat Transfer (Conduction, Convection, Radiation)":
-                    heat_topic = topic
-                    break
-        self.assertIsNotNone(heat_topic)
+                topic_rule_ids = {rule["rule_id"] for rule in topic.get("rules", [])}
+                for cluster in topic.get("scenario_clusters", []):
+                    unknown_ids = set(cluster.get("rule_ids", [])) - topic_rule_ids
+                    if unknown_ids:
+                        invalid_references.append(
+                            f"{domain['name']}::{topic['name']}::{cluster['id']}::{sorted(unknown_ids)}"
+                        )
 
-        rules = heat_topic["rules"]
-        titles = {rule["title"] for rule in rules}
-        self.assertIn("变功率冷却时间积分规则", titles)
-        self.assertIn("图表信息提取完整性校验", titles)
-
-        cooling_cluster = next(
-            cluster
-            for cluster in heat_topic["scenario_clusters"]
-            if cluster["id"] == "heating_cooling_and_capacity_model"
-        )
-        cooling_rule_titles = {
-            rule["title"]
-            for rule in rules
-            if rule["rule_id"] in set(cooling_cluster["rule_ids"])
-        }
-        self.assertIn("变功率冷却时间积分规则", cooling_rule_titles)
+        self.assertEqual(invalid_references, [])
 
     def test_no_topic_has_duplicate_cluster_ids(self) -> None:
         duplicate_topics = []

@@ -589,6 +589,15 @@ def _build_topic_skeleton(knowledge_data: Dict[str, Any]) -> Tuple[List[Dict[str
 
 
 def _attach_distilled_rules(states: Dict[str, Dict[str, Any]], distilled_data: Dict[str, Any]) -> None:
+    metadata = distilled_data.get("metadata") if isinstance(distilled_data, dict) else {}
+    if isinstance(metadata, dict) and metadata.get("generator") == "experience_candidate_generalizer_v1":
+        if metadata.get("scope_mode") != "full":
+            raise ValueError("Filtered candidate generalization output cannot be used to build a formal catalog.")
+        if metadata.get("complete") is not True:
+            raise ValueError("Incomplete candidate generalization output cannot be used to build a formal catalog.")
+        if metadata.get("formal_support_validated") is not True:
+            raise ValueError("Generalized rules must pass formal multi-source support validation before catalog build.")
+
     raw_rules = distilled_data.get("rules") if isinstance(distilled_data, dict) else []
     if not isinstance(raw_rules, list):
         raise ValueError("Distilled experience data must contain a top-level 'rules' list.")
@@ -946,7 +955,7 @@ def _finalize_topics(
             entry["includes"] = ordered_unique((entry["retrieval_hints"].get("scene_keywords") or [])[:4] + topic_keywords[:4])
             entry["excludes"] = []
             entry["related_topics"] = []
-            entry["scenario_clusters"] = []
+            entry["scenario_clusters"] = _build_scenario_clusters(rules, [])
 
 
 def build_unified_catalog_from_data(

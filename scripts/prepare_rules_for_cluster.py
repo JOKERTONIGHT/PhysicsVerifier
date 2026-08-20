@@ -69,6 +69,48 @@ def _rules(payload: Any) -> List[Dict[str, Any]]:
     return [item for item in raw_rules if isinstance(item, dict)]
 
 
+def _validate_generalized_support(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    if metadata.get("generator") != "experience_candidate_generalizer_v1":
+        return False
+    if metadata.get("scope_mode") != "full" or metadata.get("complete") is not True:
+        raise ValueError("Formal rule preparation requires complete full-scope generalization output.")
+
+    minimum_candidates = max(2, int(metadata.get("min_source_candidates") or 2))
+    minimum_samples = max(2, int(metadata.get("min_source_samples") or 2))
+    mappings: Dict[str, List[str]] = {}
+    assigned_candidates: set[str] = set()
+    for result in payload.get("cluster_results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        input_candidate_ids = set(_ordered_unique(result.get("input_candidate_ids") or []))
+        for mapping in result.get("mappings", []) or []:
+            if not isinstance(mapping, dict):
+                continue
+            rule_id = _text(mapping.get("rule_id") or "")
+            source_ids = _ordered_unique(mapping.get("source_candidate_ids") or [])
+            if not rule_id or rule_id in mappings:
+                raise ValueError("Generalization output contains missing or duplicate rule mappings.")
+            if not set(source_ids).issubset(input_candidate_ids):
+                raise ValueError("Formal rule mapping references candidates outside its input batch.")
+            overlap = assigned_candidates.intersection(source_ids)
+            if overlap:
+                raise ValueError("A source candidate is assigned to multiple formal rules.")
+            assigned_candidates.update(source_ids)
+            mappings[rule_id] = source_ids
+
+    for rule in _rules(payload):
+        rule_id = _text(rule.get("rule_id") or "")
+        sample_ids = _ordered_unique(rule.get("sample_ids") or [])
+        if len(mappings.get(rule_id, [])) < minimum_candidates:
+            raise ValueError(f"Formal rule {rule_id!r} lacks multi-candidate support.")
+        if len(sample_ids) < minimum_samples:
+            raise ValueError(f"Formal rule {rule_id!r} lacks multi-sample support.")
+    return True
+
+
 def _rules_from_baseline_catalog(payload: Any) -> List[Dict[str, Any]]:
     """Keep the previously validated executable catalog as seed coverage."""
     if not isinstance(payload, dict):
@@ -223,8 +265,15 @@ def _merge_group(key: Tuple[str, ...], items: List[Dict[str, Any]]) -> Dict[str,
     sample_ids = _ordered_unique(sid for item in items for sid in item.get("sample_ids") or [])
     count = sum(int(item.get("count") or 0) for item in items)
     auxiliary = _merge_auxiliary([item["auxiliary"] for item in items])
+    source_rule_ids = _ordered_unique(item.get("source_rule_id") for item in items)
+    if len(source_rule_ids) == 1:
+        rule_id = source_rule_ids[0]
+    elif source_rule_ids:
+        rule_id = _stable_rule_id(("merged_sources", *sorted(source_rule_ids)))
+    else:
+        rule_id = _stable_rule_id(key)
     return {
-        "rule_id": _stable_rule_id(key),
+        "rule_id": rule_id,
         "domain": first["domain"],
         "topic": first["topic"],
         "title": first["title"],
@@ -241,7 +290,7 @@ def _merge_group(key: Tuple[str, ...], items: List[Dict[str, Any]]) -> Dict[str,
         "auxiliary": auxiliary,
         "count": count if count > 0 else len(sample_ids),
         "sample_ids": sample_ids,
-        "source_rule_ids": _ordered_unique(item.get("source_rule_id") for item in items),
+        "source_rule_ids": source_rule_ids,
     }
 
 
@@ -415,15 +464,40 @@ def prepare_rules_for_cluster(
     report_output: Path,
     embedding_input_output: Path | None = None,
     scenario_cluster_blueprints_paths: Sequence[Path] | None = None,
+    preserve_baseline_rule_ids: bool = False,
 ) -> Dict[str, Any]:
-    raw_rules = _rules(_load_json(distilled_input))
+    distilled_payload = _load_json(distilled_input)
+    generalized_support_validated = _validate_generalized_support(distilled_payload)
+    raw_rules = _rules(distilled_payload)
     baseline_rules = (
         _rules_from_baseline_catalog(_load_json(baseline_catalog_path))
         if baseline_catalog_path and baseline_catalog_path.exists()
         else []
     )
     all_raw_rules = raw_rules + baseline_rules
-    canonical_rules = [_canonical_rule(rule) for rule in all_raw_rules]
+    canonical_distilled_rules = [_canonical_rule(rule) for rule in raw_rules]
+    canonical_baseline_rules = [_canonical_rule(rule) for rule in baseline_rules]
+    preserved_by_rule_id = 0
+    covered_by_exact_content = 0
+    if preserve_baseline_rule_ids:
+        baseline_ids = {
+            rule["source_rule_id"]
+            for rule in canonical_baseline_rules
+            if rule["source_rule_id"]
+        }
+        baseline_keys = {_merge_key(rule) for rule in canonical_baseline_rules}
+        additions: List[Dict[str, Any]] = []
+        for rule in canonical_distilled_rules:
+            if rule["source_rule_id"] in baseline_ids:
+                preserved_by_rule_id += 1
+                continue
+            if _merge_key(rule) in baseline_keys:
+                covered_by_exact_content += 1
+                continue
+            additions.append(rule)
+        canonical_rules = canonical_baseline_rules + additions
+    else:
+        canonical_rules = canonical_distilled_rules + canonical_baseline_rules
     groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = defaultdict(list)
     for rule in canonical_rules:
         groups[_merge_key(rule)].append(rule)
@@ -432,6 +506,19 @@ def prepare_rules_for_cluster(
     normalized_rules.sort(key=lambda item: (item["domain"], item["topic"], item["title"], item["rule_id"]))
 
     normalized_payload = {
+        "metadata": (
+            {
+                **dict(distilled_payload.get("metadata") or {}),
+                **(
+                    {"formal_support_validated": True}
+                    if generalized_support_validated
+                    else {}
+                ),
+            }
+            if isinstance(distilled_payload, dict)
+            and isinstance(distilled_payload.get("metadata"), dict)
+            else {}
+        ),
         "summary": {
             "source": str(distilled_input),
             "input_rules": len(all_raw_rules),
@@ -446,6 +533,9 @@ def prepare_rules_for_cluster(
             ),
             "merged_exact_duplicate_groups": len(duplicate_groups),
             "merged_exact_duplicate_rules": sum(len(items) for items in duplicate_groups),
+            "preserve_baseline_rule_ids": bool(preserve_baseline_rule_ids),
+            "preserved_by_rule_id": preserved_by_rule_id,
+            "covered_by_exact_content": covered_by_exact_content,
         },
         "rules": normalized_rules,
     }
@@ -507,6 +597,14 @@ def main() -> None:
     parser.add_argument("--knowledge", default="catalogs/rules_catalog_top_down.json")
     parser.add_argument("--tagged", default="catalogs/rules_300_tagged.json")
     parser.add_argument("--baseline-catalog", default="catalogs/rules_unified.json")
+    parser.add_argument(
+        "--preserve-baseline-rule-ids",
+        action="store_true",
+        help=(
+            "Keep the baseline catalog authoritative and add only genuinely new "
+            "generalized rules."
+        ),
+    )
     parser.add_argument("--distilled-output", default="results/unified_rules_3000/semantic_experience_distilled_for_cluster.json")
     parser.add_argument("--catalog-output", default="catalogs/rules_unified_3000.json")
     parser.add_argument("--report-output", default="results/unified_rules_3000/precluster_report.json")
@@ -533,6 +631,7 @@ def main() -> None:
             if args.scenario_cluster_blueprints is not None
             else None
         ),
+        preserve_baseline_rule_ids=bool(args.preserve_baseline_rule_ids),
     )
     print(_console_json({"normalization": report["normalization"], "catalog": report["catalog"]}))
 

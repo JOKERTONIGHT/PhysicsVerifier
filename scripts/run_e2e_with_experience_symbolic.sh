@@ -46,7 +46,7 @@ ERROR_DATASET="${ERROR_DATASET:-$DATASET_DIR/error_eval_dataset_100.json}"
 QUESTION_DATASET="${QUESTION_DATASET:-$DATASET_DIR/question_eval_dataset_50_50.json}"
 PRECISION_DATASET="${PRECISION_DATASET:-$DATASET_DIR/question_right_only_50.json}"
 
-UNIFIED_CATALOG="${UNIFIED_CATALOG:-catalogs/unified_rule_library_v2_distilled300_20260503.json}"
+UNIFIED_CATALOG="${UNIFIED_CATALOG:-catalogs/legacy/unified_rule_library_v2_distilled300_20260503.json}"
 EXPERIENCE_CODE_MANIFEST="${EXPERIENCE_CODE_MANIFEST:-results/experience_symbolic_program_manifest_v2_unified.json}"
 EXPERIENCE_CODE_MODULE="${EXPERIENCE_CODE_MODULE:-symbolic.generated_experience_checks_v2_unified}"
 SYMBOLIC_TOPIC_CHECK_LIMIT="${SYMBOLIC_TOPIC_CHECK_LIMIT:-40}"

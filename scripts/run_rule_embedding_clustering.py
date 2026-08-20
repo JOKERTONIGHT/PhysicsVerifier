@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -26,7 +27,9 @@ def _load_json(path: Path) -> Any:
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _text(value: Any) -> str:
@@ -53,6 +56,83 @@ def _normalize(vector: Iterable[float]) -> List[float]:
 
 def _cosine(left: List[float], right: List[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
+
+
+def _embedding_fingerprint(rule: Dict[str, Any]) -> str:
+    text = _text(rule.get("embedding_text") or "")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _valid_vector(raw: Any) -> List[float] | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        vector = [float(value) for value in raw]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in vector):
+        return None
+    return vector
+
+
+def _load_valid_cached_embeddings(
+    *,
+    cache: Dict[str, Any],
+    model: str,
+    rules: List[Dict[str, Any]],
+) -> Dict[str, List[float]]:
+    if _text(cache.get("embedding_model") or "") != model:
+        return {}
+    raw_embeddings = cache.get("embeddings")
+    if not isinstance(raw_embeddings, dict):
+        return {}
+    fingerprints = {
+        str(rule.get("rule_id") or ""): _embedding_fingerprint(rule)
+        for rule in rules
+    }
+    valid: Dict[str, List[float]] = {}
+    for rule_id, raw_entry in raw_embeddings.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        if _text(raw_entry.get("fingerprint") or "") != fingerprints.get(str(rule_id)):
+            continue
+        vector = _valid_vector(raw_entry.get("vector"))
+        if vector is not None:
+            valid[str(rule_id)] = vector
+    return valid
+
+
+def _cache_payload(
+    *,
+    model: str,
+    rules: List[Dict[str, Any]],
+    embeddings: Dict[str, List[float]],
+) -> Dict[str, Any]:
+    rule_index = {str(rule.get("rule_id") or ""): rule for rule in rules}
+    return {
+        "schema_version": 2,
+        "embedding_model": model,
+        "embeddings": {
+            rule_id: {
+                "fingerprint": _embedding_fingerprint(rule_index[rule_id]),
+                "vector": vector,
+            }
+            for rule_id, vector in embeddings.items()
+            if rule_id in rule_index
+        },
+    }
+
+
+def _validate_embedding_input(rules: List[Dict[str, Any]]) -> None:
+    rule_ids = [str(rule.get("rule_id") or "") for rule in rules]
+    if any(not rule_id for rule_id in rule_ids):
+        raise ValueError("Embedding input contains an empty rule_id.")
+    if len(rule_ids) != len(set(rule_ids)):
+        raise ValueError("Embedding input contains duplicate rule_id values.")
+    if any(not _text(rule.get("topic_key") or "") for rule in rules):
+        raise ValueError("Embedding input contains an empty topic_key.")
+    if any(not _text(rule.get("embedding_text") or "") for rule in rules):
+        raise ValueError("Embedding input contains empty embedding_text.")
 
 
 def _connected_components(vectors: List[List[float]], *, threshold: float) -> List[List[int]]:
@@ -89,11 +169,16 @@ def _cluster_topic_rules(
     min_cluster_size: int,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     indexed = [rule for rule in rules if rule.get("rule_id") in embeddings]
+    missing_embedding_ids = [
+        str(rule.get("rule_id") or "")
+        for rule in rules
+        if str(rule.get("rule_id") or "") not in embeddings
+    ]
     vectors = [_normalize(embeddings[str(rule["rule_id"])]) for rule in indexed]
     components = _connected_components(vectors, threshold=threshold) if vectors else []
 
     clusters: List[Dict[str, Any]] = []
-    residual_rule_ids: List[str] = []
+    residual_rule_ids: List[str] = list(missing_embedding_ids)
     for index, component in enumerate(components, start=1):
         rule_ids = [str(indexed[i]["rule_id"]) for i in component]
         if len(rule_ids) < min_cluster_size:
@@ -126,15 +211,35 @@ def _embed_rules(
     rules: List[Dict[str, Any]],
     batch_size: int,
     existing: Dict[str, List[float]],
+    on_progress: Any = None,
 ) -> Dict[str, List[float]]:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
     embeddings = dict(existing)
     pending = [rule for rule in rules if str(rule.get("rule_id") or "") not in embeddings]
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
         texts = [_text(rule.get("embedding_text") or "") for rule in batch]
         result = client.embeddings.create(model=model, input=texts)
-        for rule, item in zip(batch, result.data):
-            embeddings[str(rule["rule_id"])] = [float(value) for value in item.embedding]
+        response_items = list(result.data)
+        if len(response_items) != len(batch):
+            raise RuntimeError(
+                f"Embedding API returned {len(response_items)} vectors for {len(batch)} inputs."
+            )
+        vectors_by_index: Dict[int, List[float]] = {}
+        for position, item in enumerate(response_items):
+            index = int(getattr(item, "index", position))
+            vector = _valid_vector(getattr(item, "embedding", None))
+            if index < 0 or index >= len(batch) or index in vectors_by_index or vector is None:
+                raise RuntimeError("Embedding API returned invalid or duplicate indexed vectors.")
+            vectors_by_index[index] = vector
+        dimensions = {len(vector) for vector in vectors_by_index.values()}
+        if len(dimensions) != 1:
+            raise RuntimeError("Embedding API returned inconsistent vector dimensions.")
+        for index, rule in enumerate(batch):
+            embeddings[str(rule["rule_id"])] = vectors_by_index[index]
+        if on_progress:
+            on_progress(embeddings)
         print(f"[embedding] {min(start + batch_size, len(pending))}/{len(pending)} new embeddings")
     return embeddings
 
@@ -151,20 +256,44 @@ def run_embedding_clustering(
 ) -> Dict[str, Any]:
     payload = _load_json(input_path)
     rules = [item for item in payload.get("rules", []) if isinstance(item, dict)]
+    _validate_embedding_input(rules)
     cache = _load_json(cache_path) if cache_path.exists() else {"embeddings": {}}
-    existing = cache.get("embeddings") if isinstance(cache, dict) else {}
-    if not isinstance(existing, dict):
-        existing = {}
+    if not isinstance(cache, dict):
+        cache = {}
+    existing = _load_valid_cached_embeddings(
+        cache=cache,
+        model=embedding_model,
+        rules=rules,
+    )
 
     client = _build_client()
+    def _save_cache(current: Dict[str, List[float]]) -> None:
+        _write_json(
+            cache_path,
+            _cache_payload(model=embedding_model, rules=rules, embeddings=current),
+        )
+
     embeddings = _embed_rules(
         client=client,
         model=embedding_model,
         rules=rules,
         batch_size=batch_size,
-        existing={str(k): v for k, v in existing.items() if isinstance(v, list)},
+        existing=existing,
+        on_progress=_save_cache,
     )
-    _write_json(cache_path, {"embedding_model": embedding_model, "embeddings": embeddings})
+    _save_cache(embeddings)
+    missing_after_embedding = [
+        str(rule.get("rule_id") or "")
+        for rule in rules
+        if str(rule.get("rule_id") or "") not in embeddings
+    ]
+    if missing_after_embedding:
+        raise RuntimeError(
+            f"Embedding output is incomplete; missing {len(missing_after_embedding)} rules."
+        )
+    dimensions = {len(vector) for vector in embeddings.values()}
+    if len(dimensions) > 1:
+        raise RuntimeError("Embedding cache/output contains inconsistent vector dimensions.")
 
     by_topic: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for rule in rules:
@@ -178,6 +307,14 @@ def run_embedding_clustering(
             threshold=similarity_threshold,
             min_cluster_size=min_cluster_size,
         )
+        assigned_rule_ids = [
+            rule_id
+            for cluster in clusters
+            for rule_id in (cluster.get("rule_ids") or [])
+        ] + residual_rule_ids
+        expected_rule_ids = [str(rule.get("rule_id") or "") for rule in topic_rules]
+        if len(assigned_rule_ids) != len(set(assigned_rule_ids)) or set(assigned_rule_ids) != set(expected_rule_ids):
+            raise RuntimeError(f"Embedding clustering lost or duplicated rules in topic {topic_key!r}.")
         domain, _, topic = topic_key.partition("::")
         topics.append(
             {
@@ -199,6 +336,8 @@ def run_embedding_clustering(
             "min_cluster_size": min_cluster_size,
             "rule_count": len(rules),
             "topic_count": len(topics),
+            "cache_hit_count": len(existing),
+            "embedded_rule_count": len(rules) - len(existing),
         },
         "topics": topics,
     }
