@@ -23,7 +23,19 @@ PhysicsVerifier 用于检查物理竞赛题的模型解答。系统根据题目�
 - 语义导航：`core/unified_semantic_matcher.py`
 - 检查主流程：`core/physics_rule_verifier.py`
 - 当前运行规则库：`catalogs/rules_unified_3000_runtime_backfilled.json`
+- 测评：[evaluation/README.md](evaluation/README.md)
+- 训练：[training/README.md](training/README.md)
 - 共享文档：[文档索引](docs/文档索引.md)
+
+## 项目边界
+
+```text
+verifier    core/ + catalogs/ + rule_framework/ + rules/ + symbolic/
+evaluation  evaluation/ + 远程仓库的通用测评脚本
+training    training/（OpenRLHF + reward server）
+```
+
+`verifier` 相关路径完整保留远程仓库结构，便于继续同步上游。大型 `data/` 和 `results/` 通过本地链接存放在 slow-share，不进入 Git。
 
 所有项目命令必须先进入对应的 conda 环境。
 

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="760" viewBox="0 0 920 760">
+  <defs>
+    <linearGradient id="hdr" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1e3a5f"/>
+      <stop offset="100%" stop-color="#2d5a87"/>
+    </linearGradient>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 8 4, 0 8" fill="#2d5a87"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="760" fill="#f7f9fc"/>
+  <rect x="16" y="16" width="888" height="728" rx="10" fill="#ffffff" stroke="#d8e2ef"/>
+
+  <rect x="16" y="16" width="888" height="48" rx="10" fill="url(#hdr)"/>
+  <rect x="16" y="48" width="888" height="16" fill="url(#hdr)"/>
+  <text x="40" y="46" fill="#ffffff" font-family="sans-serif" font-size="17" font-weight="bold">规则与符号检查对应示例</text>
+  <text x="40" y="62" fill="#c8daf0" font-family="sans-serif" font-size="11">exp_727d95c333b57256 | Mechanics / Kinematics in 1D/2D/3D</text>
+
+  <!-- Rule panel -->
+  <text x="40" y="96" fill="#1e3a5f" font-family="sans-serif" font-size="14" font-weight="bold">① 规则库内容</text>
+  <rect x="36" y="106" width="400" height="300" rx="6" fill="#f0f5fb" stroke="#c5d5ea"/>
+
+  <text x="52" y="132" font-family="sans-serif" font-size="12" fill="#5a6d82" font-weight="bold">rule_id</text>
+  <text x="120" y="132" font-family="monospace" font-size="11" fill="#1a2b3c">exp_727d95c333b57256</text>
+  <text x="52" y="156" font-family="sans-serif" font-size="12" fill="#5a6d82" font-weight="bold">title</text>
+  <text x="120" y="156" font-family="sans-serif" font-size="12" fill="#1a2b3c">无时钟定位模型校验</text>
+  <text x="52" y="180" font-family="sans-serif" font-size="12" fill="#5a6d82" font-weight="bold">error_type</text>
+  <text x="120" y="180" font-family="sans-serif" font-size="12" fill="#1a2b3c">modeling</text>
+  <text x="52" y="204" font-family="sans-serif" font-size="12" fill="#5a6d82" font-weight="bold">trigger</text>
+  <text x="52" y="222" font-family="sans-serif" font-size="11" fill="#1a2b3c">题目提及「接收机无时钟」或「需确定接收时间 t」</text>
+  <text x="52" y="238" font-family="sans-serif" font-size="11" fill="#1a2b3c">与「三维坐标」时</text>
+  <text x="52" y="264" font-family="sans-serif" font-size="12" fill="#5a6d82" font-weight="bold">check_logic</text>
+  <text x="52" y="282" font-family="sans-serif" font-size="11" fill="#1a2b3c">右侧仅含 c²(t−tᵢ)²，不应出现额外 Δtᵢ</text>
+
+  <rect x="48" y="296" width="376" height="96" rx="4" fill="#1e2d3d"/>
+  <text x="60" y="316" font-family="monospace" font-size="10" fill="#8ec8ff" font-weight="bold">symbolic_hint</text>
+  <text x="60" y="334" font-family="monospace" font-size="10" fill="#a8d4a0">{ "primitive": "formula_pattern",</text>
+  <text x="72" y="350" font-family="monospace" font-size="10" fill="#e8c070">"canonical": "(x-x_i)²+(y-y_i)²+(z-z_i)² = c²(t-t_i)²",</text>
+  <text x="72" y="366" font-family="monospace" font-size="10" fill="#d4a8e8">"required_symbols": ["x","y","z","t","t_i"] }</text>
+  <text x="60" y="384" font-family="sans-serif" font-size="9" fill="#8899aa">结构化提示，非执行代码</text>
+
+  <!-- Arrow -->
+  <line x1="444" y1="250" x2="472" y2="250" stroke="#2d5a87" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="458" y="240" font-family="sans-serif" font-size="10" fill="#2d5a87" text-anchor="middle">翻译</text>
+
+  <!-- Code panel -->
+  <text x="488" y="96" fill="#1e3a5f" font-family="sans-serif" font-size="14" font-weight="bold">② 符号检查代码（精简）</text>
+  <text x="488" y="114" fill="#5a6d82" font-family="sans-serif" font-size="10">generated_experience_checks_v2_unified.py</text>
+  <rect x="484" y="122" width="408" height="490" rx="6" fill="#1e2d3d" stroke="#0f1a24"/>
+
+  <text x="496" y="146" font-family="monospace" font-size="10" fill="#6a9955"># rule_id=exp_727d95c333b57256</text>
+  <text x="496" y="164" font-family="monospace" font-size="10" fill="#dcdcaa">def check_exp_727d95c333b57256(sample: dict) -&gt; dict:</text>
+  <text x="508" y="182" font-family="monospace" font-size="10" fill="#cdd6e0">    text = question + prediction + context</text>
+
+  <rect x="492" y="192" width="392" height="48" rx="3" fill="#2a3f55" stroke="#3d6a9e"/>
+  <text x="500" y="208" font-family="monospace" font-size="9" fill="#6a9955"># trigger</text>
+  <text x="508" y="224" font-family="monospace" font-size="10" fill="#cdd6e0">    if 无关键词: return inconclusive</text>
+  <text x="508" y="236" font-family="monospace" font-size="9" fill="#8899aa">    （接收机无时钟 / 接收时间t / 三维坐标）</text>
+
+  <rect x="492" y="246" width="392" height="48" rx="3" fill="#2a3f55" stroke="#3d6a9e"/>
+  <text x="500" y="262" font-family="monospace" font-size="9" fill="#6a9955"># check_logic: c²(t-t_i)²</text>
+  <text x="508" y="278" font-family="monospace" font-size="10" fill="#cdd6e0">    if 'c^2(t-t_i)^2' not in text: return fail</text>
+
+  <rect x="492" y="300" width="392" height="56" rx="3" fill="#2a3f55" stroke="#3d6a9e"/>
+  <text x="500" y="316" font-family="monospace" font-size="9" fill="#6a9955"># forbid extra Δt</text>
+  <text x="508" y="332" font-family="monospace" font-size="10" fill="#cdd6e0">    for var in ['Δt_i','Δti','dt_i',...]:</text>
+  <text x="508" y="348" font-family="monospace" font-size="10" fill="#cdd6e0">        if var in text: return fail</text>
+
+  <rect x="492" y="362" width="392" height="72" rx="3" fill="#2a3f55" stroke="#3d6a9e"/>
+  <text x="500" y="378" font-family="monospace" font-size="9" fill="#6a9955"># canonical structure</text>
+  <text x="508" y="394" font-family="monospace" font-size="10" fill="#cdd6e0">    pos = ['(x-x_i)^2','(y-y_i)^2','(z-z_i)^2']</text>
+  <text x="508" y="410" font-family="monospace" font-size="10" fill="#cdd6e0">    split '=', check left sum + right = c^2(t-t_i)^2</text>
+  <text x="508" y="426" font-family="monospace" font-size="10" fill="#ce9178">    return pass | fail</text>
+
+  <rect x="496" y="444" width="384" height="32" rx="3" fill="#253545"/>
+  <text x="508" y="464" font-family="sans-serif" font-size="10" fill="#8899aa">返回: pass | fail | inconclusive</text>
+
+  <!-- Mapping -->
+  <rect x="36" y="420" width="400" height="148" rx="6" fill="#ffffff" stroke="#c5d5ea"/>
+  <text x="52" y="444" font-family="sans-serif" font-size="13" font-weight="bold" fill="#1e3a5f">字段 → 检查逻辑</text>
+  <text x="52" y="468" font-family="sans-serif" font-size="11" fill="#1a2b3c">trigger → 未命中则 inconclusive</text>
+  <text x="52" y="490" font-family="sans-serif" font-size="11" fill="#1a2b3c">check_logic → c²(t−tᵢ)² + 禁止 Δtᵢ</text>
+  <text x="52" y="512" font-family="sans-serif" font-size="11" fill="#1a2b3c">canonical → 左侧三项平方和结构</text>
+  <text x="52" y="534" font-family="sans-serif" font-size="11" fill="#1a2b3c">required_symbols → x,y,z,t,tᵢ 覆盖</text>
+  <rect x="52" y="548" width="368" height="24" rx="4" fill="#eef4fb"/>
+  <text x="236" y="564" font-family="sans-serif" font-size="9" fill="#2d5a87" text-anchor="middle">规则 JSON → LLM 翻译 → check_*() → run_rule()</text>
+
+  <text x="460" y="738" font-family="sans-serif" font-size="9" fill="#8899aa" text-anchor="middle">unified_rule_library_v2_distilled300 · generated_experience_checks_v2_unified</text>
+</svg>
