@@ -41,10 +41,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--predictions", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--gold", type=Path, default=None, help="Optional gold jsonl if predictions were stripped")
     parser.add_argument("--use-verifier", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
 
     rows = _load_jsonl(args.predictions)
+    gold_by_id = {}
+    if args.gold:
+        for grow in _load_jsonl(args.gold):
+            gid = str(grow.get("id") or grow.get("sample_id") or (grow.get("metadata") or {}).get("sample_id") or "")
+            if gid:
+                gold_by_id[gid] = grow
     verifier = None
     if args.use_verifier:
         from core.physics_rule_verifier import PhysicsRuleVerifier
@@ -79,6 +86,10 @@ def main() -> None:
     for row in rows:
         pred = row.get("prediction", "")
         labels = _labels(row.get("answer") or row.get("label"))
+        if not labels:
+            gid = str(row.get("id") or row.get("sample_id") or (row.get("metadata") or {}).get("sample_id") or "")
+            gold = gold_by_id.get(gid, {})
+            labels = _labels(gold.get("answer") or gold.get("label"))
         acc = any(grade_answer_verl(pred, gt) for gt in labels) if labels else False
         acc_hits += int(acc)
 
@@ -99,11 +110,14 @@ def main() -> None:
     n = max(len(rows), 1)
     summary = {
         "n_samples": len(rows),
+        "boxed_acc": acc_hits / n,
         "answer_acc": acc_hits / n,
+        "metric_note": "boxed_acc is a diagnostic binary match, not official HiPhO.",
         "avg_process_errors": total_errors / n,
         "per_exam": {
             k: {
                 "n": int(v["n"]),
+                "boxed_acc": v["acc"] / max(v["n"], 1),
                 "answer_acc": v["acc"] / max(v["n"], 1),
                 "avg_process_errors": v["errors"] / max(v["n"], 1),
             }

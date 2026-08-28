@@ -49,6 +49,13 @@ case "${ACTION}" in
       fi
     fi
     export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
+    extra_args=()
+    if [[ "${ENABLE_PREFIX_CACHING:-0}" == "1" ]]; then
+      extra_args+=(--enable-prefix-caching)
+    fi
+    if [[ -n "${TOKENIZER:-}" ]]; then
+      extra_args+=(--tokenizer "${TOKENIZER}")
+    fi
     nohup "${VLLM}" serve "${MODEL_DIR}" \
       --host "${HOST}" \
       --port "${PORT}" \
@@ -59,6 +66,7 @@ case "${ACTION}" in
       --enforce-eager \
       --trust-remote-code \
       --disable-log-requests \
+      "${extra_args[@]}" \
       >>"${LOG}" 2>&1 &
     echo $! >"${PID_FILE}"
     ready_secs="${VLLM_READY_SECS:-600}"
