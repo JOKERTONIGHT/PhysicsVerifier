@@ -146,6 +146,11 @@ def quality_drop_reason(
         return reason
     if looks_multi_question(question, len(labels)):
         return "multi_question_single_label"
+    from training.rl_data.screen_training_data import prompt_drop_reason
+
+    visual = prompt_drop_reason({"question": question, "sample_id": (row.get("metadata") or {}).get("sample_id")})
+    if visual in {"visual_input", "concatenated_stem", "known_unusable"}:
+        return visual
     return None
 
 

@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from training.rl_data.screen_training_data import prompt_drop_reason
+
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_SOURCES = [
@@ -186,6 +188,7 @@ def main() -> None:
     kept = 0
     skipped_dup = 0
     skipped_contaminated = 0
+    skipped_screen = 0
 
     with args.output.open("w", encoding="utf-8") as out:
         for src in args.sources:
@@ -200,6 +203,9 @@ def main() -> None:
                     continue
                 if bench_ngrams and _is_contaminated(question, bench_ngrams, args.contamination_threshold):
                     skipped_contaminated += 1
+                    continue
+                if prompt_drop_reason({"question": question, "sample_id": sample_id}):
+                    skipped_screen += 1
                     continue
                 seen_questions.add(norm_q)
                 out.write(
@@ -219,6 +225,7 @@ def main() -> None:
         "kept": kept,
         "skipped_duplicate": skipped_dup,
         "skipped_contaminated": skipped_contaminated,
+        "skipped_screen": skipped_screen,
         "output": str(args.output),
         "bench_paths": [str(p) for p in args.bench_paths],
     }

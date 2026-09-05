@@ -1,0 +1,14 @@
+[
+  {
+    "question": "A block of mass $m$ starts from rest at height $h$ on a frictionless incline that makes angle $\\theta$ with the horizontal and then slides onto a rough horizontal surface with coefficient of kinetic friction $\\mu$. How far does the block travel on the rough surface before stopping?",
+    "solution": "Mechanical energy is conserved on the frictionless incline, so the speed at the bottom is\n\\[\nv=\\sqrt{2gh}.\n\\]\nOn the rough horizontal surface the only horizontal force is kinetic friction $\\mu mg$, so the deceleration is $\\mu g$. The stopping distance $s$ follows from $v^{2}=2as$:\n\\[\n2gh=2\\mu g s\\qquad\\Rightarrow\\qquad s=\\frac{h}{\\mu}.\n\\]\nThe angle $\\theta$ does not appear because the height already fixes the kinetic energy.\n\n\\boxed{s=h/\\mu}"
+  },
+  {
+    "question": "A particle of mass $m$ attached to a spring of stiffness $k$ oscillates with amplitude $A$. Find the magnitude of the acceleration when the displacement from equilibrium is $A/2$.",
+    "solution": "The motion is simple harmonic with $\\omega=\\sqrt{k/m}$. The restoring acceleration at displacement $x$ is\n\\[\na=-\\omega^{2}x=-\\frac{k}{m}x.\n\\]\nAt $x=A/2$ the magnitude is\n\\[\n|a|=\\frac{kA}{2m}.\n\\]\n\n\\boxed{kA/(2m)}"
+  },
+  {
+    "question": "Two capacitors $C$ and $2C$ are connected in series to a battery of emf $\\mathcal{E}$. Find the charge on the capacitor of capacitance $2C$.",
+    "solution": "The series combination has equivalent capacitance\n\\[\nC_{\\mathrm{eq}}=\\frac{C\\cdot 2C}{C+2C}=\\frac{2C}{3}.\n\\]\nThe charge is the same on each capacitor:\n\\[\nQ=C_{\\mathrm{eq}}\\mathcal{E}=\\frac{2}{3}C\\mathcal{E}.\n\\]\n\n\\boxed{(2/3)C\\mathcal{E}}"
+  }
+]

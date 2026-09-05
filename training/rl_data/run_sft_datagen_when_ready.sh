@@ -44,29 +44,34 @@ curl -sf "http://127.0.0.1:${LB_PORT}/v1/models" >/dev/null \
   || { echo "[error] SFT gen LB not ready on :${LB_PORT}" >&2; exit 2; }
 
 echo "[sft-gen] local rejection sampling"
+hint_args=()
+if [[ "${SFT_HINT_GOLD:-1}" == "1" ]]; then
+  hint_args+=(--hint-gold)
+else
+  hint_args+=(--no-hint-gold)
+fi
 "${PYTHON}" "${ROOT}/training/rl_data/generate_sft_solutions.py" \
   --base-url "http://127.0.0.1:${LB_PORT}/v1" \
   --model "${SERVED_NAME}" \
-  --k "${SFT_GEN_K:-4}" \
+  --k "${SFT_GEN_K:-2}" \
   --concurrency "${SFT_GEN_CONCURRENCY:-18}" \
+  --target-solved "${TARGET_SFT_ROWS:-300}" \
+  --fewshot "${ROOT}/training/rl_data/sft_fewshot.json" \
+  "${hint_args[@]}" \
   --local-only \
   "$@"
 
-if [[ -f "${ROOT}/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${ROOT}/.env"
-  set +a
-fi
-if [[ -n "${OPENAI_API_KEY:-}" && "${OPENAI_API_KEY}" != "EMPTY" && -n "${OPENAI_BASE_URL:-}" && "${OPENAI_BASE_URL}" != *"127.0.0.1"* ]]; then
+if [[ "${SKIP_API_FILL:-1}" != "1" && -n "${OPENAI_API_KEY:-}" && "${OPENAI_API_KEY}" != "EMPTY" && -n "${OPENAI_BASE_URL:-}" && "${OPENAI_BASE_URL}" != *"127.0.0.1"* ]]; then
   echo "[sft-gen] filling unsolved via API"
-  SFT_API_MODEL="${SFT_API_MODEL:-qwen3-30b-a3b-instruct-2507}" \
+  SFT_API_MODEL="${SFT_API_MODEL:-deepseek-v4-flash}" \
     "${PYTHON}" "${ROOT}/training/rl_data/generate_sft_solutions.py" \
       --api-only \
       --api-base-url "${OPENAI_BASE_URL}" \
       --api-key "${OPENAI_API_KEY}" \
       --api-model "${SFT_API_MODEL}" \
-      --concurrency "${SFT_API_CONCURRENCY:-8}"
+      --concurrency "${SFT_API_CONCURRENCY:-8}" \
+      --target-solved "${TARGET_SFT_ROWS:-300}" \
+      "${hint_args[@]}"
 fi
 echo "[ok] SFT datagen finished"
 # Free GPUs 4–6 for later self-judge / GRPO. Stop by pid file + exact port only.
