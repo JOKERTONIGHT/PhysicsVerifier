@@ -2,7 +2,10 @@
 # Start PhysicsVerifier reward server with local judge or external OpenAI-compatible API.
 set -euo pipefail
 
-ROOT="${PHYSICS_ROOT:-/home/jinjianhan/PhysicsVerifier}"
+_CAND="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck disable=SC1091
+source "${PHYSICS_ROOT:-${_CAND}}/training/swift/_load_train_env.sh"
+ROOT="${PHYSICS_ROOT}"
 VENV="${VENV:-${ROOT}/.venv}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8770}"
@@ -42,37 +45,45 @@ if [[ "${PHYSICS_REWARD_MODE}" == "process_paragraph" ]]; then
   export PHYSICSVERIFIER_PRECISION_MODE="${PHYSICSVERIFIER_PRECISION_MODE:-balanced}"
   export PHYSICSVERIFIER_UNIFIED_RETRIEVAL_MODE="${PHYSICSVERIFIER_UNIFIED_RETRIEVAL_MODE:-lexical}"
 fi
-if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" ]]; then
+if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" || "${PHYSICS_REWARD_MODE}" == "hybrid_llm_outcome" ]]; then
   export PHYSICSVERIFIER_LLM_MODEL="${PHYSICSVERIFIER_LLM_MODEL:-deepseek-v4-flash}"
   export LLM_STEP_JUDGE_TIMEOUT="${LLM_STEP_JUDGE_TIMEOUT:-300}"
   export LLM_STEP_JUDGE_CONCURRENCY="${LLM_STEP_JUDGE_CONCURRENCY:-32}"
   export PHYSICS_REWARD_CONCURRENCY="${PHYSICS_REWARD_CONCURRENCY:-32}"
-  export PHYSICS_REWARD_W_ANSWER=0
-  export PHYSICS_REWARD_W_FORMAT=0
-  export PHYSICS_REWARD_W_VERIFIER=0
+  if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" ]]; then
+    export PHYSICS_REWARD_W_ANSWER=0
+    export PHYSICS_REWARD_W_FORMAT=0
+    export PHYSICS_REWARD_W_VERIFIER=0
+  else
+    export PHYSICS_REWARD_W_ANSWER="${PHYSICS_REWARD_W_ANSWER:-1.0}"
+    export PHYSICS_REWARD_W_FORMAT="${PHYSICS_REWARD_W_FORMAT:-0.05}"
+    export PHYSICS_REWARD_W_PROCESS="${PHYSICS_REWARD_W_PROCESS:-0.3}"
+    export PHYSICS_REWARD_PROCESS_ALPHA="${PHYSICS_REWARD_PROCESS_ALPHA:-0.2}"
+    export PHYSICS_REWARD_W_VERIFIER=0
+  fi
   if [[ -z "${OPENAI_BASE_URL:-}" || "${OPENAI_BASE_URL}" == *"127.0.0.1"* ]]; then
-    echo "[error] llm_step_score requires remote OPENAI_BASE_URL from .env (not a local judge)" >&2
+    echo "[error] ${PHYSICS_REWARD_MODE} requires remote OPENAI_BASE_URL from .env (not a local judge)" >&2
     exit 2
   fi
   if [[ -z "${OPENAI_API_KEY:-}" || "${OPENAI_API_KEY}" == "EMPTY" ]]; then
-    echo "[error] llm_step_score requires OPENAI_API_KEY from .env" >&2
+    echo "[error] ${PHYSICS_REWARD_MODE} requires OPENAI_API_KEY from .env" >&2
     exit 2
   fi
 fi
 
-CONFIG_SIG="${PHYSICS_REWARD_MODE}|c${PHYSICS_REWARD_CONCURRENCY}|m${PHYSICSVERIFIER_LLM_MODEL:-}|pvllm_step_v1|t${LLM_STEP_JUDGE_TIMEOUT:-180}|mt${LLM_STEP_JUDGE_MAX_TOKENS:-4096}|retries${LLM_STEP_JUDGE_MAX_RETRIES:-6}|jc${LLM_STEP_JUDGE_CONCURRENCY:-32}|par1|jr2|top${PHYSICSVERIFIER_UNIFIED_RULE_TOP_N:-4}|max${PHYSICS_REWARD_MAX_RESPONSE_CHARS}|prec${PHYSICSVERIFIER_PRECISION_MODE:-strict}|ret${PHYSICSVERIFIER_UNIFIED_RETRIEVAL_MODE:-semantic}|cache${PHYSICS_REWARD_CACHE_SIZE:-4096}|url${OPENAI_BASE_URL:-}"
+CONFIG_SIG="${PHYSICS_REWARD_MODE}|c${PHYSICS_REWARD_CONCURRENCY}|m${PHYSICSVERIFIER_LLM_MODEL:-}|pvllm_step_v1|t${LLM_STEP_JUDGE_TIMEOUT:-180}|mt${LLM_STEP_JUDGE_MAX_TOKENS:-4096}|retries${LLM_STEP_JUDGE_MAX_RETRIES:-6}|jc${LLM_STEP_JUDGE_CONCURRENCY:-32}|par1|jr2|top${PHYSICSVERIFIER_UNIFIED_RULE_TOP_N:-4}|max${PHYSICS_REWARD_MAX_RESPONSE_CHARS}|prec${PHYSICSVERIFIER_PRECISION_MODE:-strict}|ret${PHYSICSVERIFIER_UNIFIED_RETRIEVAL_MODE:-semantic}|cache${PHYSICS_REWARD_CACHE_SIZE:-4096}|url${OPENAI_BASE_URL:-}|wa${PHYSICS_REWARD_W_ANSWER:-}|wp${PHYSICS_REWARD_W_PROCESS:-}|pa${PHYSICS_REWARD_PROCESS_ALPHA:-}|ml${PHYSICS_REWARD_METRICS_LOG:-}"
 CONFIG_FILE="$(dirname "$PID_FILE")/physics_reward_server.config"
 
 CONFIGURED_OPENAI_BASE_URL="${PHYSICSVERIFIER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
-if [[ "${PHYSICS_REWARD_MODE}" != "llm_step_score" && -n "${PHYSICSVERIFIER_OPENAI_BASE_URL:-}" ]]; then
+if [[ "${PHYSICS_REWARD_MODE}" != "llm_step_score" && "${PHYSICS_REWARD_MODE}" != "hybrid_llm_outcome" && -n "${PHYSICSVERIFIER_OPENAI_BASE_URL:-}" ]]; then
   export OPENAI_BASE_URL="${PHYSICSVERIFIER_OPENAI_BASE_URL}"
 fi
-if [[ "${PHYSICS_REWARD_MODE}" != "llm_step_score" && -n "${PHYSICSVERIFIER_OPENAI_API_KEY:-}" ]]; then
+if [[ "${PHYSICS_REWARD_MODE}" != "llm_step_score" && "${PHYSICS_REWARD_MODE}" != "hybrid_llm_outcome" && -n "${PHYSICSVERIFIER_OPENAI_API_KEY:-}" ]]; then
   export OPENAI_API_KEY="${PHYSICSVERIFIER_OPENAI_API_KEY}"
 fi
-if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" ]]; then
+if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" || "${PHYSICS_REWARD_MODE}" == "hybrid_llm_outcome" ]]; then
   if [[ -z "${OPENAI_BASE_URL:-}" || "${OPENAI_BASE_URL}" == *"127.0.0.1"* ]]; then
-    echo "[error] llm_step_score requires remote OPENAI_BASE_URL from .env (not a local judge)" >&2
+    echo "[error] ${PHYSICS_REWARD_MODE} requires remote OPENAI_BASE_URL from .env (not a local judge)" >&2
     exit 2
   fi
   export PHYSICSVERIFIER_LLM_MODEL="${PHYSICSVERIFIER_LLM_MODEL:-deepseek-v4-flash}"
@@ -123,11 +134,11 @@ if curl -sf "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
   fi
 fi
 
-if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" && "${SKIP_LLM_PREFLIGHT:-0}" != "1" ]]; then
-  echo "[reward] llm_step_score remote API at ${OPENAI_BASE_URL} model=${PHYSICSVERIFIER_LLM_MODEL}"
+if [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" || "${PHYSICS_REWARD_MODE}" == "hybrid_llm_outcome" ]] && [[ "${SKIP_LLM_PREFLIGHT:-0}" != "1" ]]; then
+  echo "[reward] ${PHYSICS_REWARD_MODE} remote API at ${OPENAI_BASE_URL} model=${PHYSICSVERIFIER_LLM_MODEL}"
   "${VENV}/bin/python" - <<'PY'
 import os, sys
-sys.path.insert(0, os.environ.get("PHYSICS_ROOT", "/home/jinjianhan/PhysicsVerifier"))
+sys.path.insert(0, os.environ["PHYSICS_ROOT"])
 from training.reward_server.llm_step_judge import DEFAULT_MODEL, LLMStepJudge, require_remote_model
 model = os.environ.get("PHYSICSVERIFIER_LLM_MODEL", DEFAULT_MODEL)
 if model != DEFAULT_MODEL:
@@ -141,8 +152,8 @@ judge.score_group(
 )
 print("[ok] llm_step_score preflight passed")
 PY
-elif [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" ]]; then
-  echo "[reward] llm_step_score skipping preflight; remote API at ${OPENAI_BASE_URL} model=${PHYSICSVERIFIER_LLM_MODEL}"
+elif [[ "${PHYSICS_REWARD_MODE}" == "llm_step_score" || "${PHYSICS_REWARD_MODE}" == "hybrid_llm_outcome" ]]; then
+  echo "[reward] ${PHYSICS_REWARD_MODE} skipping preflight; remote API at ${OPENAI_BASE_URL} model=${PHYSICSVERIFIER_LLM_MODEL}"
 elif [[ -n "${CONFIGURED_OPENAI_BASE_URL}" ]]; then
   echo "[reward] using external verifier API at ${OPENAI_BASE_URL}"
   "${VENV}/bin/python" - <<'PY'
@@ -157,8 +168,8 @@ if model and model not in models:
     print(f"[warn] configured model {model} not in remote list; available={models[:5]}", file=sys.stderr)
 print("[ok] external verifier API reachable")
 PY
-elif [[ "${PHYSICS_REWARD_MODE}" == "answer_only" ]]; then
-  echo "[reward] answer_only mode; skipping local judge/API warmup"
+elif [[ "${PHYSICS_REWARD_MODE}" == "answer_only" || "${PHYSICS_REWARD_MODE}" == "outcome_only" ]]; then
+  echo "[reward] ${PHYSICS_REWARD_MODE} mode; skipping local judge/API warmup"
 else
   curl -sf "${OPENAI_BASE_URL%/}/models" >/dev/null || {
     echo "[error] local judge unavailable at ${OPENAI_BASE_URL}; set PHYSICSVERIFIER_OPENAI_BASE_URL or PHYSICS_REWARD_MODE=answer_only" >&2

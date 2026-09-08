@@ -217,6 +217,10 @@ results/
 # logs
 logs/
 
+# Machine-local GRPO paths (copy from train_env.example.sh)
+training/swift/train_env.sh
+
+
 # Private local documents
 private_docs/
 

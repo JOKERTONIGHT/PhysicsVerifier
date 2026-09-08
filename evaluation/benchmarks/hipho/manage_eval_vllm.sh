@@ -2,19 +2,24 @@
 # Start/stop a temporary vLLM server for benchmark evaluation.
 set -euo pipefail
 
+_CAND="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck disable=SC1091
+source "${PHYSICS_ROOT:-${_CAND}}/training/swift/_load_train_env.sh"
+ROOT="${PHYSICS_ROOT}"
+
 ACTION="${1:-status}"
-MODEL_DIR="${MODEL_DIR:-/slow_share/jinjianhan/models/Qwen3-30B-A3B-Instruct-2507}"
-SERVED_NAME="${SERVED_NAME:-qwen3-30b-a3b-instruct-2507}"
+MODEL_DIR="${MODEL_DIR:-${QWEN8B_MODEL_DIR}}"
+SERVED_NAME="${SERVED_NAME:-qwen3-8b}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8766}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 GPU_UTIL="${GPU_UTIL:-0.90}"
 MAX_LEN="${MAX_LEN:-32768}"
-PYTHON="${PYTHON:-/data1/jinjianhan/venv/openrlhf_train/bin/python}"
-VLLM="${VLLM:-/data1/jinjianhan/venv/openrlhf_train/bin/vllm}"
+PYTHON="${PYTHON:-${ORHF_PYTHON}}"
+VLLM="${VLLM:-$(dirname "${ORHF_PYTHON}")/vllm}"
 RUN_ID="${RUN_ID:-default}"
-LOG="${LOG:-/home/jinjianhan/PhysicsVerifier/results/hipho_eval/vllm_${RUN_ID}.log}"
-PID_FILE="${PID_FILE:-/home/jinjianhan/PhysicsVerifier/results/hipho_eval/vllm_${RUN_ID}.pid}"
+LOG="${LOG:-${ROOT}/results/hipho_eval/vllm_${RUN_ID}.log}"
+PID_FILE="${PID_FILE:-${ROOT}/results/hipho_eval/vllm_${RUN_ID}.pid}"
 
 mkdir -p "$(dirname "${LOG}")" "$(dirname "${PID_FILE}")"
 
@@ -71,14 +76,21 @@ case "${ACTION}" in
     echo $! >"${PID_FILE}"
     ready_secs="${VLLM_READY_SECS:-600}"
     polls=$(( ready_secs / 5 ))
+    vllm_pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
     for _ in $(seq 1 "${polls}"); do
       if curl -sf "http://${HOST}:${PORT}/v1/models" >/dev/null 2>&1; then
         echo "[ok] started vLLM pid=$(cat "${PID_FILE}") model=${SERVED_NAME} dir=${MODEL_DIR}"
         exit 0
       fi
+      if [[ -n "${vllm_pid}" ]] && ! kill -0 "${vllm_pid}" 2>/dev/null; then
+        echo "[error] vLLM exited before becoming ready; see ${LOG}" >&2
+        exit 1
+      fi
       sleep 5
     done
     echo "[error] vLLM failed to become ready; see ${LOG}" >&2
+    _stop_pid "${vllm_pid}"
+    rm -f "${PID_FILE}"
     exit 1
     ;;
   stop)
@@ -88,6 +100,7 @@ case "${ACTION}" in
     fi
     pkill -f "vllm serve.*--port ${PORT}" 2>/dev/null || true
     echo "[ok] stopped vLLM on port ${PORT}"
+    exit 0
     ;;
   status)
     if curl -sf "http://${HOST}:${PORT}/v1/models" >/dev/null 2>&1; then

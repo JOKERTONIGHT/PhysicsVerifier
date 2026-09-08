@@ -1,26 +1,35 @@
 #!/usr/bin/env bash
-# Heldout answer-acc gate: SFT ckpt must beat base_8b from the baseline matrix.
+# Heldout gate: part-level avg@k non-degradation + degrade_rate must not rise.
 set -euo pipefail
-ROOT="${PHYSICS_ROOT:-/home/jinjianhan/PhysicsVerifier}"
-SFT_CKPT="${1:-${QWEN8B_SFT_CKPT:-/slow_share/jinjianhan/ckpt/qwen3-8b-physics-sft}}"
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_load_train_env.sh"
+ROOT="${PHYSICS_ROOT}"
+SFT_CKPT="${1:-${QWEN8B_SFT_CKPT}}"
 if [[ ! -f "${SFT_CKPT}/config.json" ]]; then
   SFT_CKPT="$(ls -d "${SFT_CKPT}"/v*-*/checkpoint-* 2>/dev/null | tail -1 || true)"
 fi
 [[ -f "${SFT_CKPT}/config.json" ]] || { echo "[error] missing SFT ckpt" >&2; exit 2; }
-BASE_SCORES="${BASE_SCORES:-${ROOT}/results/hipho_baseline_matrix_8b/base_8b/heldout_scores.json}"
+BASE_SCORES="${BASE_SCORES:-${ROOT}/results/hipho_baseline_matrix_8b/base_8b_h88/heldout_scores.json}"
 OUT="${OUT:-${SFT_CKPT}/heldout_fast_eval}"
-MAX_SAMPLES="${MAX_SAMPLES:-50}" CUDA_DEVICE="${CUDA_DEVICE:-7}" PORT="${PORT:-8766}" \
+set +e
+MAX_SAMPLES="${MAX_SAMPLES:-0}" N_SAMPLES="${N_SAMPLES:-4}" TEMPERATURE="${TEMPERATURE:-0.6}" \
+  MAX_TOKENS="${MAX_TOKENS:-8192}" CUDA_DEVICE="${CUDA_DEVICE:-0}" PORT="${PORT:-8766}" \
   bash "${ROOT}/training/swift/eval_heldout_fast.sh" "${SFT_CKPT}" "${OUT}"
-python3 - <<PY
+eval_rc=$?
+set -e
+if [[ ! -f "${OUT}/heldout_scores.json" ]]; then
+  echo "[error] missing ${OUT}/heldout_scores.json (eval_heldout_fast rc=${eval_rc})" >&2
+  exit "${eval_rc:-2}"
+fi
+"${VENV_PY}" - <<PY
 import json, sys
 from pathlib import Path
+sys.path.insert(0, "${ROOT}")
+from evaluation.benchmarks.hipho.score_hipho_predictions import evaluate_gate
 sft = json.loads(Path("${OUT}/heldout_scores.json").read_text())
 base_path = Path("${BASE_SCORES}")
-sft_acc = float(sft.get("answer_acc") or 0.0)
-base_acc = 0.0
-if base_path.is_file():
-    base_acc = float(json.loads(base_path.read_text()).get("answer_acc") or 0.0)
-report = {"sft_acc": sft_acc, "base_acc": base_acc, "delta": sft_acc - base_acc, "pass": sft_acc > base_acc}
+base = json.loads(base_path.read_text()) if base_path.is_file() else {}
+report = evaluate_gate(sft, base)
 Path("${OUT}/gate.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 print(json.dumps(report, indent=2))
 sys.exit(0 if report["pass"] else 3)
