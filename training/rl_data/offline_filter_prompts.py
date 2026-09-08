@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(ROOT))
+
+from training.rl_data.screen_training_data import prompt_drop_reason
 
 NUMBERED_RE = re.compile(
     r"(?:(?:^|\n)\s*(?:\(?[1-9]\)|[1-9]\.|[A-Da-d][\.\)])\s+\S)"
@@ -137,15 +141,14 @@ def quality_drop_reason(
 ) -> Optional[str]:
     question = _question_from_row(row)
     labels = _label_from_row(row)
-    if not question.strip():
-        return "empty_prompt"
+    screen = prompt_drop_reason(row, n_labels=len(labels) or 1)
+    if screen:
+        return screen
     if max_prompt_chars > 0 and len(question) > max_prompt_chars:
         return "prompt_too_long"
     ok, reason = parseable_single_answer(labels)
     if not ok:
         return reason
-    if looks_multi_question(question, len(labels)):
-        return "multi_question_single_label"
     return None
 
 

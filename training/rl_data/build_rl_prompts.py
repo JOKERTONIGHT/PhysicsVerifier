@@ -6,10 +6,15 @@ import argparse
 import ast
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from training.rl_data.screen_training_data import prompt_drop_reason
 
 DEFAULT_SOURCES = [
     ROOT / "data/evaluation_sample_300.json",
@@ -186,6 +191,7 @@ def main() -> None:
     kept = 0
     skipped_dup = 0
     skipped_contaminated = 0
+    skipped_screen = 0
 
     with args.output.open("w", encoding="utf-8") as out:
         for src in args.sources:
@@ -194,6 +200,9 @@ def main() -> None:
                 if qa is None:
                     continue
                 question, labels, sample_id = qa
+                if prompt_drop_reason({"question": question, "sample_id": sample_id, "label": labels}):
+                    skipped_screen += 1
+                    continue
                 norm_q = _norm_text(question)
                 if norm_q in seen_questions:
                     skipped_dup += 1
@@ -218,7 +227,7 @@ def main() -> None:
     stats = {
         "kept": kept,
         "skipped_duplicate": skipped_dup,
-        "skipped_contaminated": skipped_contaminated,
+        "skipped_screen": skipped_screen,
         "output": str(args.output),
         "bench_paths": [str(p) for p in args.bench_paths],
     }

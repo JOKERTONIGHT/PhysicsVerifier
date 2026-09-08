@@ -14,6 +14,7 @@ STOP_ZERO_STD_STEPS = 3
 STOP_FAIL_RATE = 0.01
 STOP_SATURATION = 0.50
 LENGTH_EXPLODE_RATIO = 1.8
+ACC_DROP_STEPS = 10
 
 
 def _tail_jsonl(path: Path, n: int = 200) -> List[Dict[str, Any]]:
@@ -57,6 +58,7 @@ HARD_STOP = {
     "reward_up_length_explosion",
     "nan_loss",
     "bad_grad_norm",
+    "answer_acc_declining",
 }
 
 
@@ -109,6 +111,12 @@ def evaluate(metrics_rows: List[Dict[str, Any]], train_rows: List[Dict[str, Any]
         late_r = sum(rewards[-4:]) / 4.0
         if late_r > early_r + 0.05 and early_len > 0 and late_len / early_len >= LENGTH_EXPLODE_RATIO:
             reasons.append("reward_up_length_explosion")
+    accs = [float(row["physics_answer_acc"]) for row in metrics_rows if row.get("physics_answer_acc") is not None]
+    if len(accs) >= ACC_DROP_STEPS and max(accs[:5]) > 0.01:
+        last = accs[-ACC_DROP_STEPS:]
+        declines = sum(1 for i in range(len(last) - 1) if last[i + 1] < last[i] - 1e-9)
+        if declines >= ACC_DROP_STEPS - 2 and last[-1] < last[0] - 1e-6:
+            reasons.append("answer_acc_declining")
     hard = sorted(set(reasons) & HARD_STOP)
     return {
         "stop": bool(hard),

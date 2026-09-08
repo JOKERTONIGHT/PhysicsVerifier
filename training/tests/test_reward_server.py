@@ -229,5 +229,179 @@ class LLMStepRewardServerTests(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
 
 
+class HybridLLMOutcomeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_mode = server.REWARD_MODE
+        self.original_w_answer = server.W_ANSWER
+        self.original_w_format = server.W_FORMAT
+        self.original_w_process = server.W_PROCESS
+        self.original_alpha = server.PROCESS_ALPHA
+        self.original_judge = server._get_llm_step_judge
+        self.original_get_verifier = server._get_verifier
+        server._append_metrics = lambda record: None
+        server.reset_reward_cache(maxsize=64)
+        server.W_ANSWER = 1.0
+        server.W_FORMAT = 0.05
+        server.W_PROCESS = 0.3
+        server.PROCESS_ALPHA = 0.2
+
+    def tearDown(self) -> None:
+        server.REWARD_MODE = self.original_mode
+        server.W_ANSWER = self.original_w_answer
+        server.W_FORMAT = self.original_w_format
+        server.W_PROCESS = self.original_w_process
+        server.PROCESS_ALPHA = self.original_alpha
+        server._get_llm_step_judge = self.original_judge
+        server._get_verifier = self.original_get_verifier
+
+    def test_correct_messy_beats_incorrect_fluent(self) -> None:
+        messy = server.combine_hybrid_llm_outcome(acc=True, boxed=True, process=0.2)
+        fluent = server.combine_hybrid_llm_outcome(acc=False, boxed=True, process=0.95)
+        self.assertGreater(messy, fluent)
+        self.assertGreater(messy, 1.0)
+        self.assertLess(fluent, 0.2)
+
+    def test_empty_labels_fail_closed(self) -> None:
+        from fastapi import HTTPException
+
+        fake = _FakeLLMJudge()
+        server.REWARD_MODE = "hybrid_llm_outcome"
+        server._get_llm_step_judge = lambda: fake
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(
+                server.openrlhf_get_reward(
+                    server.OpenRLHFRewardRequest(query=["sol"], prompts=["q"], labels=[""])
+                )
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(len(fake.calls), 0)
+
+    def test_gold_never_reaches_judge(self) -> None:
+        fake = _FakeLLMJudge()
+        server.REWARD_MODE = "hybrid_llm_outcome"
+        server._get_llm_step_judge = lambda: fake
+
+        def boom():
+            raise AssertionError("rule verifier should not be created")
+
+        server._get_verifier = boom
+        payload = asyncio.run(
+            server.openrlhf_get_reward(
+                server.OpenRLHFRewardRequest(
+                    query=[r"a short wrong derivation \boxed{0}", r"a short correct derivation \boxed{42}"],
+                    prompts=["What is the answer?", "What is the answer?"],
+                    labels=["42", "42"],
+                )
+            )
+        )
+        self.assertEqual(len(fake.calls), 1)
+        question, solutions = fake.calls[0]
+        blob = question + " ".join(solutions)
+        self.assertNotIn("42", question)
+        self.assertNotIn("GOLD", blob)
+        wrong, right = payload["rewards"]
+        self.assertGreater(right, wrong)
+        self.assertTrue(payload["extra_logs"]["physics_hybrid_mode"])
+        self.assertGreater(payload["extra_logs"]["physics_mixed_acc_group_rate"], 0.0)
+        self.assertGreater(payload["extra_logs"]["physics_answer_acc"], 0.0)
+
+    def test_hybrid_cache_reuses_process_but_applies_labels(self) -> None:
+        fake = _FakeLLMJudge()
+        server.REWARD_MODE = "hybrid_llm_outcome"
+        server._get_llm_step_judge = lambda: fake
+        a = asyncio.run(
+            server.openrlhf_get_reward(
+                server.OpenRLHFRewardRequest(
+                    query=[r"\boxed{1}"], prompts=["q"], labels=["1"]
+                )
+            )
+        )
+        b = asyncio.run(
+            server.openrlhf_get_reward(
+                server.OpenRLHFRewardRequest(
+                    query=[r"\boxed{1}"], prompts=["q"], labels=["9"]
+                )
+            )
+        )
+        self.assertEqual(len(fake.calls), 1)
+        self.assertGreater(a["rewards"][0], b["rewards"][0])
+
+
+class OutcomeOnlyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_mode = server.REWARD_MODE
+        self.original_w_answer = server.W_ANSWER
+        self.original_w_format = server.W_FORMAT
+        self.original_w_process = server.W_PROCESS
+        self.original_get_verifier = server._get_verifier
+        self.original_judge = server._get_llm_step_judge
+        server._append_metrics = lambda record: None
+        server.reset_reward_cache(maxsize=64)
+        server.REWARD_MODE = "outcome_only"
+        server.W_ANSWER = 1.0
+        server.W_FORMAT = 0.05
+        server.W_PROCESS = 0.3
+
+    def tearDown(self) -> None:
+        server.REWARD_MODE = self.original_mode
+        server.W_ANSWER = self.original_w_answer
+        server.W_FORMAT = self.original_w_format
+        server.W_PROCESS = self.original_w_process
+        server._get_verifier = self.original_get_verifier
+        server._get_llm_step_judge = self.original_judge
+
+    def test_weights_zero_process_and_verifier(self) -> None:
+        weights = server._reward_weights()
+        self.assertEqual(weights["answer"], 1.0)
+        self.assertEqual(weights["format"], 0.05)
+        self.assertEqual(weights["verifier"], 0.0)
+        self.assertEqual(weights["llm_step"], 0.0)
+        self.assertFalse(server._uses_llm_judge())
+        self.assertFalse(server._should_run_verifier(True, 0))
+        self.assertFalse(server._should_run_verifier(False, 0))
+
+    def test_correct_beats_incorrect_format_only_tiebreak(self) -> None:
+        def boom():
+            raise AssertionError("rule verifier should not be created")
+
+        def boom_judge():
+            raise AssertionError("llm judge should not be created")
+
+        server._get_verifier = boom
+        server._get_llm_step_judge = boom_judge
+        payload = asyncio.run(
+            server.openrlhf_get_reward(
+                server.OpenRLHFRewardRequest(
+                    query=[
+                        r"messy but right \boxed{42}",
+                        r"fluent wrong with box \boxed{0}",
+                        r"fluent wrong no box zero",
+                    ],
+                    prompts=["q", "q", "q"],
+                    labels=["42", "42", "42"],
+                )
+            )
+        )
+        correct_box, wrong_box, wrong_plain = payload["rewards"]
+        self.assertGreater(correct_box, wrong_box)
+        self.assertGreater(wrong_box, wrong_plain)
+        self.assertAlmostEqual(correct_box, 1.05)
+        self.assertAlmostEqual(wrong_box, 0.05)
+        self.assertAlmostEqual(wrong_plain, 0.0)
+        self.assertGreater(payload["extra_logs"]["physics_mixed_acc_group_rate"], 0.0)
+        self.assertGreater(payload["extra_logs"]["physics_reward_group_std_mean"], 0.0)
+
+    def test_empty_labels_fail_closed(self) -> None:
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(
+                server.openrlhf_get_reward(
+                    server.OpenRLHFRewardRequest(query=["sol"], prompts=["q"], labels=[""])
+                )
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

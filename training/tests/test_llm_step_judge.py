@@ -185,6 +185,17 @@ class MonitorSoftFailTests(unittest.TestCase):
         self.assertFalse(report["stop"])
         self.assertIn("api_or_schema_fail_rate", report["warnings"])
 
+    def test_answer_acc_declining_stops_when_started_nonzero(self) -> None:
+        metrics = [{"physics_answer_acc": 0.12 - 0.01 * i, "physics_llm_step_sat01_rate": 0.0} for i in range(12)]
+        report = evaluate(metrics, [{"loss": 0.1, "reward": 0.4}] * 4)
+        self.assertTrue(report["stop"])
+        self.assertIn("answer_acc_declining", report["reasons"])
+
+    def test_zero_acc_does_not_trigger_decline_stop(self) -> None:
+        metrics = [{"physics_answer_acc": 0.0, "physics_llm_step_sat01_rate": 0.0} for _ in range(12)]
+        report = evaluate(metrics, [{"loss": 0.1, "reward": 0.1}] * 4)
+        self.assertNotIn("answer_acc_declining", report["reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()

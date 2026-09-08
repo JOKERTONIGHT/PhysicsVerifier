@@ -165,24 +165,24 @@ def step_score_from_criteria(
         s_ij = min(1.0, max(0.0, s_ij))
         awarded = weight * s_ij
         reported = item.get("awarded_points")
-        if reported is not None and abs(float(reported) - awarded) > 1e-4:
-            raise GraderValidationError(
-                f"criterion {cid} awarded_points {reported} != weight*s {awarded}"
-            )
+        corrected = bool(
+            reported is not None and abs(float(reported) - awarded) > 1e-4
+        )
         if awarded < -1e-9 or awarded > weight + 1e-9:
             raise GraderValidationError(f"criterion {cid} awarded {awarded} outside [0, {weight}]")
         total += awarded
-        audited.append(
-            {
-                "id": cid,
-                "description": crit.get("description", ""),
-                "weight": weight,
-                "s": s_ij,
-                "awarded_points": awarded,
-                "evidence": item.get("evidence") or item.get("quote") or "",
-                "reason": item.get("reason") or item.get("brief_reason") or "",
-            }
-        )
+        rec = {
+            "id": cid,
+            "description": crit.get("description", ""),
+            "weight": weight,
+            "s": s_ij,
+            "awarded_points": awarded,
+            "evidence": item.get("evidence") or item.get("quote") or "",
+            "reason": item.get("reason") or item.get("brief_reason") or "",
+        }
+        if corrected:
+            rec["awarded_points_corrected"] = True
+        audited.append(rec)
     return total, audited
 
 

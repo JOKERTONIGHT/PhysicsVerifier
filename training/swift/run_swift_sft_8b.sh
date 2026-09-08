@@ -16,7 +16,18 @@ CKPT="${QWEN8B_SFT_CKPT:-/slow_share/jinjianhan/ckpt/qwen3-8b-physics-sft}"
 DATA="${SFT_DATA:-${ROOT}/data/rl/sft_solutions.jsonl}"
 LOG_FILE="${LOG_FILE:-${CKPT}/swift_sft.log}"
 NPROC="${NPROC_PER_NODE:-4}"
-TRAIN_GPUS="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+ORHF_PYTHON="${ORHF_PYTHON:-/data1/jinjianhan/venv/openrlhf_train/bin/python}"
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  TRAIN_GPUS="${CUDA_VISIBLE_DEVICES}"
+else
+  probe="$("${ORHF_PYTHON}" "${ROOT}/training/openrlhf/gpu_bundle_utils.py" probe --train-only --n-train 4 --free-mib "${FREE_MIB:-75000}" --util-max "${UTIL_MAX:-5}")"
+  TRAIN_GPUS="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(",".join(str(x) for x in d.get("train_gpus") or []))' <<<"${probe}")"
+  ok="$(python3 -c 'import json,sys; print(int(json.loads(sys.stdin.read()).get("ok", False)))' <<<"${probe}")"
+  if [[ "${ok}" != "1" || -z "${TRAIN_GPUS}" ]]; then
+    echo "[error] need 4 idle GPUs for SFT: ${probe}" >&2
+    exit 2
+  fi
+fi
 
 [[ -x "${SWIFT_VENV}/bin/swift" ]] || { echo "[error] missing ${SWIFT_VENV}/bin/swift" >&2; exit 2; }
 [[ -s "${DATA}" ]] || { echo "[error] missing SFT data ${DATA}" >&2; exit 2; }
@@ -57,7 +68,7 @@ nohup env \
     --tuner_type full \
     --torch_dtype bfloat16 \
     --attn_impl sdpa \
-    --num_train_epochs "${SFT_EPOCHS:-2}" \
+    --num_train_epochs "${SFT_EPOCHS:-3}" \
     --per_device_train_batch_size "${SFT_BS:-1}" \
     --gradient_accumulation_steps "${SFT_GAS:-8}" \
     --learning_rate "${SFT_LR:-1e-5}" \
@@ -65,7 +76,7 @@ nohup env \
     --gradient_checkpointing true \
     --deepspeed zero2 \
     --logging_steps 1 \
-    --save_steps "${SFT_SAVE_STEPS:-200}" \
+    --save_steps "${SFT_SAVE_STEPS:-20}" \
     --save_only_model true \
     --save_total_limit 2 \
     --eval_strategy no \

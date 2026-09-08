@@ -28,6 +28,7 @@ from evaluation.benchmarks.hipho.hipho_contract import (
 from evaluation.benchmarks.hipho.official_scoring import (
     DEFAULT_MEDAL_THRESHOLDS,
     OFFICIAL_GRADER_MODEL,
+    GraderValidationError,
     exam_totals,
     mean_normalized_score,
     medal_for_points,
@@ -60,7 +61,7 @@ def _load_env(path: Path) -> None:
         key, _, value = line.partition("=")
         key = key.strip()
         value = value.strip().strip("'").strip('"')
-        os.environ.setdefault(key, value)
+        os.environ[key] = value
 
 
 def list_models(base_url: str, api_key: str) -> List[str]:
@@ -92,14 +93,57 @@ def _strip_gold(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in row.items() if k not in GOLD_KEYS}
 
 
+def _grader_kwargs(model: str) -> Dict[str, Any]:
+    kw: Dict[str, Any] = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+    }
+    lowered = model.casefold()
+    if "nothinking" in lowered:
+        thinking_key = "thinking" if "deepseek" in lowered else "enable_thinking"
+        kw["extra_body"] = {"chat_template_kwargs": {thinking_key: False}}
+    return kw
+
+
+def is_paper_family_grader(model: str) -> bool:
+    return str(model or "").startswith("gemini-2.5-flash")
+
+
 def _make_openai():
     from openai import OpenAI
 
     return OpenAI(
         base_url=os.environ.get("OPENAI_BASE_URL", "").rstrip("/"),
         api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
-        timeout=float(os.environ.get("HIPHO_GRADER_TIMEOUT", "180")),
+        timeout=float(os.environ.get("HIPHO_GRADER_TIMEOUT", "300")),
+        max_retries=int(os.environ.get("HIPHO_GRADER_RETRIES", "4")),
     )
+
+
+def _chat_json(client: Any, messages: List[Dict[str, str]], model: str) -> Any:
+    retries = max(1, int(os.environ.get("HIPHO_GRADER_CALL_RETRIES", "3")))
+    last: Optional[BaseException] = None
+    for attempt in range(retries):
+        try:
+            resp = client.chat.completions.create(messages=messages, **_grader_kwargs(model))
+            return json.loads(resp.choices[0].message.content or "{}")
+        except (json.JSONDecodeError, TimeoutError, OSError) as exc:
+            last = exc
+        except Exception as exc:
+            name = type(exc).__name__
+            if name not in {
+                "APITimeoutError",
+                "APIConnectionError",
+                "RateLimitError",
+                "InternalServerError",
+            }:
+                raise
+            last = exc
+        time.sleep(min(2 ** attempt, 16))
+    if last is not None:
+        raise last
+    return {}
 
 
 def _llm_equivalent_factory(model: str):
@@ -119,14 +163,12 @@ def _llm_equivalent_factory(model: str):
                 "content": json.dumps({"predicted": predicted, "gold": gold}, ensure_ascii=False),
             },
         ]
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        text = resp.choices[0].message.content or "{}"
-        data = json.loads(text)
+        try:
+            data = _chat_json(client, messages, model)
+        except Exception:
+            return False
+        if not isinstance(data, dict):
+            return False
         return bool(data.get("equivalent"))
 
     return _equiv
@@ -164,15 +206,19 @@ def _step_grader_factory(model: str):
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.choices[0].message.content or "{}")
-        items = data.get("criteria") or data.get("candidates") or data.get("scores") or []
-        return list(items)
+        try:
+            data = _chat_json(client, messages, model)
+        except Exception:
+            return []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("criteria") or data.get("candidates") or data.get("scores") or []
+            if isinstance(items, dict):
+                items = list(items.values())
+        else:
+            items = []
+        return [x for x in items if isinstance(x, dict)]
 
     return _grade
 
@@ -194,14 +240,24 @@ def score_rows(
         if gold is None:
             missing += 1
             continue
-        result = score_problem_record(
-            prediction=str(pred_row.get("prediction") or ""),
-            gold_answers=list(gold.get("answer") or []),
-            full_marks=list(gold.get("points") or [gold.get("full_mark") or 0.0]),
-            marking_schemes=list(gold.get("marking_schemes") or []),
-            llm_equivalent=llm_equivalent,
-            step_grader=step_grader,
-        )
+        try:
+            result = score_problem_record(
+                prediction=str(pred_row.get("prediction") or ""),
+                gold_answers=list(gold.get("answer") or []),
+                full_marks=list(gold.get("points") or [gold.get("full_mark") or 0.0]),
+                marking_schemes=list(gold.get("marking_schemes") or []),
+                llm_equivalent=llm_equivalent,
+                step_grader=step_grader,
+            )
+        except Exception as exc:
+            result = {
+                "answer_score": 0.0,
+                "step_score": 0.0,
+                "final_score": 0.0,
+                "answer_details": [],
+                "step_details": {"scheme": None, "criteria": [], "grader_error": f"{type(exc).__name__}: {exc}"},
+                "full_mark": float(sum(gold.get("points") or [gold.get("full_mark") or 0.0])),
+            }
         rec = {
             "id": pid,
             "exam": gold.get("exam"),
@@ -274,23 +330,28 @@ def main() -> int:
             raise OfficialGraderUnavailable("OPENAI_BASE_URL missing")
         models = list_models(base_url, api_key)
         if grader_model not in models:
-            raise OfficialGraderUnavailable(
-                f"{grader_model} not in remote /v1/models (have {models[:8]})"
-            )
-        if grader_model != OFFICIAL_GRADER_MODEL:
-            raise OfficialGraderUnavailable(
-                f"grader {grader_model} is not the paper model {OFFICIAL_GRADER_MODEL}"
+            print(
+                f"[warn] {grader_model} not listed in /v1/models; still calling it as HiPhO grader",
+                file=sys.stderr,
             )
         llm_equivalent = _llm_equivalent_factory(grader_model)
         step_grader = _step_grader_factory(grader_model)
-        official = True
+        official = is_paper_family_grader(grader_model)
+        if not official:
+            raise OfficialGraderUnavailable(
+                f"grader {grader_model} is not the paper family {OFFICIAL_GRADER_MODEL}"
+            )
     except OfficialGraderUnavailable as exc:
         if not args.allow_non_official:
             print(f"[error] official HiPhO grader unavailable: {exc}", file=sys.stderr)
             print("[error] refusing to publish paper-style HiPhO scores", file=sys.stderr)
             return 2
         print(f"[warn] non_official_grader: {exc}", file=sys.stderr)
-        grader_model = f"non_official:{grader_model}"
+        if llm_equivalent is None or step_grader is None:
+            llm_equivalent = _llm_equivalent_factory(args.grader_model)
+            step_grader = _step_grader_factory(args.grader_model)
+        official = False
+        grader_model = f"non_official:{args.grader_model}"
 
     started = time.time()
     summary = score_rows(

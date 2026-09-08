@@ -66,6 +66,7 @@ def build_reward_payload(
     *,
     messages: Sequence[Any] | None = None,
     question: Any = None,
+    include_labels: bool = False,
     **kwargs: Any,
 ) -> Dict[str, List[Any]]:
     n = len(completions)
@@ -74,9 +75,13 @@ def build_reward_payload(
         prompts = [str(x or "") for x in _as_list(question, n)]
     else:
         prompts = extract_questions(messages or [], n)
-    # Gold labels are intentionally dropped. kwargs may contain solution; ignore it.
-    _ = kwargs.get("solution")
-    return {"query": queries, "prompts": prompts, "labels": [""] * n}
+    solution = kwargs.get("solution")
+    if include_labels:
+        labels = _as_list(solution, n)
+    else:
+        # Gold labels are intentionally dropped for process-only llm_step scoring.
+        labels = [""] * n
+    return {"query": queries, "prompts": prompts, "labels": labels}
 
 
 def group_indices_by_prompt(prompts: Sequence[str]) -> List[List[int]]:
@@ -154,6 +159,7 @@ class LLMStepVerifierReward(AsyncORM):
             completions,
             messages=messages,
             question=question if question is not None else kwargs.get("question"),
+            include_labels=False,
             solution=solution,
         )
         n = len(payload["query"])

@@ -39,6 +39,13 @@ class OfficialScoringTests(unittest.TestCase):
         self.assertAlmostEqual(score, 2.5)
         self.assertEqual(len(audited), 2)
 
+    def test_awarded_points_mismatch_trusts_s(self) -> None:
+        criteria = [{"id": "c2", "description": "partial", "weight": 0.5}]
+        grader = [{"id": "c2", "s": 0.5, "awarded_points": 0.5, "evidence": "x", "reason": "inconsistent"}]
+        score, audited = step_score_from_criteria(grader, criteria)
+        self.assertAlmostEqual(score, 0.25)
+        self.assertTrue(audited[0]["awarded_points_corrected"])
+
     def test_max_of_answer_and_step(self) -> None:
         self.assertEqual(problem_score(3.0, 1.2), 3.0)
         self.assertEqual(problem_score(0.0, 1.2), 1.2)

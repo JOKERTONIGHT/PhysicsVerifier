@@ -119,6 +119,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=os.environ.get("OPENAI_BASE_URL", "http://127.0.0.1:8766/v1"))
     parser.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "qwen3-30b-a3b-instruct-2507"))
     parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument("--n-samples", type=int, default=1, help="Independent samples per input row")
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--max-tokens", type=int, default=8192)
     parser.add_argument("--start-index", type=int, default=0, help="Skip first N input rows (resume)")
@@ -142,10 +143,28 @@ def main() -> None:
     if args.max_samples:
         rows = rows[: args.max_samples]
 
+    n_samples = max(1, args.n_samples)
     start_idx = max(args.start_index, 0)
     if args.resume and args.output.is_file():
         with args.output.open("r", encoding="utf-8") as existing:
-            start_idx = max(start_idx, sum(1 for line in existing if line.strip()))
+            n_existing = sum(1 for line in existing if line.strip())
+        complete = n_existing // n_samples
+        remainder = n_existing % n_samples
+        start_idx = max(start_idx, complete)
+        if remainder:
+            # Drop a partial last item so resume stays item-aligned.
+            kept = complete * n_samples
+            tmp = args.output.with_suffix(args.output.suffix + ".resume_trim")
+            with args.output.open("r", encoding="utf-8") as existing, tmp.open("w", encoding="utf-8") as trimmed:
+                written = 0
+                for line in existing:
+                    if not line.strip():
+                        continue
+                    if written >= kept:
+                        break
+                    trimmed.write(line if line.endswith("\n") else line + "\n")
+                    written += 1
+            tmp.replace(args.output)
 
     remaining = rows[start_idx:]
     client = OpenAI(
@@ -158,61 +177,66 @@ def main() -> None:
     mode = "a" if start_idx > 0 and args.output.is_file() else "w"
     concurrency = max(1, args.concurrency)
 
-    def work(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, str]:
+    def _write_rec(out, row: Dict[str, Any], pred: str, sample_index: int) -> None:
+        rec = dict(row)
+        rec["prediction"] = pred
+        rec["sample_index"] = sample_index
+        if args.strip_gold:
+            rec = _strip_gold(rec)
+        out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        out.flush()
+
+    def work(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, List[str]]:
         idx, row = item
-        pred = _predict_one(
-            client,
-            args.model,
-            args.temperature,
-            args.max_tokens,
-            args.timeout,
-            row,
-            args.retries,
-            args.enable_thinking,
-        )
-        return idx, pred
+        preds = [
+            _predict_one(
+                client,
+                args.model,
+                args.temperature,
+                args.max_tokens,
+                args.timeout,
+                row,
+                args.retries,
+                args.enable_thinking,
+            )
+            for _ in range(n_samples)
+        ]
+        return idx, preds
 
     with args.output.open(mode, encoding="utf-8") as out:
         if concurrency == 1:
             for row in remaining:
-                pred = _predict_one(
-                    client,
-                    args.model,
-                    args.temperature,
-                    args.max_tokens,
-                    args.timeout,
-                    row,
-                    args.retries,
-                    args.enable_thinking,
-                )
-                rec = dict(row)
-                rec["prediction"] = pred
-                if args.strip_gold:
-                    rec = _strip_gold(rec)
-                out.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                out.flush()
+                for sample_index in range(n_samples):
+                    pred = _predict_one(
+                        client,
+                        args.model,
+                        args.temperature,
+                        args.max_tokens,
+                        args.timeout,
+                        row,
+                        args.retries,
+                        args.enable_thinking,
+                    )
+                    _write_rec(out, row, pred, sample_index)
         else:
             indexed = list(enumerate(remaining))
-            results: Dict[int, str] = {}
+            results: Dict[int, List[str]] = {}
             next_write = 0
             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                 futs = [pool.submit(work, item) for item in indexed]
                 for fut in as_completed(futs):
-                    idx, pred = fut.result()
-                    results[idx] = pred
+                    idx, preds = fut.result()
+                    results[idx] = preds
                     while next_write in results:
-                        rec = dict(remaining[next_write])
-                        rec["prediction"] = results.pop(next_write)
-                        if args.strip_gold:
-                            rec = _strip_gold(rec)
-                        out.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                        out.flush()
+                        for sample_index, pred in enumerate(results.pop(next_write)):
+                            _write_rec(out, remaining[next_write], pred, sample_index)
                         next_write += 1
 
     print(
         json.dumps(
             {
                 "count": len(remaining),
+                "n_samples": n_samples,
                 "start_index": start_idx,
                 "output": str(args.output),
                 "mode": mode,

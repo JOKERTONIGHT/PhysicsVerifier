@@ -161,5 +161,78 @@ class LLMStepPluginTests(unittest.TestCase):
         self.assertGreaterEqual(inflight["max"], 2)
 
 
+class HybridPluginTests(unittest.TestCase):
+    def test_include_labels_reaches_payload_not_dropped(self) -> None:
+        payload = build_reward_payload(
+            ["ans-a", "ans-b"],
+            messages=[[{"role": "user", "content": "q1"}]],
+            include_labels=True,
+            solution=r"\boxed{GOLD}",
+        )
+        self.assertEqual(payload["labels"], [r"\boxed{GOLD}", r"\boxed{GOLD}"])
+        dropped = build_reward_payload(
+            ["ans-a"],
+            messages=[[{"role": "user", "content": "q1"}]],
+            include_labels=False,
+            solution=r"\boxed{GOLD}",
+        )
+        self.assertEqual(dropped["labels"], [""])
+
+    def test_hybrid_empty_labels_abort(self) -> None:
+        from training.swift.hybrid_reward_plugin import HybridLLMOutcomeReward
+
+        plugin = HybridLLMOutcomeReward()
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(plugin(["a"], messages=[[{"role": "user", "content": "q"}]], solution=""))
+        self.assertIn("requires labels", str(ctx.exception))
+
+    def test_hybrid_posts_labels(self) -> None:
+        from training.swift.hybrid_reward_plugin import HybridLLMOutcomeReward
+
+        seen = {}
+
+        class _Resp:
+            status = 200
+
+            async def text(self):
+                return '{"rewards":[1.1,0.1]}'
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _Session:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def post(self, url, json=None, **k):
+                seen["payload"] = json
+                return _Resp()
+
+        plugin = HybridLLMOutcomeReward()
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.skipTest("aiohttp not installed")
+        with patch("aiohttp.ClientSession", _Session), patch("aiohttp.ClientTimeout", lambda **k: None):
+            out = asyncio.run(
+                plugin(
+                    ["a", "b"],
+                    messages=[[{"role": "user", "content": "q"}]],
+                    solution=r"\boxed{GOLD}",
+                )
+            )
+        self.assertEqual(out, [1.1, 0.1])
+        self.assertEqual(seen["payload"]["labels"], [r"\boxed{GOLD}", r"\boxed{GOLD}"])
+
+
 if __name__ == "__main__":
     unittest.main()

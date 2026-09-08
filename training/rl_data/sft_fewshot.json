@@ -1,0 +1,32 @@
+[
+  {
+    "id": "195_515",
+    "note": "Integral / symbolic. Style: derive from the definition, one boxed answer.",
+    "question": "Consider a gas of ultra relativistic electrons (γ ≫ 1), with an isotropic distribution of velocities. The proper number density of particles with energies between ε and ε+dε is given by f(ε) dε, where ε is the energy per particle. Write an integral expression for the total energy per volume of the electron gas.",
+    "solution": "The number density of electrons with energy between ε and ε+dε is f(ε) dε.\n\nIn a volume dV the number of such electrons is f(ε) dε dV, so they contribute energy ε f(ε) dε dV.\n\nThe energy density from this interval is therefore ε f(ε) dε. Integrating over all energies gives the total energy per unit volume:\n\nU = ∫_0^∞ ε f(ε) dε.\n\n\\boxed{\\int_{0}^{\\infty} \\epsilon f(\\epsilon) d\\epsilon}"
+  },
+  {
+    "id": "260_421",
+    "note": "Conservation-law derivation, one boxed formula.",
+    "question": "A body of mass m is kept at rest on a frictionless slope of height h. When released it slides to a smooth junction with a horizontal plane, where only the direction of velocity changes. Derive the speed v_0 of the body on the horizontal plane. g is known.",
+    "solution": "Mechanical energy is conserved: there is no friction, and the junction is smooth so the speed is unchanged there.\n\nAt the top the body is at rest, so E = mgh.\nOn the horizontal plane the height is zero, so E = (1/2) m v_0^2.\n\nThus mgh = (1/2) m v_0^2, which gives v_0 = \\sqrt{2gh}.\n\n\\boxed{v_0 = \\sqrt{2gh}}"
+  },
+  {
+    "id": "206_721",
+    "note": "Two-case energy balance, algebra shown, no meta-talk.",
+    "question": "A metal cylinder of area S is heated electrically with power P. When the surface is polished (emissivity ≈ 0) the equilibrium temperature is T_1. After blackening (emissivity = 1) the equilibrium temperature is T. Ambient temperature T_0 is constant. Conduction plus convection loss is proportional to the surface–ambient temperature difference. Find the relation among T, S, P, T_1, T_0 and σ.",
+    "solution": "Polished case: radiation is negligible, so P = k(T_1 - T_0) and k = P/(T_1 - T_0).\n\nBlackened case: net radiation is Sσ(T^4 - T_0^4) and conduction/convection is k(T - T_0). Energy balance:\n\nP = Sσ(T^4 - T_0^4) + [P/(T_1 - T_0)](T - T_0).\n\nRearrangement yields\n\nT^4 + [P/(σ S (T_1 - T_0))](T - T_1) - T_0^4 = 0.\n\n\\boxed{T^{4}+\\frac{P}{\\sigma S(T_{1}-T_{0})}(T-T_{1})-T_{0}^{4}=0}"
+  },
+  {
+    "id": "41461",
+    "note": "Numeric answer with units matching the gold form.",
+    "question": "A charged particle enters a viscous medium with initial speed v_0. Linear drag f = -b v dissipates its kinetic energy; without a magnetic field the particle travels 10 cm before stopping. With a uniform B perpendicular to v_0 it stops 6 cm from the entry point. If B is halved, how far from the entry point does it stop? Neglect gravity.",
+    "solution": "Linear drag dissipates kinetic energy independently of B, so the path length to rest is s_max = m v_0 / b = 10 cm without B.\n\nWith a perpendicular field the trajectory is a logarithmic spiral. The straight-line distance from the entry point to rest is\n\nd = v_0 / sqrt(γ^2 + ω^2),  γ = b/m,  ω = qB/m.\n\nThe field-free case is d_0 = v_0/γ = 10 cm. With the original field d = 6 cm, so\n\nω^2 = (v_0/6)^2 - (v_0/10)^2.\n\nHalving B replaces ω by ω/2:\n\nd' = v_0 / sqrt(γ^2 + (ω/2)^2) = 30/sqrt(13) cm ≈ 8.3 cm.\n\n\\boxed{8.3 \\mathrm{cm}}"
+  },
+  {
+    "id": "156_355",
+    "note": "Qualitative Increase/Decrease conclusion from a force argument.",
+    "question": "A Bohr electron moves in a circular orbit. A weak uniform magnetic field B is added perpendicular to the orbital plane. If the electron is seen rotating counterclockwise when looking along B, does the angular velocity increase or decrease?",
+    "solution": "The orbital radius r is fixed by the Coulomb force. With B along the line of sight and counterclockwise circulation when looking along B, the Lorentz force on the electron (q = -e) is radially outward.\n\nRadial balance is then ke^2/r^2 - e v B = m ω^2 r.\n\nCompared with the field-free case ke^2/r^2 = m ω_0^2 r, the centripetal requirement is smaller, so ω < ω_0. The angular velocity decreases.\n\n\\boxed{Decrease}"
+  }
+]
