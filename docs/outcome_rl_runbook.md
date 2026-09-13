@@ -47,12 +47,12 @@ Optional (SFT rewrite, not required to train): `data/rl/sft_solutions_longchain.
 
 `N_TRAIN_GPUS` (default 4) drives both idle-GPU probe and `NPROC_PER_NODE`.
 
-Global batch `N_TRAIN_GPUS × PER_DEVICE_TRAIN_BS × GRAD_ACCUM` must be divisible by `NUM_GENERATIONS` (full mode G=8, `PER_DEVICE_TRAIN_BS=2`). Launch refuses otherwise and prints a suggested `GRAD_ACCUM`.
+Global batch `N_TRAIN_GPUS × PER_DEVICE_TRAIN_BS × GRAD_ACCUM` must be divisible by `NUM_GENERATIONS` (full mode G=8, `PER_DEVICE_TRAIN_BS=4`, `GRAD_ACCUM=4` → 64 completions/step). Launch refuses otherwise and prints a suggested `GRAD_ACCUM`.
 
 | GPUs | working example |
 |---|---|
-| 4 | `GRAD_ACCUM=3` → 24 / 8 = 3 problems/step |
-| 2 | `N_TRAIN_GPUS=2 GRAD_ACCUM=4` → 16 / 8 = 2 problems/step |
+| 4 | `PER_DEVICE_TRAIN_BS=4 GRAD_ACCUM=4` → 64 / 8 = 8 problems/step |
+| 2 | `N_TRAIN_GPUS=2 PER_DEVICE_TRAIN_BS=4 GRAD_ACCUM=4` → 32 / 8 = 4 problems/step |
 
 Pin cards with `CUDA_VISIBLE_DEVICES` to skip the idle probe.
 
@@ -64,19 +64,26 @@ CUDA_DEVICE=0 bash training/swift/run_preflight_band.sh
 # pass if mixed >= 0.4, trunc <= 0.10, boxed_complete >= 0.95
 # this host: mixed 0.785 / trunc 0.054 / boxed_complete 0.994
 
-# 1. Outcome-only GRPO from base Qwen3-8B
+# 1. Outcome-only GRPO from base Qwen3-8B (preferred wrapper)
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash training/swift/run_outcome_grpo_full.sh
+
+# or the waiter (fails closed after WAIT_GPU_DEADLINE_SECS, default 3600s):
 N_TRAIN_GPUS=4 MODE=full PHYSICS_REWARD_MODE=outcome_only \
   bash training/swift/wait_and_launch_hybrid_grpo.sh
-# or skip the wait:
-CUDA_VISIBLE_DEVICES=0,1,2,3 N_TRAIN_GPUS=4 MODE=full \
-  PHYSICS_REWARD_MODE=outcome_only \
-  bash training/swift/launch_hybrid_grpo_4gpu.sh
 
 # 2. Heldout gate (part_avg >= 0.252 AND degrade <= 0.05 AND no_boxed <= 0.05)
 bash training/swift/run_outcome_grpo_gate.sh
 ```
 
-`OVERLONG_FILTER` defaults to `false` in `outcome_only`. Override with `OVERLONG_FILTER=true` only for an ablation. `monitor_process_reward.py` still hard-stops at 1.8× length explosion and warns on a rising truncation rate.
+`OVERLONG_FILTER` defaults to `false` in `outcome_only`. Override with `OVERLONG_FILTER=true` only for an ablation. `monitor_process_reward.py` still hard-stops at 1.8× length explosion, warns on a rising truncation rate, and **aborts in the first 5 steps** if `clipped_ratio≥0.15`, `frac_reward_zero_std≥0.4`, `reward_std≤0.02`, or mean `r_answer≤0.05`.
+
+## Part-frac reward (required)
+
+Training reward now uses the same `hits/n_parts` scorer as heldout eval (`training/compat/part_scoring.py`). Do not train if `python -m unittest training.tests.test_part_frac_reward` fails.
+
+Default full-run knobs: `max_completion_length=4096`, `max_length=8192`, `max_steps=400`, `save_steps=50`, DeepSpeed ZeRO-2, no CPU offload, `vllm_gpu_memory_utilization=0.45`, `vllm_max_num_seqs=32`. Target step time ≤150s. If OOM, set `DEEPSPEED=zero3` but keep `OFFLOAD_MODEL=false`.
+
+Eval val set: `data/rl/val_same_dist.jsonl` (same distribution, 180 items). Olympiad heldout stays `data/rl/heldout_eval_trusted.jsonl` and is only for a final external check. Default probe is `k=8`, `max_tokens=4096`.
 
 ## Pack for another host
 

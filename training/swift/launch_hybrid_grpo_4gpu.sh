@@ -32,27 +32,33 @@ if [[ "${MODE}" == "smoke" ]]; then
   CKPT="${QWEN8B_HYBRID_SMOKE_CKPT}"
   MAX_STEPS="${MAX_STEPS:-2}"
   SAVE_STEPS="${SAVE_STEPS:-2}"
-  NUM_GENERATIONS="${NUM_GENERATIONS:-6}"
-  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-2048}"
-  MAX_LENGTH="${MAX_LENGTH:-4096}"
+  NUM_GENERATIONS="${NUM_GENERATIONS:-8}"
+  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-4096}"
+  MAX_LENGTH="${MAX_LENGTH:-8192}"
+  PER_DEVICE_TRAIN_BS="${PER_DEVICE_TRAIN_BS:-2}"
+  GRAD_ACCUM="${GRAD_ACCUM:-2}"
   BETA="${BETA:-0.04}"
   OVERLONG_FILTER="${OVERLONG_FILTER:-false}"
 elif [[ "${MODE}" == "full" ]]; then
   CKPT="${QWEN8B_HYBRID_CKPT}"
-  MAX_STEPS="${MAX_STEPS:-30}"
-  SAVE_STEPS="${SAVE_STEPS:-10}"
+  MAX_STEPS="${MAX_STEPS:-400}"
+  SAVE_STEPS="${SAVE_STEPS:-50}"
   NUM_GENERATIONS="${NUM_GENERATIONS:-8}"
-  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-3072}"
-  MAX_LENGTH="${MAX_LENGTH:-5120}"
+  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-4096}"
+  MAX_LENGTH="${MAX_LENGTH:-8192}"
+  PER_DEVICE_TRAIN_BS="${PER_DEVICE_TRAIN_BS:-4}"
+  GRAD_ACCUM="${GRAD_ACCUM:-4}"
   BETA="${BETA:-0.04}"
   OVERLONG_FILTER="${OVERLONG_FILTER:-true}"
 else
   CKPT="${QWEN8B_HYBRID_PILOT_CKPT}"
   MAX_STEPS="${MAX_STEPS:-10}"
   SAVE_STEPS="${SAVE_STEPS:-5}"
-  NUM_GENERATIONS="${NUM_GENERATIONS:-6}"
-  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-2048}"
-  MAX_LENGTH="${MAX_LENGTH:-4096}"
+  NUM_GENERATIONS="${NUM_GENERATIONS:-8}"
+  MAX_COMPLETION_LEN="${MAX_COMPLETION_LEN:-4096}"
+  MAX_LENGTH="${MAX_LENGTH:-8192}"
+  PER_DEVICE_TRAIN_BS="${PER_DEVICE_TRAIN_BS:-2}"
+  GRAD_ACCUM="${GRAD_ACCUM:-2}"
   BETA="${BETA:-0.04}"
   OVERLONG_FILTER="${OVERLONG_FILTER:-false}"
 fi
@@ -106,11 +112,16 @@ fi
 PLUGIN="${PLUGIN:-${ROOT}/training/swift/hybrid_reward_plugin.py}"
 FREE_MIB="${FREE_MIB:-75000}"
 UTIL_MAX="${UTIL_MAX:-5}"
-PER_DEVICE_TRAIN_BS="${PER_DEVICE_TRAIN_BS:-2}"
-GRAD_ACCUM="${GRAD_ACCUM:-3}"
+PER_DEVICE_TRAIN_BS="${PER_DEVICE_TRAIN_BS:-4}"
+GRAD_ACCUM="${GRAD_ACCUM:-4}"
 NPROC="${NPROC_PER_NODE:-${N_TRAIN_GPUS:-4}}"
-VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.30}"
-VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-4}"
+VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.45}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
+VLLM_ENFORCE_EAGER="${VLLM_ENFORCE_EAGER:-false}"
+SLEEP_LEVEL="${SLEEP_LEVEL:-1}"
+OFFLOAD_MODEL="${OFFLOAD_MODEL:-false}"
+OFFLOAD_OPTIMIZER="${OFFLOAD_OPTIMIZER:-false}"
+DEEPSPEED="${DEEPSPEED:-zero2}"
 MAX_RESAMPLE_TIMES="${MAX_RESAMPLE_TIMES:-2}"
 SEED="${SEED:-42}"
 SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-12}"
@@ -329,6 +340,11 @@ export PHYSICS_REWARD_HTTP_RETRIES="${PHYSICS_REWARD_HTTP_RETRIES:-5}"
 export PHYSICS_REWARD_FUNC="${PHYSICS_REWARD_FUNC:-${PHYSICS_REWARD_MODE}}"
 export BETA
 export OVERLONG_FILTER
+export DEEPSPEED
+export OFFLOAD_MODEL
+export OFFLOAD_OPTIMIZER
+export VLLM_ENFORCE_EAGER
+export SLEEP_LEVEL
 RUN_SH="${CKPT}/run_swift.sh"
 "${VENV_PY}" - "${RUN_SH}" "${SWIFT_PID_FILE}" "${CKPT}/swift_train.pid" "${train_gpus}" "${NPROC}" "${ROOT}" "${PHYSICS_REWARD_URL}" "${PHYSICS_REWARD_TIMEOUT}" "${CUDA_HOME}" "${PATH}" "${DS_SKIP_CUDA_CHECK}" "${TMPDIR}" "${HF_DATASETS_CACHE}" "${HF_HOME}" "${SWIFT_VENV}" "${MODEL_DIR}" "${PLUGIN}" "${VLLM_GPU_UTIL}" "${MAX_LENGTH}" "${VLLM_MAX_NUM_SEQS}" "${PROMPT_DATA}" "${MAX_COMPLETION_LEN}" "${PER_DEVICE_TRAIN_BS}" "${GRAD_ACCUM}" "${NUM_GENERATIONS}" "${SEED}" "${MAX_RESAMPLE_TIMES}" "${SAVE_STEPS}" "${SAVE_TOTAL_LIMIT}" "${CKPT}" "${MAX_STEPS}" <<'PY'
 import os, sys, textwrap, pathlib
@@ -347,6 +363,11 @@ http_retries = os.environ.get("PHYSICS_REWARD_HTTP_RETRIES", "5")
 master_port = os.environ.get("MASTER_PORT", "29511")
 beta = os.environ.get("BETA", "0.04")
 overlong = os.environ.get("OVERLONG_FILTER", "false")
+deepspeed = os.environ.get("DEEPSPEED", "zero2")
+offload_model = os.environ.get("OFFLOAD_MODEL", "false")
+offload_opt = os.environ.get("OFFLOAD_OPTIMIZER", "false")
+enforce_eager = os.environ.get("VLLM_ENFORCE_EAGER", "false")
+sleep_level = os.environ.get("SLEEP_LEVEL", "1")
 reward_funcs = os.environ.get("PHYSICS_REWARD_FUNC", "hybrid_llm_outcome")
 resume_from = os.environ.get("RESUME_FROM", "").strip()
 resume_flags = ""
@@ -401,11 +422,11 @@ trap '' HUP
     --vllm_tensor_parallel_size 1 \\
     --vllm_max_model_len "{env["max_length"]}" \\
     --vllm_max_num_seqs "{env["vllm_seqs"]}" \\
-    --vllm_enforce_eager true \\
+    --vllm_enforce_eager {enforce_eager} \\
     --vllm_enable_prefix_caching true \\
-    --sleep_level 0 \\
-    --offload_model true \\
-    --offload_optimizer true \\
+    --sleep_level {sleep_level} \\
+    --offload_model {offload_model} \\
+    --offload_optimizer {offload_opt} \\
     --tuner_type full \\
     --torch_dtype bfloat16 \\
     --attn_impl sdpa \\
@@ -429,7 +450,7 @@ trap '' HUP
     --save_total_limit "{env["save_total"]}" \\
     --logging_steps 1 \\
     --gradient_checkpointing true \\
-    --deepspeed zero3 \\
+    --deepspeed {deepspeed} \\
     --report_to tensorboard \\
     --logging_dir "{env["ckpt"]}/runs" \\
     --output_dir "{env["ckpt"]}" \\
@@ -439,6 +460,80 @@ trap '' HUP
     --overlong_filter {overlong} \\
 {resume_flags}    --max_steps "{env["max_steps"]}"
 status=$?
+if [[ ${{status}} -ne 0 && "{deepspeed}" != "zero3" ]] && grep -qiE 'CUDA out of memory|torch.OutOfMemoryError|CUDA error: out of memory' "{log_file}"; then
+  echo "[wrapper] OOM under {deepspeed}; retrying DeepSpeed zero3 without offload $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  /usr/bin/env \\
+    CUDA_VISIBLE_DEVICES="{env["train_gpus"]}" \\
+    NPROC_PER_NODE="{env["nproc"]}" \\
+    MASTER_ADDR=127.0.0.1 \\
+    MASTER_PORT="{master_port}" \\
+    PYTHONPATH="{env["root"]}:${{PYTHONPATH:-}}" \\
+    PHYSICS_REWARD_URL="{env["reward_url"]}" \\
+    PHYSICS_REWARD_TIMEOUT="{env["reward_timeout"]}" \\
+    PHYSICS_REWARD_HTTP_RETRIES="{http_retries}" \\
+    CUDA_HOME="{env["cuda_home"]}" \\
+    PATH="{env["path"]}" \\
+    DS_SKIP_CUDA_CHECK="{env["ds_skip"]}" \\
+    TRL_EXPERIMENTAL_SILENCE=1 \\
+    PYTHONUNBUFFERED=1 \\
+    PYTHONFAULTHANDLER=1 \\
+    TOKENIZERS_PARALLELISM=false \\
+    CUDA_DEVICE_MAX_CONNECTIONS=1 \\
+    NCCL_CUMEM_ENABLE=0 \\
+    PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8" \\
+    TMPDIR="{env["tmpdir"]}" TEMP="{env["tmpdir"]}" TMP="{env["tmpdir"]}" \\
+    HF_DATASETS_CACHE="{env["hf_datasets"]}" HF_HOME="{env["hf_home"]}" \\
+    "{env["swift_venv"]}/bin/swift" rlhf \\
+      --rlhf_type grpo \\
+      --model "{env["model_dir"]}" \\
+      --external_plugins "{env["plugin"]}" \\
+      --reward_funcs {reward_funcs} \\
+      --use_vllm true \\
+      --vllm_mode colocate \\
+      --vllm_gpu_memory_utilization "{env["vllm_util"]}" \\
+      --vllm_tensor_parallel_size 1 \\
+      --vllm_max_model_len "{env["max_length"]}" \\
+      --vllm_max_num_seqs "{env["vllm_seqs"]}" \\
+      --vllm_enforce_eager {enforce_eager} \\
+      --vllm_enable_prefix_caching true \\
+      --sleep_level {sleep_level} \\
+      --offload_model false \\
+      --offload_optimizer false \\
+      --tuner_type full \\
+      --torch_dtype bfloat16 \\
+      --attn_impl sdpa \\
+      --dataset "{env["prompt_data"]}" \\
+      --max_completion_length "{env["max_comp"]}" \\
+      --max_length "{env["max_length"]}" \\
+      --num_train_epochs 1 \\
+      --per_device_train_batch_size "{env["per_device_bs"]}" \\
+      --gradient_accumulation_steps "{env["grad_accum"]}" \\
+      --learning_rate 1e-6 \\
+      --epsilon 0.2 \\
+      --beta {beta} \\
+      --temperature 1.0 \\
+      --num_generations "{env["num_gen"]}" \\
+      --seed "{env["seed"]}" \\
+      --dynamic_sample true \\
+      --max_resample_times "{env["max_resample"]}" \\
+      --eval_strategy no \\
+      --save_steps "{env["save_steps"]}" \\
+      --save_only_model true \\
+      --save_total_limit "{env["save_total"]}" \\
+      --logging_steps 1 \\
+      --gradient_checkpointing true \\
+      --deepspeed zero3 \\
+      --report_to tensorboard \\
+      --logging_dir "{env["ckpt"]}/runs" \\
+      --output_dir "{env["ckpt"]}" \\
+      --log_completions true \\
+      --dataloader_num_workers 0 \\
+      --use_hf true \\
+      --overlong_filter {overlong} \\
+{resume_flags}      --max_steps "{env["max_steps"]}"
+  status=$?
+  echo "[wrapper] zero3 retry exited status=${{status}} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
 echo "[wrapper] swift exited status=${{status}} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 exit ${{status}}
 '''
@@ -531,6 +626,11 @@ print(json.dumps({
   "epsilon": 0.2,
   "beta": float(os.environ.get("BETA", "0.04")),
   "overlong_filter": os.environ.get("OVERLONG_FILTER", "false"),
+  "deepspeed": os.environ.get("DEEPSPEED", "zero2"),
+  "offload_model": os.environ.get("OFFLOAD_MODEL", "false"),
+  "offload_optimizer": os.environ.get("OFFLOAD_OPTIMIZER", "false"),
+  "vllm_enforce_eager": os.environ.get("VLLM_ENFORCE_EAGER", "false"),
+  "sleep_level": os.environ.get("SLEEP_LEVEL", "1"),
   "reward_mode": os.environ.get("PHYSICS_REWARD_MODE", "hybrid_llm_outcome"),
   "reward_funcs": os.environ.get("PHYSICS_REWARD_FUNC", os.environ.get("PHYSICS_REWARD_MODE", "hybrid_llm_outcome")),
   "judge_model": "" if os.environ.get("PHYSICS_REWARD_MODE") == "outcome_only" else "deepseek-v4-flash",

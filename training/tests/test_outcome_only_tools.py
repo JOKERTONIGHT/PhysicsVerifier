@@ -95,6 +95,38 @@ class MonitorProcessRewardTests(unittest.TestCase):
         self.assertFalse(report["stop"])
         self.assertIn("low_mixed_group_rate", report["warnings"])
 
+    def test_early_clipped_ratio_stops(self) -> None:
+        train = [
+            {
+                "loss": 0.1,
+                "reward": 0.2,
+                "reward_std": 0.1,
+                "completions/clipped_ratio": 0.5,
+                "frac_reward_zero_std": 0.0,
+            }
+            for _ in range(5)
+        ]
+        metrics = [{"physics_answer_acc": 0.3, "physics_reward_group_std_mean": 0.1} for _ in range(5)]
+        report = evaluate(metrics, train)
+        self.assertTrue(report["stop"])
+        self.assertIn("early_clipped_ratio", report["reasons"])
+
+    def test_early_r_answer_stops(self) -> None:
+        train = [
+            {
+                "loss": 0.1,
+                "reward": 0.01,
+                "reward_std": 0.1,
+                "completions/clipped_ratio": 0.02,
+                "frac_reward_zero_std": 0.0,
+            }
+            for _ in range(5)
+        ]
+        metrics = [{"physics_answer_acc": 0.01, "physics_reward_group_std_mean": 0.1} for _ in range(5)]
+        report = evaluate(metrics, train)
+        self.assertTrue(report["stop"])
+        self.assertIn("early_r_answer", report["reasons"])
+
     def test_truncation_rate_rising_warns(self) -> None:
         metrics = [
             {"physics_trunc_rate": 0.04, "physics_reward_group_std_mean": 0.2}

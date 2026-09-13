@@ -198,6 +198,7 @@ def map_errors_to_paragraphs(
 def aggregate_process_components(
     paragraphs: Sequence[Dict[str, Any]],
     diagnostics: Sequence[Dict[str, Any]],
+    n_chars: int = 0,
 ) -> Dict[str, Any]:
     n_paras = len(paragraphs)
     n_errors = sum(diagnostic_weight(d) for d in diagnostics if diagnostic_weight(d) > 0.0)
@@ -218,13 +219,14 @@ def aggregate_process_components(
     n_bad = len(bad)
     first_bad = bad[0] if bad else None
     weighted_bad_sum = sum(para_badness.values())
-    r_clean = 1.0 - (weighted_bad_sum / n_paras)
+    r_clean = math.exp(-2.0 * (weighted_bad_sum / n_paras))
     if first_bad is None:
-        r_first = 1.0
+        # Completeness: a clean stub is not a finished derivation.
+        r_first = 1.0 - math.exp(-(max(n_paras, 1) / 4.0 + max(n_chars, 0) / 1200.0))
     else:
         r_first = max(0.0, (int(first_bad) - 1) / n_paras)
     n_errors = sum(diagnostic_weight(d) for d in diagnostics if diagnostic_weight(d) > 0.0)
-    r_dense = 1.0 / (1.0 + float(n_errors))
+    r_dense = math.exp(-float(n_errors))
     return {
         "n_paragraphs": n_paras,
         "n_errors": n_errors,
@@ -270,7 +272,7 @@ def score_text_with_diagnostics(
     process_only: bool = True,
 ) -> Dict[str, Any]:
     paras = paragraph_ranges(text, min_len=min_len, target_len=target_len, max_len=max_len)
-    comps = aggregate_process_components(paras, diagnostics)
+    comps = aggregate_process_components(paras, diagnostics, n_chars=len(text or ""))
     score = combine_process_paragraph_score(
         acc=acc,
         boxed=boxed,
@@ -288,3 +290,44 @@ def group_has_variance(rewards: Sequence[float], min_spread: float = 1e-6) -> bo
     if not rewards:
         return False
     return (max(rewards) - min(rewards)) >= min_spread
+
+
+def group_rank_normalize(values: Sequence[float]) -> List[float]:
+    """Average-rank normalize a group to [0, 1]. Ties share the mid-rank."""
+    n = len(values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0.5]
+    order = sorted(range(n), key=lambda i: float(values[i]))
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and float(values[order[j + 1]]) == float(values[order[i]]):
+            j += 1
+        avg = 0.5 * (i + j)
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    denom = float(n - 1)
+    return [r / denom for r in ranks]
+
+
+def rank_normalize_grouped(keys: Sequence[str], values: Sequence[float]) -> List[float]:
+    """Apply ``group_rank_normalize`` independently for each key."""
+    n = len(values)
+    out = [0.0] * n
+    buckets: Dict[str, List[int]] = {}
+    order: List[str] = []
+    for i, key in enumerate(keys):
+        if key not in buckets:
+            order.append(str(key))
+            buckets[str(key)] = []
+        buckets[str(key)].append(i)
+    for key in order:
+        idxs = buckets[key]
+        ranked = group_rank_normalize([float(values[i]) for i in idxs])
+        for i, val in zip(idxs, ranked):
+            out[i] = val
+    return out

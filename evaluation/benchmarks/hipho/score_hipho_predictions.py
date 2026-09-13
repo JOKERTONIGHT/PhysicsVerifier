@@ -22,8 +22,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 
-from training.compat.math_grading import grade_answer_verl
-from training.rl_data.answer_equiv import answers_equivalent
+from training.compat.part_scoring import (
+    answers_match,
+    bootstrap_mean_ci,
+    boxed_unclosed,
+    extract_all_boxed,
+    gold_parts,
+    group_item_scores,
+    labels_from_value,
+    looks_repetitive,
+    looks_truncated,
+    paired_delta_ci,
+    score_prediction,
+)
 
 DEFAULT_UNIFIED_RULES = ROOT / "catalogs/rules_unified_3000_runtime_backfilled.json"
 END_PUNCT_RE = re.compile(r"[.。!?）)\}\]$]$")
@@ -40,154 +51,7 @@ def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 
 def _labels(answer: Any) -> List[str]:
-    if answer is None:
-        return []
-    if isinstance(answer, list):
-        return [str(x) for x in answer if x is not None and str(x).strip()]
-    return [str(answer)]
-
-
-def extract_all_boxed(text: str) -> List[str]:
-    """Return inner contents of every ``\\boxed{}`` / ``\\fbox{}`` in order."""
-    src = str(text or "")
-    out: List[str] = []
-    start = 0
-    while start < len(src):
-        idx_box = src.find("\\boxed", start)
-        idx_fbox = src.find("\\fbox", start)
-        candidates = [i for i in (idx_box, idx_fbox) if i >= 0]
-        if not candidates:
-            break
-        idx = min(candidates)
-        cmd_len = 6 if src.startswith("\\boxed", idx) else 5
-        i = idx + cmd_len
-        while i < len(src) and src[i].isspace():
-            i += 1
-        if i >= len(src):
-            break
-        if src[i] != "{":
-            j = i
-            while j < len(src) and (not src[j].isspace()) and src[j] not in "\\$":
-                j += 1
-            if j > i:
-                out.append(src[i:j])
-            start = max(j, i + 1)
-            continue
-        depth = 0
-        j = i
-        while j < len(src):
-            if src[j] == "{":
-                depth += 1
-            elif src[j] == "}":
-                depth -= 1
-                if depth == 0:
-                    out.append(src[i + 1 : j])
-                    start = j + 1
-                    break
-            j += 1
-        else:
-            break
-    return out
-
-
-def gold_parts(labels: Sequence[str]) -> List[str]:
-    parts: List[str] = []
-    for lab in labels:
-        boxed = extract_all_boxed(lab)
-        if boxed:
-            parts.extend(p.strip() for p in boxed if str(p).strip())
-            continue
-        cleaned = str(lab).strip().strip("$").strip()
-        if cleaned:
-            parts.append(cleaned)
-    return parts
-
-
-def looks_repetitive(text: str, window: int = 200, min_repeats: int = 3) -> bool:
-    src = str(text or "")
-    if len(src) < window * min_repeats:
-        return False
-    needle = src[-window:]
-    if not needle.strip():
-        return False
-    return src.count(needle) >= min_repeats
-
-
-def boxed_unclosed(text: str) -> bool:
-    src = str(text or "")
-    idx = max(src.rfind("\\boxed"), src.rfind("\\fbox"))
-    if idx < 0:
-        return False
-    i = idx
-    while i < len(src) and src[i] not in "{":
-        i += 1
-    if i >= len(src) or src[i] != "{":
-        return False
-    depth = 0
-    while i < len(src):
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return False
-        i += 1
-    return True
-
-
-def looks_truncated(text: str) -> bool:
-    src = str(text or "").rstrip()
-    if not src:
-        return True
-    if boxed_unclosed(src):
-        return True
-    if "\\boxed" not in src and "\\fbox" not in src:
-        return not bool(END_PUNCT_RE.search(src))
-    return False
-
-
-def _as_boxed(text: str) -> str:
-    src = str(text or "").strip()
-    if "\\boxed" in src or "\\fbox" in src:
-        return src if src.startswith("\\") else f"\\boxed{{{src}}}"
-    return f"\\boxed{{{src}}}"
-
-
-def answers_match(cand: str, gold: str) -> bool:
-    if not cand or not gold:
-        return False
-    cand_box = _as_boxed(cand)
-    gold_box = _as_boxed(gold)
-    if grade_answer_verl(cand_box, gold_box):
-        return True
-    ok, _ = answers_equivalent(cand_box, gold_box)
-    return bool(ok)
-
-
-def score_prediction(pred: str, labels: Sequence[str]) -> Dict[str, Any]:
-    pred = str(pred or "")
-    boxes = extract_all_boxed(pred)
-    parts = gold_parts(labels)
-    n_parts = max(len(parts), 1) if parts else 0
-    hits = 0
-    for part in parts:
-        if any(answers_match(box, part) for box in boxes):
-            hits += 1
-            continue
-        if boxes and answers_match(pred, part):
-            hits += 1
-    item_correct = bool(parts) and hits == len(parts)
-    part_frac = (hits / len(parts)) if parts else 0.0
-    return {
-        "n_parts": len(parts),
-        "n_hit": hits,
-        "part_frac": part_frac,
-        "item_correct": item_correct,
-        "n_boxed": len(boxes),
-        "no_boxed": len(boxes) == 0,
-        "truncated": looks_truncated(pred),
-        "repetitive": looks_repetitive(pred),
-    }
+    return labels_from_value(answer)
 
 
 def item_key(row: Dict[str, Any]) -> str:
@@ -276,20 +140,14 @@ def summarize_scores(
     sizes = [len(v) for v in groups.values()]
     k = k_hint or (max(sizes) if sizes else 1)
     n_items = max(len(groups), 1)
-    part_avgs: List[float] = []
-    item_avgs: List[float] = []
-    item_pass: List[float] = []
-    part_pass: List[float] = []
-    for recs in groups.values():
-        part_avgs.append(sum(r["part_frac"] for r in recs) / max(len(recs), 1))
-        item_avgs.append(sum(float(r["item_correct"]) for r in recs) / max(len(recs), 1))
-        item_pass.append(1.0 if any(r["item_correct"] for r in recs) else 0.0)
-        part_pass.append(max((r["part_frac"] for r in recs), default=0.0))
+    part_avgs, item_avgs, item_pass, part_pass = group_item_scores(groups)
     part_avg_at_k = sum(part_avgs) / n_items
     item_avg_at_k = sum(item_avgs) / n_items
     item_pass_at_k = sum(item_pass) / n_items
     part_pass_at_k = sum(part_pass) / n_items
     se = math.sqrt(part_avg_at_k * (1.0 - part_avg_at_k) / n_items) if 0.0 < part_avg_at_k < 1.0 else 0.0
+    part_ci = bootstrap_mean_ci(part_avgs)
+    convergence_gap = part_pass_at_k - part_avg_at_k
 
     summary = {
         "n_samples": len(groups),
@@ -303,7 +161,10 @@ def summarize_scores(
         "item_avg_at_k": item_avg_at_k,
         "item_pass_at_k": item_pass_at_k,
         "part_pass_at_k": part_pass_at_k,
+        "part_pass_minus_avg": convergence_gap,
         "part_avg_at_k_se": se,
+        "part_avg_at_k_ci": part_ci,
+        "part_avg_item_scores": part_avgs,
         "no_boxed_rate": no_boxed_rate,
         "truncated_rate": truncated_rate,
         "repetition_rate": repetition_rate,
@@ -382,6 +243,12 @@ def main() -> None:
     parser.add_argument("--gold", type=Path, default=None, help="Optional gold jsonl if predictions were stripped")
     parser.add_argument("--n-samples", type=int, default=0, help="Hint for k; auto-detected from sample_index if unset")
     parser.add_argument("--use-verifier", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="Optional baseline scores.json with part_avg_item_scores for paired comparison",
+    )
     args = parser.parse_args()
 
     rows = _load_jsonl(args.predictions)
@@ -420,6 +287,18 @@ def main() -> None:
 
     summary = summarize_scores(rows, gold_by_id=gold_by_id, verifier=verifier, k_hint=args.n_samples)
     summary["predictions"] = str(args.predictions)
+    if args.baseline and args.baseline.is_file():
+        base = json.loads(args.baseline.read_text(encoding="utf-8"))
+        a = summary.get("part_avg_item_scores") or []
+        b = base.get("part_avg_item_scores") or []
+        if a and b and len(a) == len(b):
+            summary["paired_vs_baseline"] = paired_delta_ci(a, b)
+        else:
+            summary["paired_vs_baseline"] = {
+                "error": "item-score length mismatch",
+                "n_this": len(a),
+                "n_baseline": len(b),
+            }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False))

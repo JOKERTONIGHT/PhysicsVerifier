@@ -19,6 +19,11 @@ from typing import Any, Dict, List
 STOP_ZERO_STD_STEPS = 3
 LENGTH_EXPLODE_RATIO = 1.8
 ACC_DROP_STEPS = 10
+EARLY_STEPS = 5
+EARLY_MAX_CLIP = 0.15
+EARLY_MAX_ZERO_STD = 0.4
+EARLY_MIN_REWARD_STD = 0.02
+EARLY_MIN_ANSWER = 0.05
 
 HARD_STOP = {
     "zero_std_three_steps",
@@ -26,6 +31,10 @@ HARD_STOP = {
     "nan_loss",
     "bad_grad_norm",
     "answer_acc_declining",
+    "early_clipped_ratio",
+    "early_zero_std",
+    "early_reward_std",
+    "early_r_answer",
 }
 
 
@@ -146,6 +155,34 @@ def evaluate(metrics_rows: List[Dict[str, Any]], train_rows: List[Dict[str, Any]
             reasons.append("answer_acc_declining")
     if mixed and mixed[-1] < 0.15:
         warnings.append("low_mixed_group_rate")
+    if len(train_rows) >= EARLY_STEPS:
+        first = train_rows[:EARLY_STEPS]
+        clips: List[float] = []
+        stds_e: List[float] = []
+        zero_frac: List[float] = []
+        answers_e: List[float] = []
+        for row in first:
+            for key in ("completions/clipped_ratio", "clipped_ratio"):
+                if row.get(key) is not None:
+                    clips.append(float(row[key]))
+                    break
+            if row.get("reward_std") is not None:
+                stds_e.append(float(row["reward_std"]))
+            if row.get("frac_reward_zero_std") is not None:
+                zero_frac.append(float(row["frac_reward_zero_std"]))
+        for row in metrics_rows[:EARLY_STEPS]:
+            if row.get("physics_answer_acc") is not None:
+                answers_e.append(float(row["physics_answer_acc"]))
+            if row.get("physics_reward_zero_std_rate") is not None:
+                zero_frac.append(float(row["physics_reward_zero_std_rate"]))
+        if clips and (sum(clips) / len(clips)) >= EARLY_MAX_CLIP:
+            reasons.append("early_clipped_ratio")
+        if zero_frac and (sum(zero_frac) / len(zero_frac)) >= EARLY_MAX_ZERO_STD:
+            reasons.append("early_zero_std")
+        if stds_e and (sum(stds_e) / len(stds_e)) <= EARLY_MIN_REWARD_STD:
+            reasons.append("early_reward_std")
+        if answers_e and (sum(answers_e) / len(answers_e)) <= EARLY_MIN_ANSWER:
+            reasons.append("early_r_answer")
     truncs: List[float] = []
     for row in list(metrics_rows) + list(train_rows):
         for key in (

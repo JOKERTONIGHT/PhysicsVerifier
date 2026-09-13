@@ -33,11 +33,22 @@ probe_one_gpu() {
 wait_idle_csv() {
   local n="${1:?n gpus}"
   local secs="${WAIT_GPU_SECS:-30}"
-  local ids
+  local deadline="${WAIT_GPU_DEADLINE_SECS:-3600}"
+  local ids start now elapsed report
+  start="$(date +%s)"
+  report="${PHYSICS_ROOT:-.}/logs/gpu_wait_failed.json"
   while true; do
     if ids="$(probe_idle_csv "${n}" "${2:-75000}" "${3:-5}" 2>/dev/null)"; then
       echo "${ids}"
       return 0
+    fi
+    now="$(date +%s)"
+    elapsed=$((now - start))
+    if (( elapsed >= deadline )); then
+      mkdir -p "$(dirname "${report}")"
+      echo "{\"ok\":false,\"reason\":\"gpu_wait_timeout\",\"n_gpus\":${n},\"waited_secs\":${elapsed},\"deadline_secs\":${deadline}}" >"${report}"
+      echo "[error] waited ${elapsed}s for ${n} idle GPUs; wrote ${report}" >&2
+      return 2
     fi
     sleep "${secs}"
   done

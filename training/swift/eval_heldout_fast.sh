@@ -20,9 +20,9 @@ if [[ -z "${HELDOUT}" ]]; then
   fi
 fi
 MAX_SAMPLES="${MAX_SAMPLES:-0}"
-N_SAMPLES="${N_SAMPLES:-4}"
+N_SAMPLES="${N_SAMPLES:-8}"
 TEMPERATURE="${TEMPERATURE:-0.6}"
-MAX_TOKENS="${MAX_TOKENS:-8192}"
+MAX_TOKENS="${MAX_TOKENS:-4096}"
 MAX_LEN="${MAX_LEN:-16384}"
 GPU_UTIL="${GPU_UTIL:-0.85}"
 RESUME="${RESUME:-0}"
@@ -53,6 +53,9 @@ gen_args=(
 )
 if [[ "${RESUME}" == "1" ]]; then
   gen_args+=(--resume)
+fi
+if [[ "${ENABLE_THINKING:-0}" == "1" ]]; then
+  gen_args+=(--enable-thinking)
 fi
 "${PYTHON}" "${SCRIPT_DIR}/generate_hipho_predictions.py" "${gen_args[@]}"
 "${VENV_PY}" "${SCRIPT_DIR}/score_hipho_predictions.py" \

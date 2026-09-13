@@ -254,6 +254,13 @@ class HybridLLMOutcomeTests(unittest.TestCase):
         server._get_llm_step_judge = self.original_judge
         server._get_verifier = self.original_get_verifier
 
+    def test_partial_credit_beats_wrong_but_loses_to_full(self) -> None:
+        half = server.combine_hybrid_llm_outcome(acc=0.5, boxed=True, process=0.2)
+        full = server.combine_hybrid_llm_outcome(acc=1.0, boxed=True, process=0.2)
+        none = server.combine_hybrid_llm_outcome(acc=0.0, boxed=True, process=0.95)
+        self.assertGreater(full, half)
+        self.assertGreater(half, none)
+
     def test_correct_messy_beats_incorrect_fluent(self) -> None:
         messy = server.combine_hybrid_llm_outcome(acc=True, boxed=True, process=0.2)
         fluent = server.combine_hybrid_llm_outcome(acc=False, boxed=True, process=0.95)

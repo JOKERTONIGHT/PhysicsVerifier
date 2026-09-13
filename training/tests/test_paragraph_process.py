@@ -6,6 +6,7 @@ from training.openrlhf.audit_ray_bind import audit_listeners, parse_listeners
 from training.reward_server.paragraph_process import (
     ProcessParagraphWeights,
     group_has_variance,
+    group_rank_normalize,
     score_text_with_diagnostics,
 )
 
@@ -125,6 +126,24 @@ class ParagraphProcessTests(unittest.TestCase):
     def test_answer_only_group_has_no_variance(self) -> None:
         self.assertFalse(group_has_variance([0.0] * 8))
         self.assertTrue(group_has_variance([0.0, 0.0, 0.4, 0.0]))
+
+    def test_rank_normalize_spreads_saturated_scores(self) -> None:
+        raw = [0.91, 0.93, 0.90, 0.99]
+        ranked = group_rank_normalize(raw)
+        self.assertAlmostEqual(min(ranked), 0.0)
+        self.assertAlmostEqual(max(ranked), 1.0)
+        self.assertGreater(ranked[3], ranked[0])
+
+    def test_short_clean_trace_scores_below_long_clean(self) -> None:
+        short = score_text_with_diagnostics("F = ma.", [])
+        long = score_text_with_diagnostics(
+            ("First paragraph states Newton's second law correctly as F = ma. " * 8)
+            + "\n\n"
+            + ("Second paragraph integrates a = dv/dt and boxes the result. " * 8),
+            [],
+        )
+        self.assertGreater(long["score"], short["score"])
+        self.assertTrue(group_has_variance([short["score"], long["score"]]))
 
 
 class RayBindAuditTests(unittest.TestCase):

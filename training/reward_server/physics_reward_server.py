@@ -44,7 +44,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.physics_rule_verifier import PhysicsRuleVerifier
-from training.compat.math_grading import extract_answer, grade_answer_verl
+from training.compat.math_grading import extract_answer
+from training.compat.part_scoring import score_prediction
 from training.reward_server.llm_step_judge import (
     DEFAULT_MODEL as LLM_STEP_MODEL,
     LLMStepJudge,
@@ -221,17 +222,20 @@ def _extract_question(req: ScoreRequest) -> str:
     return str(prompt).strip()
 
 
-def _check_answer(response: str, labels: List[str]) -> tuple[bool, str, str]:
+def _check_answer(response: str, labels: List[str]) -> tuple[bool, float, str, str]:
+    """Return (acc_item, r_answer, extracted_pred, extracted_gt).
+
+    ``r_answer`` is hits/n_parts from the shared part scorer. ``acc_item`` is
+    all-parts-correct and is logged only — it is not the GRPO target.
+    """
     if not labels:
-        return False, "", ""
-    extracted_pred = extract_answer(response) or ""
-    for gt in labels:
-        if grade_answer_verl(response, gt):
-            extracted_gt = extract_answer(gt) or str(gt)
-            return True, extracted_pred, extracted_gt
-    gt0 = labels[0]
-    extracted_gt = extract_answer(gt0) or str(gt0)
-    return False, extracted_pred, extracted_gt
+        return False, 0.0, "", ""
+    metrics = score_prediction(response, labels)
+    r_answer = float(metrics.get("part_frac") or 0.0)
+    acc_item = bool(metrics.get("item_correct"))
+    extracted_pred = str(metrics.get("extracted_pred") or "")
+    extracted_gt = str(metrics.get("extracted_gt") or "")
+    return acc_item, r_answer, extracted_pred, extracted_gt
 
 
 def _count_error_diagnostics(result: Dict[str, Any]) -> tuple[int, List[Dict[str, str]]]:
@@ -275,7 +279,7 @@ def _uses_llm_judge() -> bool:
 
 def combine_hybrid_llm_outcome(
     *,
-    acc: bool,
+    acc: bool | float,
     boxed: bool,
     process: float,
     w_answer: float = 1.0,
@@ -283,11 +287,11 @@ def combine_hybrid_llm_outcome(
     w_process: float = 0.3,
     alpha: float = 0.2,
 ) -> float:
-    """Outcome-gated mix: any correct score must beat any incorrect score.
+    """Outcome-gated mix. ``acc`` may be binary or part_frac in [0, 1].
 
-    R = w_answer * acc + w_format * boxed + w_process * process * (alpha + (1-alpha) * acc)
+    R = w_answer * r_answer + w_format * boxed + w_process * process * (alpha + (1-alpha) * r_answer)
     """
-    acc_f = 1.0 if acc else 0.0
+    acc_f = max(0.0, min(1.0, float(acc)))
     boxed_f = 1.0 if boxed else 0.0
     proc = max(0.0, min(1.0, float(process)))
     alpha_f = max(0.0, min(1.0, float(alpha)))
@@ -505,12 +509,12 @@ def apply_hybrid_outcome(payload: Dict[str, Any], response: str, label: Any) -> 
     labels = _normalize_label(label)
     if not labels:
         raise HTTPException(status_code=400, detail="hybrid_llm_outcome requires labels; refusing process-only fallback")
-    acc, extracted_pred, extracted_gt = _check_answer(response, labels)
+    acc_item, r_answer, extracted_pred, extracted_gt = _check_answer(response, labels)
     boxed = bool(_format_component(response))
     process = float((payload.get("reward_components") or {}).get("llm_step") or payload.get("score") or 0.0)
     weights = _reward_weights()
     score = combine_hybrid_llm_outcome(
-        acc=acc,
+        acc=r_answer,
         boxed=boxed,
         process=process,
         w_answer=float(weights.get("answer") or 0.0),
@@ -521,17 +525,18 @@ def apply_hybrid_outcome(payload: Dict[str, Any], response: str, label: Any) -> 
     out = copy.deepcopy(payload)
     out["score"] = score
     out["point"] = score
-    out["acc"] = acc
+    out["acc"] = acc_item
+    out["part_frac"] = r_answer
     out["extracted_pred"] = extracted_pred
     out["extracted_gt"] = extracted_gt
     out["scored_by"] = "hybrid_llm_outcome"
     comps = dict(out.get("reward_components") or {})
-    comps["answer"] = 1.0 if acc else 0.0
+    comps["answer"] = r_answer
     comps["format"] = 1.0 if boxed else 0.0
     comps["llm_step"] = process
     comps["hybrid"] = score
     comps["process_gate"] = float(weights.get("process_alpha") or 0.0) + (
-        (1.0 - float(weights.get("process_alpha") or 0.0)) * (1.0 if acc else 0.0)
+        (1.0 - float(weights.get("process_alpha") or 0.0)) * r_answer
     )
     comps["weights"] = weights
     out["reward_components"] = comps
@@ -575,7 +580,7 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
         cached["latency_ms"] = (time.time() - started) * 1000.0
         cached["cache_hit"] = True
         return cached
-    acc, extracted_pred, extracted_gt = _check_answer(response_text, labels)
+    acc_item, r_answer, extracted_pred, extracted_gt = _check_answer(response_text, labels)
 
     n_errors = 0
     diagnostics_summary: List[Dict[str, str]] = []
@@ -583,7 +588,7 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
     verifier_mode = "skipped"
     verifier_failed = False
 
-    if _should_run_verifier(acc, sample_idx):
+    if _should_run_verifier(acc_item, sample_idx):
         async with _semaphore:
             loop = asyncio.get_event_loop()
             verifier_mode = "full"
@@ -602,7 +607,6 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
                 diagnostics_summary = [{"rule": "verifier_error", "message": str(exc)[:200]}]
 
     weights = _reward_weights()
-    r_answer = 1.0 if acc else 0.0
     r_format = _format_component(response_text)
     penalty = min(n_errors, DEFAULT_CAP) / max(DEFAULT_CAP, 1)
     r_verifier = -penalty if verifier_mode == "full" else 0.0
@@ -625,7 +629,7 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
             process_components = score_text_with_diagnostics(
                 response_text,
                 error_diags,
-                acc=acc,
+                acc=acc_item,
                 boxed=bool(r_format),
                 weights=_process_weights(),
                 min_len=PARA_MIN_LEN,
@@ -640,12 +644,13 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
             + weights["verifier"] * r_verifier
             + weights["length"] * r_length
         )
-    legacy_score = _compute_score(acc, n_errors, lam=DEFAULT_LAMBDA, cap=DEFAULT_CAP)
+    legacy_score = _compute_score(acc_item, n_errors, lam=DEFAULT_LAMBDA, cap=DEFAULT_CAP)
     latency_ms = (time.time() - started) * 1000.0
     out = {
         "score": score,
         "point": score,
-        "acc": acc,
+        "acc": acc_item,
+        "part_frac": r_answer,
         "n_errors": n_errors,
         "extracted_pred": extracted_pred,
         "extracted_gt": extracted_gt,
@@ -671,7 +676,8 @@ async def score_one(req: ScoreRequest, sample_idx: int = 0) -> Dict[str, Any]:
     _append_metrics(
         {
             "ts": time.time(),
-            "acc": acc,
+            "acc": acc_item,
+            "part_frac": r_answer,
             "score": score,
             "legacy_score": legacy_score,
             "verifier_mode": verifier_mode,
@@ -820,7 +826,7 @@ def _hybrid_group_logs(
         idxs = groups[q]
         acc_vals = [float(accs[i]) for i in idxs]
         rew_vals = [float(rewards[i]) for i in idxs]
-        if acc_vals and min(acc_vals) < 0.5 <= max(acc_vals):
+        if acc_vals and (max(acc_vals) - min(acc_vals)) > 1e-6:
             mixed += 1
         if len(rew_vals) <= 1 or (max(rew_vals) - min(rew_vals)) <= 1e-12:
             hybrid_zero += 1
@@ -864,7 +870,7 @@ def _outcome_group_logs(
         idxs = groups[q]
         acc_vals = [float(accs[i]) for i in idxs]
         rew_vals = [float(rewards[i]) for i in idxs]
-        if acc_vals and min(acc_vals) < 0.5 <= max(acc_vals):
+        if acc_vals and (max(acc_vals) - min(acc_vals)) > 1e-6:
             mixed += 1
         if len(rew_vals) <= 1 or (max(rew_vals) - min(rew_vals)) <= 1e-12:
             zero_std += 1
@@ -956,7 +962,10 @@ async def _llm_step_get_reward(req: "OpenRLHFRewardRequest") -> Dict[str, Any]:
     rewards = [float(r.get("score", 0.0)) for r in resolved]
     if _hybrid_llm_outcome_mode():
         process_scores = [float((r.get("reward_components") or {}).get("llm_step") or 0.0) for r in resolved]
-        accs = [1.0 if r.get("acc") else 0.0 for r in resolved]
+        accs = [
+            float(r["part_frac"]) if r.get("part_frac") is not None else (1.0 if r.get("acc") else 0.0)
+            for r in resolved
+        ]
         extra = _hybrid_group_logs(
             questions,
             rewards,
@@ -1059,8 +1068,29 @@ async def openrlhf_get_reward(req: OpenRLHFRewardRequest) -> Dict[str, Any]:
             results[idx] = copy.deepcopy(payload)
 
     resolved: List[Dict[str, Any]] = [r or {} for r in results]
+    if _process_paragraph_mode() and os.environ.get("PHYSICS_PROCESS_RANK_NORM", "1").strip() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        from training.reward_server.paragraph_process import rank_normalize_grouped
+
+        prompts_for_rank = [str(p or "") for p in prompts[:n]]
+        raw = [float(r.get("score", 0.0) or 0.0) for r in resolved]
+        ranked = rank_normalize_grouped(prompts_for_rank, raw)
+        for rec, val in zip(resolved, ranked):
+            rec["score"] = val
+            rec["point"] = val
+            comps = dict(rec.get("reward_components") or {})
+            comps["process_rank"] = val
+            rec["reward_components"] = comps
     rewards = [float(r.get("score", 0.0)) for r in resolved]
-    accs = [1.0 if r.get("acc") else 0.0 for r in resolved]
+    accs = [
+        float(r["part_frac"]) if r.get("part_frac") is not None else (1.0 if r.get("acc") else 0.0)
+        for r in resolved
+    ]
+    item_accs = [1.0 if r.get("acc") else 0.0 for r in resolved]
     n_errors = [float(r.get("n_errors", 0) or 0) for r in resolved]
     verifier_hits = [1.0 if r.get("verifier_mode") == "full" else 0.0 for r in resolved]
     verifier_failed = [1.0 if (r.get("reward_components") or {}).get("verifier_failed") else 0.0 for r in resolved]
@@ -1076,6 +1106,7 @@ async def openrlhf_get_reward(req: OpenRLHFRewardRequest) -> Dict[str, Any]:
         "physics_reward_latency_ms_mean": sum(latencies) / max(len(latencies), 1),
         "physics_reward_mode": REWARD_MODE,
         "physics_answer_acc": sum(accs) / max(len(accs), 1),
+        "physics_item_acc": sum(item_accs) / max(len(item_accs), 1),
         "physics_format_weight": float(_reward_weights().get("format", 0.0)),
         "physics_n_paragraphs_mean": sum(n_paras) / max(len(n_paras), 1),
         "physics_n_bad_paragraphs_mean": sum(n_bad) / max(len(n_bad), 1),

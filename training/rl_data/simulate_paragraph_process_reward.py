@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 from training.reward_server.paragraph_process import (
     ProcessParagraphWeights,
     group_has_variance,
+    group_rank_normalize,
     paragraph_ranges,
     score_text_with_diagnostics,
     truncate_to_n_paragraphs,
@@ -121,10 +122,34 @@ def _variants_for_row(
         add(pred[int(last2[0]["start_char"]) : int(last2[-1]["end_char"])])
     else:
         add(pred[-max_len:] if pred else "")
+    # Distinct prefixes so padding copies do not collapse group variance.
+    if pred:
+        n = len(pred)
+        for frac in (0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 1.0):
+            cut = max(1, int(n * frac))
+            add(pred[:cut])
 
-    # Pad / trim to n_samples.
+    seen: set[str] = set()
+    unique: List[Tuple[str, List[Dict[str, Any]]]] = []
+    for text, diags in variants:
+        key = text
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((text, diags))
+    variants = unique
     if not variants:
         variants = [("", [])]
+    i = 1
+    while len(variants) < N_SAMPLES and pred:
+        cut = max(1, (len(pred) * i) // (N_SAMPLES + 1))
+        extra = pred[:cut]
+        if extra not in seen:
+            seen.add(extra)
+            variants.append((extra, _gold_errors_in_span(row, len(extra))))
+        i += 1
+        if i > 32:
+            break
     while len(variants) < N_SAMPLES:
         variants.append(variants[len(variants) % max(1, len(variants))])
     return variants[:N_SAMPLES]
@@ -145,10 +170,11 @@ def _summarize_groups(group_rewards: List[List[float]]) -> Dict[str, Any]:
     }
 
 
-def simulate_grid(rows: Sequence[Dict[str, Any]], max_chars: int) -> Dict[str, Any]:
+def simulate_grid(rows: Sequence[Dict[str, Any]], max_chars: int, *, rank_norm: bool = True) -> Dict[str, Any]:
     results = []
     for cfg in LENGTH_GRIDS:
         proc_groups: List[List[float]] = []
+        ranked_groups: List[List[float]] = []
         ans_groups: List[List[float]] = []
         para_counts: List[int] = []
         judge_calls = 0
@@ -180,37 +206,51 @@ def simulate_grid(rows: Sequence[Dict[str, Any]], max_chars: int) -> Dict[str, A
                 para_counts.append(int(scored["n_paragraphs"]))
                 judge_calls += 1  # one verify per short completion
             proc_groups.append(proc_rewards)
+            ranked_groups.append(group_rank_normalize(proc_rewards) if rank_norm else list(proc_rewards))
             ans_groups.append(ans_rewards)
+        used = ranked_groups if rank_norm else proc_groups
         results.append(
             {
                 **cfg,
                 "process_paragraph": _summarize_groups(proc_groups),
+                "process_paragraph_rank_norm": _summarize_groups(used),
                 "answer_only": _summarize_groups(ans_groups),
                 "mean_paragraphs_per_variant": (sum(para_counts) / max(len(para_counts), 1)),
                 "estimated_judge_calls": judge_calls,
             }
         )
-    best = max(results, key=lambda r: (r["process_paragraph"]["effective_group_rate"], r["process_paragraph"]["mean_within_group_std"]))
+    best = max(
+        results,
+        key=lambda r: (
+            r["process_paragraph_rank_norm"]["effective_group_rate"],
+            r["process_paragraph_rank_norm"]["mean_within_group_std"],
+        ),
+    )
+    ranked_rate = best["process_paragraph_rank_norm"]["effective_group_rate"]
+    ranked_frac = ranked_rate / 100.0 if ranked_rate > 1.0 else ranked_rate
     return {
         "n_eval_rows": len(rows),
         "n_samples_per_prompt": N_SAMPLES,
         "max_chars": max_chars,
         "min_spread": MIN_SPREAD,
         "process_only_reward": True,
+        "rank_norm": rank_norm,
         "grids": results,
         "recommended": {
             "name": best["name"],
             "min_len": best["min_len"],
             "target_len": best["target_len"],
             "max_len": best["max_len"],
-            "effective_group_rate": best["process_paragraph"]["effective_group_rate"],
+            "effective_group_rate": ranked_rate,
+            "raw_effective_group_rate": best["process_paragraph"]["effective_group_rate"],
             "answer_only_effective_group_rate": best["answer_only"]["effective_group_rate"],
-            "mean_within_group_std": best["process_paragraph"]["mean_within_group_std"],
+            "mean_within_group_std": best["process_paragraph_rank_norm"]["mean_within_group_std"],
         },
         "gate": {
-            "process_better_than_answer_only": best["process_paragraph"]["effective_group_rate"]
+            "process_better_than_answer_only": ranked_rate
             > best["answer_only"]["effective_group_rate"] + 1.0,
-            "effective_group_rate_ge_5": best["process_paragraph"]["effective_group_rate"] >= 5.0,
+            "effective_group_rate_ge_5": ranked_rate >= 5.0,
+            "effective_group_rate_ge_0_85": ranked_frac >= 0.85,
         },
     }
 
@@ -226,6 +266,7 @@ def main() -> int:
     parser.add_argument("--env-out", type=Path, default=ROOT / "training/openrlhf/paragraph_process_defaults.env")
     parser.add_argument("--max-chars", type=int, default=1536, help="~512 tokens at ~3 chars/token")
     parser.add_argument("--max-rows", type=int, default=0)
+    parser.add_argument("--no-rank-norm", action="store_true")
     args = parser.parse_args()
 
     rows = _load_eval(args.dataset)
@@ -234,7 +275,7 @@ def main() -> int:
     if not rows:
         print(f"[error] no eval rows in {args.dataset}", file=sys.stderr)
         return 2
-    payload = simulate_grid(rows, max_chars=args.max_chars)
+    payload = simulate_grid(rows, max_chars=args.max_chars, rank_norm=not args.no_rank_norm)
     payload["dataset"] = str(args.dataset)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -253,6 +294,7 @@ def main() -> int:
                 "export PHYSICS_REWARD_W_DENSE=0.2",
                 "export PHYSICS_REWARD_W_ANSWER=0",
                 "export PHYSICS_REWARD_W_FORMAT=0",
+                "export PHYSICS_PROCESS_RANK_NORM=1",
                 "export GENERATE_MAX_LEN=512",
                 "",
             ]

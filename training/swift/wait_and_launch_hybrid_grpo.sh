@@ -41,8 +41,11 @@ fi
 
 echo "[grpo-wait] prompts=${PROMPTS} actor=${BASE_MODEL} reward=outcome_only n_gpus=${N_GPUS}"
 if [[ -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  echo "[grpo-wait] waiting for ${N_GPUS} idle GPUs"
-  wait_idle_csv "${N_GPUS}" >/dev/null
+  echo "[grpo-wait] waiting for ${N_GPUS} idle GPUs (deadline=${WAIT_GPU_DEADLINE_SECS:-3600}s)"
+  if ! wait_idle_csv "${N_GPUS}" >/dev/null; then
+    echo "[error] GPU wait failed; not launching. See logs/gpu_wait_failed.json" >&2
+    exit 2
+  fi
 fi
 export QWEN8B_MODEL_DIR="${BASE_MODEL}"
 export PROMPT_DATA="${PROMPTS}"

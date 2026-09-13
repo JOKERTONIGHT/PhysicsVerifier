@@ -96,6 +96,9 @@ class AggregateAndGateTests(unittest.TestCase):
         self.assertEqual(summary["k"], 2)
         self.assertGreater(summary["item_pass_at_k"], summary["item_avg_at_k"])
         self.assertAlmostEqual(summary["item_pass_at_k"], 1.0)
+        self.assertIn("part_avg_at_k_ci", summary)
+        self.assertIn("part_pass_minus_avg", summary)
+        self.assertEqual(len(summary["part_avg_item_scores"]), 2)
 
     def test_gate_non_degradation(self) -> None:
         base = {
@@ -154,6 +157,18 @@ class AggregateAndGateTests(unittest.TestCase):
             scores = json.loads(out_path.read_text())
             self.assertEqual(scores["n_samples"], 1)
             self.assertAlmostEqual(scores["item_acc"], 1.0)
+
+
+class BootstrapTests(unittest.TestCase):
+    def test_bootstrap_and_paired_ci(self) -> None:
+        from training.compat.part_scoring import bootstrap_mean_ci, paired_delta_ci
+
+        ci = bootstrap_mean_ci([0.0, 1.0, 0.5, 0.5], n_boot=200, seed=0)
+        self.assertGreater(ci["hi"], ci["lo"])
+        self.assertAlmostEqual(ci["mean"], 0.5)
+        paired = paired_delta_ci([0.8, 0.7, 0.9], [0.2, 0.1, 0.3], n_boot=200, seed=0)
+        self.assertTrue(paired["significant_2se"])
+        self.assertEqual(paired["direction"], "a>b")
 
 
 if __name__ == "__main__":
